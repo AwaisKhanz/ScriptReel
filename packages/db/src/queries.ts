@@ -355,6 +355,41 @@ export interface ChosenMediaRow {
   license: string | null;
 }
 
+export type MusicTrackRow = Database['public']['Tables']['music_tracks']['Row'];
+export type RenderRow = Database['public']['Tables']['renders']['Row'];
+
+export async function getMusicTracks(): Promise<MusicTrackRow[]> {
+  const rows = await sql<MusicTrackRow[]>`select * from music_tracks order by id`;
+  return [...rows];
+}
+
+export async function getMusicTrackById(id: string): Promise<MusicTrackRow | null> {
+  const rows = await sql<MusicTrackRow[]>`select * from music_tracks where id = ${id}`;
+  return rows[0] ?? null;
+}
+
+export interface RenderInsert {
+  projectId: string;
+  preset: string;
+  aspect: string;
+  path: string;
+  thumbnailPath?: string;
+  duration?: number;
+  bytes?: number;
+  timeline: JsonValue;
+}
+
+export async function insertRender(r: RenderInsert): Promise<RenderRow> {
+  const rows = await sql<RenderRow[]>`
+    insert into renders (project_id, preset, aspect, path, thumbnail_path, duration, bytes, timeline)
+    values (${r.projectId}, ${r.preset}, ${r.aspect}, ${r.path}, ${r.thumbnailPath ?? null},
+            ${r.duration ?? null}, ${r.bytes ?? null}, ${sql.json(r.timeline)})
+    returning *`;
+  const row = rows[0];
+  if (!row) throw new Error('insertRender: no row returned');
+  return row;
+}
+
 // The chosen asset per beat (doc 09 → doc 13), ordered by beat index — the input to
 // fetch/normalize. Beats without a chosen candidate are omitted.
 export async function getChosenMedia(projectId: string): Promise<ChosenMediaRow[]> {

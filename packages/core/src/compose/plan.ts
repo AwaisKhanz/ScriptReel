@@ -39,3 +39,52 @@ export function clipPlan(timeline: Timeline): ClipPlanEntry[] {
     };
   });
 }
+
+// Assembly plan (doc 13 §xfade + §Pass B). Cut-joined runs of clips become
+// concatenated segments; crossfade boundaries split segments and get an xfade
+// between them. Because each padded clip already carries f/2 on its crossfaded
+// sides, the total after all xfades equals Σ d_i exactly.
+export interface ComposeSegment {
+  clipIndices: number[]; // positions into timeline.beats (== ffmpeg input order)
+  paddedLengthSec: number; // Σ L_i over the segment's clips
+}
+
+export interface ComposePlan {
+  segments: ComposeSegment[];
+  crossfadeSec: number;
+  fadeOffsets: number[]; // xfade offset before segment k+1: Σ_{i≤k} P_i − (k+1)·f
+}
+
+export function composePlan(timeline: Timeline): ComposePlan {
+  const lengths = clipPlan(timeline).map((e) => e.lengthSec);
+  const f = timeline.transitions.crossfadeSec;
+  const n = timeline.beats.length;
+
+  const segments: ComposeSegment[] = [];
+  let current: number[] = [0];
+  for (let b = 0; b < n - 1; b += 1) {
+    if (boundaryIsCrossfade(timeline, b)) {
+      segments.push(makeSegment(current, lengths));
+      current = [b + 1];
+    } else {
+      current.push(b + 1);
+    }
+  }
+  segments.push(makeSegment(current, lengths));
+
+  const fadeOffsets: number[] = [];
+  let cumulative = 0;
+  for (let k = 0; k < segments.length - 1; k += 1) {
+    const seg = segments[k];
+    cumulative += seg ? seg.paddedLengthSec : 0;
+    fadeOffsets.push(cumulative - (k + 1) * f);
+  }
+  return { segments, crossfadeSec: f, fadeOffsets };
+}
+
+function makeSegment(clipIndices: number[], lengths: number[]): ComposeSegment {
+  return {
+    clipIndices,
+    paddedLengthSec: clipIndices.reduce((sum, i) => sum + (lengths[i] ?? 0), 0),
+  };
+}

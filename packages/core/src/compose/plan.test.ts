@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type BuildTimelineInput, buildTimeline } from '../buildTimeline';
-import { clipPlan } from './plan';
+import { clipPlan, composePlan } from './plan';
 
 function timeline(style: 'crossfade' | 'cut' | 'smart', shots: string[] = []) {
   const n = 3;
@@ -48,5 +48,41 @@ describe('clipPlan', () => {
     expect(plan[0]?.tailPadSec).toBe(0); // boundary 0 is a cut
     expect(plan[1]?.tailPadSec).toBeCloseTo(0.2, 3); // boundary 1 crossfades
     expect(plan[2]?.headPadSec).toBeCloseTo(0.2, 3);
+  });
+});
+
+describe('composePlan', () => {
+  // Final assembled duration must equal Σ d_i (doc 12/13): Σ P_i − (segments−1)·f.
+  function assembledDuration(t: ReturnType<typeof timeline>): number {
+    const p = composePlan(t);
+    const sumP = p.segments.reduce((s, seg) => s + seg.paddedLengthSec, 0);
+    return sumP - (p.segments.length - 1) * p.crossfadeSec;
+  }
+  const narrationSum = (t: ReturnType<typeof timeline>) =>
+    t.beats.reduce((s, b) => s + b.durationSec, 0);
+
+  it('all-crossfade: one segment per clip, and total collapses to Σ d_i', () => {
+    const t = timeline('crossfade');
+    const p = composePlan(t);
+    expect(p.segments.map((s) => s.clipIndices)).toEqual([[0], [1], [2]]);
+    expect(p.fadeOffsets).toHaveLength(2);
+    expect(assembledDuration(t)).toBeCloseTo(narrationSum(t), 6);
+  });
+
+  it('all-cut: a single concatenated segment, no fades', () => {
+    const t = timeline('cut');
+    const p = composePlan(t);
+    expect(p.segments).toHaveLength(1);
+    expect(p.segments[0]?.clipIndices).toEqual([0, 1, 2]);
+    expect(p.fadeOffsets).toEqual([]);
+    expect(assembledDuration(t)).toBeCloseTo(narrationSum(t), 6);
+  });
+
+  it('smart mix: cut-run concatenated, one xfade to the differing segment', () => {
+    const t = timeline('smart', ['A', 'A', 'B']);
+    const p = composePlan(t);
+    expect(p.segments.map((s) => s.clipIndices)).toEqual([[0, 1], [2]]);
+    expect(p.fadeOffsets).toHaveLength(1);
+    expect(assembledDuration(t)).toBeCloseTo(narrationSum(t), 6);
   });
 });

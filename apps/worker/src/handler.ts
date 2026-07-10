@@ -10,6 +10,7 @@ import * as db from '@scriptreel/db';
 import type { Logger } from 'pino';
 import { alignStage } from './pipeline/align';
 import { analyzeStage } from './pipeline/analyze';
+import { composeStage } from './pipeline/compose';
 import type { ProjectCtx, Stage } from './pipeline/context';
 import { FAKE_STAGES } from './pipeline/fake-stages';
 import { fetchStage } from './pipeline/fetch';
@@ -26,6 +27,7 @@ const REAL_STAGES = new Map<PipelineStage, Stage>([
   [ttsStage.name, ttsStage],
   [alignStage.name, alignStage],
   [fetchStage.name, fetchStage],
+  [composeStage.name, composeStage],
 ]);
 const FAKE_BY_NAME = new Map<PipelineStage, Stage>(FAKE_STAGES.map((stage) => [stage.name, stage]));
 

@@ -17,6 +17,7 @@ export const ERROR_CODES = [
   'E_TIMELINE_INVALID',
   'E_FFMPEG',
   'E_COMPOSE_VERIFY',
+  'E_MUSIC',
   'E_SIDECAR_DOWN',
   'E_GEN_MEM',
   'E_DISK_FULL',
