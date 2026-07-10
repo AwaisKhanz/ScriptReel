@@ -18,13 +18,18 @@ from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from app import models, tts  # noqa: E402
+from app import align, models, tts  # noqa: E402
 
 app = FastAPI(title="ScriptReel ML Sidecar", version="0.1.0")
 
 
 @app.exception_handler(tts.TtsError)
 async def _tts_error_handler(_request: Request, exc: tts.TtsError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
+
+
+@app.exception_handler(align.AlignError)
+async def _align_error_handler(_request: Request, exc: align.AlignError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
 
 
@@ -81,3 +86,25 @@ async def warmup(req: WarmupRequest = Body(default=WarmupRequest())) -> WarmupRe
 async def tts_endpoint(req: TtsRequest) -> TtsResponse:
     duration = await tts.synthesize(req.text, req.voice, req.langCode, req.speed, req.outPath)
     return TtsResponse(path=req.outPath, durationSec=duration)
+
+
+class WordTiming(BaseModel):
+    word: str
+    start: float
+    end: float
+
+
+class AlignRequest(BaseModel):
+    audioPath: str
+    language: str
+    text: str = ""
+
+
+class AlignResponse(BaseModel):
+    words: list[WordTiming]
+
+
+@app.post("/align", response_model=AlignResponse)
+async def align_endpoint(req: AlignRequest) -> AlignResponse:
+    words = await align.align(req.audioPath, req.language, req.text)
+    return AlignResponse(words=[WordTiming(**w) for w in words])

@@ -6,5 +6,8 @@ export * from './errors';
 export * from './hash';
 export * from './jobs';
 export * from './settings';
+export * from './subtitles/align';
+export * from './subtitles/buildAss';
+export * from './subtitles/presets';
 export * from './timeline';
 export * from './voices';
