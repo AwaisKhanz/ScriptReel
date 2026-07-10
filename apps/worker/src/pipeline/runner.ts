@@ -68,14 +68,15 @@ export async function runStages(
     await db.markRunRunning(ctx.projectId, stage.name);
     const report = createReporter(ctx.projectId, stage.name, ctx);
     try {
-      await stage.run(ctx, report);
+      const outcome = await stage.run(ctx, report);
       await report.flush(100);
       await writeManifest(ctx.projectId, stage.name, {
         stage: stage.name,
         inputsHash,
         completedAt: new Date().toISOString(),
-        artifacts: [],
-        warnings: [],
+        artifacts: outcome.artifacts ?? [],
+        warnings: outcome.warnings ?? [],
+        ...(outcome.meta ? { meta: outcome.meta } : {}),
       });
       await db.markRunDone(ctx.projectId, stage.name);
       ctx.log.info({ stage: stage.name }, 'done');

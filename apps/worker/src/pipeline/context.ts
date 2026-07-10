@@ -15,8 +15,15 @@ export type Reporter = ((pct: number, detail?: string) => void) & {
   flush(pct?: number): Promise<void>;
 };
 
+// What a stage records into its manifest (artifacts written, warnings, stage meta).
+export interface StageOutcome {
+  artifacts?: string[];
+  warnings?: string[];
+  meta?: Record<string, unknown>;
+}
+
 export interface Stage {
   name: PipelineStage;
   inputsHash(ctx: ProjectCtx): Promise<string>;
-  run(ctx: ProjectCtx, report: Reporter): Promise<void>;
+  run(ctx: ProjectCtx, report: Reporter): Promise<StageOutcome>;
 }

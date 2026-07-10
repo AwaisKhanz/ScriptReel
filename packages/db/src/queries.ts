@@ -9,6 +9,9 @@ import type { Database } from './types';
 
 type ProjectRow = Database['public']['Tables']['projects']['Row'];
 type PipelineRunRow = Database['public']['Tables']['pipeline_runs']['Row'];
+export type BeatRow = Database['public']['Tables']['beats']['Row'];
+
+type JsonValue = Parameters<typeof sql.json>[0];
 export type RunStatus = Database['public']['Enums']['run_status'];
 export type ProjectStatus = Database['public']['Enums']['project_status'];
 
@@ -135,5 +138,42 @@ export async function getPipelineRuns(
 ): Promise<Pick<PipelineRunRow, 'stage' | 'status' | 'progress'>[]> {
   const rows = await sql<Pick<PipelineRunRow, 'stage' | 'status' | 'progress'>[]>`
     select stage, status, progress from pipeline_runs where project_id = ${projectId}`;
+  return [...rows];
+}
+
+export async function setProjectLanguage(id: string, language: string): Promise<void> {
+  await sql`update projects set language = ${language}, updated_at = now() where id = ${id}`;
+}
+
+export interface BeatInsert {
+  idx: number;
+  text: string;
+  visualDescription: string;
+  keyPhrase: string;
+  emotion: string;
+  shotType: string;
+  entities: { people: string[]; places: string[]; objects: string[] };
+  queries: { literal: string[]; conceptual: string; mood: string };
+  estSeconds: number;
+}
+
+// Replace all beats for a project in one transaction (analyze re-runs are idempotent).
+export async function replaceBeats(projectId: string, beats: readonly BeatInsert[]): Promise<void> {
+  await sql.begin(async (tx) => {
+    await tx`delete from beats where project_id = ${projectId}`;
+    for (const b of beats) {
+      await tx`
+        insert into beats
+          (project_id, idx, text, visual_description, key_phrase, emotion, shot_type, entities, queries, est_seconds)
+        values
+          (${projectId}, ${b.idx}, ${b.text}, ${b.visualDescription}, ${b.keyPhrase}, ${b.emotion},
+           ${b.shotType}, ${tx.json(b.entities as JsonValue)}, ${tx.json(b.queries as JsonValue)}, ${b.estSeconds})`;
+    }
+  });
+}
+
+export async function getBeats(projectId: string): Promise<BeatRow[]> {
+  const rows = await sql<BeatRow[]>`
+    select * from beats where project_id = ${projectId} order by idx`;
   return [...rows];
 }

@@ -1,5 +1,5 @@
 import { hashObject, PipelineError, type PipelineStage, STAGES } from '@scriptreel/core';
-import type { ProjectCtx, Reporter, Stage } from './context';
+import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
 
 // Phase 1 placeholders: each stage just reports progress and honours cancellation.
 // Phases 2–9 replace these one at a time with the real implementations.
@@ -30,7 +30,7 @@ function fakeStage(name: PipelineStage): Stage {
         hashObject({ stage: name, projectId: ctx.projectId, settings: ctx.settings, fake: true }),
       );
     },
-    async run(ctx: ProjectCtx, report: Reporter): Promise<void> {
+    async run(ctx: ProjectCtx, report: Reporter): Promise<StageOutcome> {
       for (const pct of [25, 50, 75, 100]) {
         if (ctx.signal.aborted) {
           throw new PipelineError('E_CANCELLED', name, 'cancelled');
@@ -38,6 +38,7 @@ function fakeStage(name: PipelineStage): Stage {
         report(pct, `fake ${name} ${pct}%`);
         await sleep(60, ctx.signal);
       }
+      return {};
     },
   };
 }

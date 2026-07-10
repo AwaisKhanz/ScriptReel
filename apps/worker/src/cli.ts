@@ -1,15 +1,21 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { basename, isAbsolute, resolve } from 'node:path';
+import { rootDir } from '@scriptreel/config';
 import { type PipelineStage, STAGES } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import pino from 'pino';
 import { runPipeline } from './handler';
 
-// Harness: `pnpm stage [name] --project <id> [--fake] [--force] [--cancel-after <ms>]`
+// Harness: `pnpm stage [name] --project <id> [--script-file <path>] [--title <t>]
+//           [--fake] [--force] [--cancel-after <ms>]`
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 interface Args {
   stage?: PipelineStage;
   projectId?: string;
+  scriptFile?: string;
+  title?: string;
   fake: boolean;
   force: boolean;
   cancelAfterMs?: number;
@@ -26,9 +32,15 @@ function parseArgs(argv: string[]): Args {
     } else if (token === '--project') {
       i += 1;
       const value = argv[i];
-      if (value !== undefined) {
-        args.projectId = value;
-      }
+      if (value !== undefined) args.projectId = value;
+    } else if (token === '--script-file') {
+      i += 1;
+      const value = argv[i];
+      if (value !== undefined) args.scriptFile = value;
+    } else if (token === '--title') {
+      i += 1;
+      const value = argv[i];
+      if (value !== undefined) args.title = value;
     } else if (token === '--cancel-after') {
       i += 1;
       args.cancelAfterMs = Number(argv[i]);
@@ -43,53 +55,70 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  if (!args.fake) {
-    log.error('Phase 1 has no real stages yet — run with --fake.');
-    process.exitCode = 1;
-    return;
-  }
-
-  let projectId = args.projectId;
-  if (projectId === undefined || (await db.getProject(projectId)) === null) {
+async function resolveProjectId(args: Args): Promise<string | null> {
+  if (args.scriptFile) {
+    // Relative --script-file paths anchor to the repo root, not the worker's cwd.
+    const path = isAbsolute(args.scriptFile) ? args.scriptFile : resolve(rootDir, args.scriptFile);
+    const script = await readFile(path, 'utf8');
     const created = await db.createProject({
-      id: projectId ?? randomUUID(),
+      id: args.projectId ?? randomUUID(),
+      title: args.title ?? basename(args.scriptFile),
+      script,
+    });
+    log.info(
+      { projectId: created.id, scriptFile: args.scriptFile },
+      'created project from script file',
+    );
+    return created.id;
+  }
+  if (args.projectId && (await db.getProject(args.projectId))) {
+    return args.projectId;
+  }
+  if (args.fake) {
+    const created = await db.createProject({
+      id: args.projectId ?? randomUUID(),
       title: 'Fake pipeline project',
       script:
         'Placeholder script for the --fake stage-runner harness. It only needs to be long enough to satisfy the projects.script length check.',
     });
-    projectId = created.id;
-    log.info({ projectId }, 'created fake project');
+    log.info({ projectId: created.id }, 'created fake project');
+    return created.id;
+  }
+  return null;
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const projectId = await resolveProjectId(args);
+  if (!projectId) {
+    log.error('No project. Pass --script-file <path> to create one, or --fake for a placeholder.');
+    process.exitCode = 1;
+    return;
   }
 
-  const targetProjectId = projectId;
   if (args.cancelAfterMs !== undefined) {
     const ms = args.cancelAfterMs;
     setTimeout(() => {
       log.warn({ afterMs: ms }, 'requesting cancel mid-walk');
-      void db
-        .requestCancel(targetProjectId)
-        .catch((err) => log.warn({ err }, 'cancel request failed'));
+      void db.requestCancel(projectId).catch((err) => log.warn({ err }, 'cancel request failed'));
     }, ms);
   }
 
   await runPipeline(
-    { projectId: targetProjectId, mode: args.stage ? `stage:${args.stage}` : 'full' },
+    { projectId, mode: args.stage ? `stage:${args.stage}` : 'full' },
     {
-      fake: true,
+      fake: args.fake,
       force: args.force,
       ...(args.stage ? { only: args.stage } : {}),
-      log: log.child({ projectId: targetProjectId }),
+      log: log.child({ projectId }),
     },
   );
 
-  const runs = await db.getPipelineRuns(targetProjectId);
-  const summary = STAGES.map((stage) => {
-    const row = runs.find((r) => r.stage === stage);
-    return `${stage}:${row?.status ?? '—'}`;
-  }).join('  ');
-  log.info({ projectId: targetProjectId }, `runs → ${summary}`);
+  const runs = await db.getPipelineRuns(projectId);
+  const summary = STAGES.map(
+    (stage) => `${stage}:${runs.find((r) => r.stage === stage)?.status ?? '—'}`,
+  ).join('  ');
+  log.info({ projectId }, `runs → ${summary}`);
 }
 
 main()

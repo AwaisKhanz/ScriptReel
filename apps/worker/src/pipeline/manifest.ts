@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '@scriptreel/config';
 import { type PipelineStage, STAGES } from '@scriptreel/core';
@@ -12,6 +12,7 @@ const StageManifestSchema = z.object({
   completedAt: z.string(),
   artifacts: z.array(z.string()),
   warnings: z.array(z.string()),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 export type StageManifest = z.infer<typeof StageManifestSchema>;
 
@@ -30,6 +31,19 @@ export async function readManifest(
   } catch {
     return null; // missing or corrupt → treat as not-done, clean re-run
   }
+}
+
+// A stage artifact (written before the manifest). Non-atomic — the manifest is the
+// atomic "done" marker written last.
+export async function writeStageJson(
+  projectId: string,
+  stage: PipelineStage,
+  filename: string,
+  data: unknown,
+): Promise<void> {
+  const dir = stageDir(projectId, stage);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, filename), JSON.stringify(data, null, 2), 'utf8');
 }
 
 // Write artifacts first, then the manifest atomically: tmp → fsync → rename (doc 06).

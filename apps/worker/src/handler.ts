@@ -8,9 +8,22 @@ import {
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import type { Logger } from 'pino';
-import type { ProjectCtx } from './pipeline/context';
+import { analyzeStage } from './pipeline/analyze';
+import type { ProjectCtx, Stage } from './pipeline/context';
 import { FAKE_STAGES } from './pipeline/fake-stages';
 import { runStages } from './pipeline/runner';
+
+// Real stages replace fakes as phases land. `fake` forces all fakes (no OpenAI/etc.).
+const REAL_STAGES = new Map<PipelineStage, Stage>([[analyzeStage.name, analyzeStage]]);
+const FAKE_BY_NAME = new Map<PipelineStage, Stage>(FAKE_STAGES.map((stage) => [stage.name, stage]));
+
+function resolveStages(fake: boolean): Stage[] {
+  return STAGES.map((name) => {
+    const stage = fake ? FAKE_BY_NAME.get(name) : (REAL_STAGES.get(name) ?? FAKE_BY_NAME.get(name));
+    invariant(stage, `no stage registered for ${name}`, 'worker');
+    return stage;
+  });
+}
 
 export interface RunPipelineOptions {
   fake: boolean;
@@ -19,8 +32,7 @@ export interface RunPipelineOptions {
   log: Logger;
 }
 
-// The `pipeline` queue handler (doc 06). Phase 1 walks the fake stages only; the
-// review gate, concurrency and real stages arrive in later phases.
+// The `pipeline` queue handler (doc 06). No review gate / concurrency yet (Phase 10).
 export async function runPipeline(
   payload: PipelinePayload,
   opts: RunPipelineOptions,
@@ -43,7 +55,8 @@ export async function runPipeline(
     signal: controller.signal,
   };
 
-  const stages = opts.only ? FAKE_STAGES.filter((stage) => stage.name === opts.only) : FAKE_STAGES;
+  const all = resolveStages(opts.fake);
+  const stages = opts.only ? all.filter((stage) => stage.name === opts.only) : all;
 
   try {
     await runStages(ctx, stages, { force: opts.force ?? false, controller });
