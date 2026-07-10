@@ -253,3 +253,18 @@ export async function getCandidatesForBeat(beatId: string): Promise<CandidateRow
     select * from candidates where beat_id = ${beatId} order by rank nulls last, id`;
   return [...rows];
 }
+
+// Persist the score stage's result for one beat (doc 09): each candidate's rank +
+// score, then the chosen asset (null when the ladder must take over — Phase 7).
+export async function applyBeatSelection(
+  beatId: string,
+  ranked: readonly { id: string; score: number; rank: number }[],
+  chosenCandidateId: string | null,
+): Promise<void> {
+  await sql.begin(async (tx) => {
+    for (const r of ranked) {
+      await tx`update candidates set score = ${r.score}, rank = ${r.rank} where id = ${r.id}`;
+    }
+    await tx`update beats set chosen_candidate_id = ${chosenCandidateId} where id = ${beatId}`;
+  });
+}

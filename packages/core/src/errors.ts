@@ -9,6 +9,7 @@ export const ERROR_CODES = [
   'E_QUOTA_PIXABAY',
   'E_NO_CANDIDATES',
   'E_TTS_FAIL_BEAT',
+  'E_EMBED',
   'E_ALIGN',
   'E_DOWNLOAD',
   'E_NORMALIZE',

@@ -45,3 +45,29 @@ export const PER_PAGE_VIDEO = 20;
 export const PER_PAGE_PHOTO = 15;
 export const MAX_CANDIDATES_PER_BEAT = 40;
 export const THUMB_MAX_SIDE = 384; // SigLIP input efficiency
+
+// Matching / scoring weights (doc 09 §step 2). Fixed formula terms.
+export const SCORE_WEIGHTS = {
+  sim: 0.62,
+  quality: 0.14,
+  orient: 0.1,
+  video: 0.04, // motion premium, mixed mode only
+  illustration: 0.05, // subtracted
+} as const;
+export const QUALITY_WEIGHTS = { res: 0.5, dur: 0.3, fps: 0.2 } as const;
+
+// Sequential selection penalties (doc 09 §step 2). Applied during greedy selection.
+export const REUSE_PENALTY = 0.15; // same asset already chosen this project
+export const DUP_PENALTY = 0.1; // near-duplicate of the adjacent beat
+export const MONOTONY_PENALTY = 0.04; // same author as the previous chosen beat
+export const DUP_COSINE = 0.92; // thumb cosine above this = visual near-duplicate
+
+// Greedy selection thresholds in base-score space. SigLIP cosine ranges are
+// model-specific — these were CALIBRATED in Phase 6 from 30 labeled pairs (G1–G3)
+// with siglip2-base-patch16-224: τ_hi = 90%-precision point, τ_lo = 70%-precision
+// point (`pnpm eval:matching`, precision@1 = 100%). Re-run and re-fit on any model
+// or formula change (doc 09 §step 3, doc 21). Scores compress near ~0.30 because the
+// non-sim quality/orient terms are ~constant for HD stock video.
+export const TAU_HI = 0.322; // [CALIBRATE Phase 6] choose outright
+export const TAU_LO = 0.314; // [CALIBRATE Phase 6] choose but flag 'weak'
+export const TAU_MOOD = 0.28; // [CALIBRATE Phase 7] mood-tier accept < τ_lo

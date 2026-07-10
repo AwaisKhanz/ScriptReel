@@ -18,7 +18,7 @@ from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from app import align, models, tts  # noqa: E402
+from app import align, embed, models, tts  # noqa: E402
 
 app = FastAPI(title="ScriptReel ML Sidecar", version="0.1.0")
 
@@ -30,6 +30,11 @@ async def _tts_error_handler(_request: Request, exc: tts.TtsError) -> JSONRespon
 
 @app.exception_handler(align.AlignError)
 async def _align_error_handler(_request: Request, exc: align.AlignError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
+
+
+@app.exception_handler(embed.EmbedError)
+async def _embed_error_handler(_request: Request, exc: embed.EmbedError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
 
 
@@ -70,7 +75,10 @@ def health() -> HealthResponse:
     return HealthResponse(
         ok=True,
         device=device,
-        models={"kokoro": "loaded" if loaded else "cold"},
+        models={
+            "kokoro": "loaded" if loaded else "cold",
+            "siglip": "loaded" if embed.is_loaded() else "cold",
+        },
         versions={"python": platform.python_version(), "hf_home": os.environ.get("HF_HOME", "")},
     )
 
@@ -108,3 +116,34 @@ class AlignResponse(BaseModel):
 async def align_endpoint(req: AlignRequest) -> AlignResponse:
     words = await align.align(req.audioPath, req.language, req.text)
     return AlignResponse(words=[WordTiming(**w) for w in words])
+
+
+class EmbedTextRequest(BaseModel):
+    texts: list[str]
+
+
+class EmbedTextResponse(BaseModel):
+    vectors: list[list[float]]
+    dim: int
+
+
+class EmbedImageRequest(BaseModel):
+    paths: list[str]
+
+
+class EmbedImageResponse(BaseModel):
+    vectors: list[list[float]]
+    dim: int
+    failed: list[str]
+
+
+@app.post("/embed/text", response_model=EmbedTextResponse)
+async def embed_text_endpoint(req: EmbedTextRequest) -> EmbedTextResponse:
+    vectors, dim = await embed.embed_texts(req.texts)
+    return EmbedTextResponse(vectors=vectors, dim=dim)
+
+
+@app.post("/embed/image", response_model=EmbedImageResponse)
+async def embed_image_endpoint(req: EmbedImageRequest) -> EmbedImageResponse:
+    vectors, dim, failed = await embed.embed_images(req.paths)
+    return EmbedImageResponse(vectors=vectors, dim=dim, failed=failed)

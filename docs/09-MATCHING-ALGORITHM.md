@@ -31,6 +31,8 @@ Sequential penalties (computed during greedy selection, beat order):
 
 Constants `[CALIBRATE in Phase 6]` against the golden set; SigLIP cosine ranges are model-specific, so calibrate empirically: score 30 hand-labeled (good/bad) beat–thumb pairs, set `τ_hi` at the 90%-precision point and `τ_lo` at 70%.
 
+**Calibrated 2026-07-11** (`siglip2-base-patch16-224`, 30 pairs from G1–G3, `pnpm eval:matching`): `τ_hi = 0.322`, `τ_lo = 0.314`, in **base-score space** (not raw cosine). precision@1 = 100% on the eval set (gate ≥ 55%). Scores compress near ~0.30 because the non-sim quality/orient terms are ≈constant for HD stock video, so the discriminating signal is the SigLIP cosine riding on that offset — re-fit both `packages/core/src/constants.ts` and this line whenever the model or the score formula changes.
+
 ```
 for each beat in order:
   ranked = candidates sorted by score desc (persist rank + score to DB)
