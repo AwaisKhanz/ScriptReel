@@ -11,5 +11,10 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@scriptreel/config": "workspace:*",
+    "@scriptreel/core": "workspace:*",
+    "postgres": "3.4.9"
   }
 }

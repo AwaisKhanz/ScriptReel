@@ -11,7 +11,11 @@
   },
   "dependencies": {
     "@scriptreel/config": "workspace:*",
-    "pino": "10.3.1"
+    "@scriptreel/core": "workspace:*",
+    "@scriptreel/db": "workspace:*",
+    "pg-boss": "10.4.2",
+    "pino": "10.3.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "tsx": "4.23.0"

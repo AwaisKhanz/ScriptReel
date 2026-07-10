@@ -1,38 +1,48 @@
 import { env } from '@scriptreel/config';
+import { PIPELINE_QUEUE, PipelinePayloadSchema } from '@scriptreel/core';
+import PgBoss from 'pg-boss';
 import pino from 'pino';
+import { runPipeline } from './handler';
 
 const log = pino({
   level: 'info',
-  // Defence-in-depth: if a future log line ever includes the env, drop secrets (doc 18).
+  // Defence-in-depth: never leak secrets if the env is ever logged (doc 18).
   redact: {
-    paths: ['env.PEXELS_API_KEY', 'env.PIXABAY_API_KEY', 'env.GEMINI_API_KEY', 'env.DATABASE_URL'],
+    paths: ['env.OPENAI_API_KEY', 'env.PEXELS_API_KEY', 'env.PIXABAY_API_KEY', 'env.DATABASE_URL'],
     remove: true,
   },
 });
 
-function main(): void {
-  log.info(
-    { llmProvider: env.LLM_PROVIDER, sidecarUrl: env.SIDECAR_URL },
-    'worker up — Phase 0 scaffold (no queues registered yet)',
-  );
+async function main(): Promise<void> {
+  const boss = new PgBoss({
+    connectionString: env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }, // Supabase pooler requires TLS
+  });
+  boss.on('error', (err) => log.error({ err }, 'pg-boss error'));
 
-  // Phase 1 registers the pg-boss `pipeline` queue here. Until then, hold the
-  // event loop open so `pnpm dev` keeps the worker alive; shut down on signal.
-  const keepAlive = setInterval(() => {}, 1 << 30);
+  await boss.start();
+  await boss.createQueue(PIPELINE_QUEUE);
+  await boss.work(PIPELINE_QUEUE, async (jobs) => {
+    for (const job of jobs) {
+      const payload = PipelinePayloadSchema.parse(job.data);
+      await runPipeline(payload, { fake: true, log: log.child({ projectId: payload.projectId }) });
+    }
+  });
+
+  log.info({ queue: PIPELINE_QUEUE }, 'worker up — pg-boss pipeline queue registered');
 
   const shutdown = (signal: NodeJS.Signals): void => {
-    clearInterval(keepAlive);
-    log.info({ signal }, 'worker shutting down cleanly');
-    process.exit(0);
+    log.info({ signal }, 'worker shutting down');
+    void boss
+      .stop({ graceful: true })
+      .then(() => process.exit(0))
+      .catch(() => process.exit(1));
   };
-
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 }
 
-try {
-  main();
-} catch (error) {
-  log.error({ error }, 'worker failed to boot');
+main().catch((err) => {
+  log.error({ err }, 'worker failed to boot');
   process.exit(1);
-}
+});

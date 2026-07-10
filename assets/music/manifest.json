@@ -1,0 +1,145 @@
+{
+  "note": "CC0 / public-domain music library (source: FreePD.com). Seeded into music_tracks by supabase/migrations/0002_seed_music.sql. Moods map to doc 02 §6 and doc 17 text-card themes. Audio files (assets/music/<id>.mp3) are committed separately.",
+  "tracks": [
+    {
+      "id": "wholesome",
+      "title": "Wholesome",
+      "moods": ["uplifting", "energetic"],
+      "bpm": 120,
+      "duration": 138,
+      "path": "assets/music/wholesome.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "beauty-flow",
+      "title": "Beauty Flow",
+      "moods": ["calm", "emotional"],
+      "bpm": 90,
+      "duration": 145,
+      "path": "assets/music/beauty-flow.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "city-sunshine",
+      "title": "City Sunshine",
+      "moods": ["uplifting", "corporate"],
+      "bpm": 110,
+      "duration": 132,
+      "path": "assets/music/city-sunshine.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "chill-wave",
+      "title": "Chill Wave",
+      "moods": ["calm"],
+      "bpm": 85,
+      "duration": 160,
+      "path": "assets/music/chill-wave.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "rhythm",
+      "title": "Rhythm",
+      "moods": ["energetic"],
+      "bpm": 128,
+      "duration": 150,
+      "path": "assets/music/rhythm.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "serenity",
+      "title": "Serenity",
+      "moods": ["calm", "emotional"],
+      "bpm": 70,
+      "duration": 175,
+      "path": "assets/music/serenity.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "the-return",
+      "title": "The Return",
+      "moods": ["tense", "emotional"],
+      "bpm": 95,
+      "duration": 168,
+      "path": "assets/music/the-return.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "vibe-ace",
+      "title": "Vibe Ace",
+      "moods": ["uplifting", "energetic"],
+      "bpm": 122,
+      "duration": 140,
+      "path": "assets/music/vibe-ace.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "dreamer",
+      "title": "Dreamer",
+      "moods": ["calm", "uplifting"],
+      "bpm": 100,
+      "duration": 155,
+      "path": "assets/music/dreamer.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "reformat",
+      "title": "Reformat",
+      "moods": ["corporate", "energetic"],
+      "bpm": 118,
+      "duration": 142,
+      "path": "assets/music/reformat.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "feelin-good",
+      "title": "Feelin Good",
+      "moods": ["uplifting"],
+      "bpm": 115,
+      "duration": 130,
+      "path": "assets/music/feelin-good.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "bathed-in-light",
+      "title": "Bathed in the Light",
+      "moods": ["emotional", "calm"],
+      "bpm": 80,
+      "duration": 180,
+      "path": "assets/music/bathed-in-light.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "midnight-tension",
+      "title": "Midnight Tension",
+      "moods": ["tense"],
+      "bpm": 100,
+      "duration": 165,
+      "path": "assets/music/midnight-tension.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    },
+    {
+      "id": "corporate-uplift",
+      "title": "Corporate Uplift",
+      "moods": ["corporate", "uplifting"],
+      "bpm": 112,
+      "duration": 128,
+      "path": "assets/music/corporate-uplift.mp3",
+      "license": "CC0",
+      "credit": "FreePD.com (CC0)"
+    }
+  ]
+}

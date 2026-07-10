@@ -1,8 +1,8 @@
 import { mkdirSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
-import { env } from './env';
+import { env, rootDir } from './env';
 
-const dataDir = isAbsolute(env.DATA_DIR) ? env.DATA_DIR : resolve(process.cwd(), env.DATA_DIR);
+const dataDir = isAbsolute(env.DATA_DIR) ? env.DATA_DIR : resolve(rootDir, env.DATA_DIR);
 
 // DATA_DIR layout per doc 03. Kept here (config, I/O allowed) — never in core.
 export const paths = {

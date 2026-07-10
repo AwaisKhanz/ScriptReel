@@ -5,7 +5,7 @@ import { z } from 'zod';
 // Load the repo-root .env (doc 03) with Node's built-in parser — no dependency.
 // Walk up from cwd so it works whichever package the process starts in. Real
 // environment variables always win over the file (Node does not override them).
-function loadDotEnv(): void {
+function findAndLoadDotEnv(): string {
   let dir = process.cwd();
   for (;;) {
     const candidate = resolve(dir, '.env');
@@ -15,15 +15,20 @@ function loadDotEnv(): void {
       } catch {
         // Malformed/unreadable .env — the schema check below reports what's missing.
       }
-      return;
+      return dir;
     }
     const parent = dirname(dir);
-    if (parent === dir) return;
+    if (parent === dir) {
+      return process.cwd();
+    }
     dir = parent;
   }
 }
 
-loadDotEnv();
+// Directory that holds .env (the repo root). Relative paths (DATA_DIR) anchor
+// here, not to process.cwd() — the worker, CLI and web all start from different
+// directories but must share one DATA_DIR.
+export const rootDir = findAndLoadDotEnv();
 
 // Single source of truth for process configuration (doc 03). Infra vars carry the
 // doc 19 defaults so a freshly copied .env.example boots; provider keys stay

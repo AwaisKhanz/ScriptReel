@@ -39,7 +39,378 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      asset_cache: {
+        Row: {
+          author: string | null
+          bytes: number | null
+          checksum: string | null
+          duration: number | null
+          height: number | null
+          id: string
+          kind: Database["public"]["Enums"]["media_kind"]
+          last_used_at: string
+          license: string | null
+          local_path: string
+          page_url: string | null
+          provider: string
+          provider_id: string
+          width: number | null
+        }
+        Insert: {
+          author?: string | null
+          bytes?: number | null
+          checksum?: string | null
+          duration?: number | null
+          height?: number | null
+          id?: string
+          kind: Database["public"]["Enums"]["media_kind"]
+          last_used_at?: string
+          license?: string | null
+          local_path: string
+          page_url?: string | null
+          provider: string
+          provider_id: string
+          width?: number | null
+        }
+        Update: {
+          author?: string | null
+          bytes?: number | null
+          checksum?: string | null
+          duration?: number | null
+          height?: number | null
+          id?: string
+          kind?: Database["public"]["Enums"]["media_kind"]
+          last_used_at?: string
+          license?: string | null
+          local_path?: string
+          page_url?: string | null
+          provider?: string
+          provider_id?: string
+          width?: number | null
+        }
+        Relationships: []
+      }
+      beats: {
+        Row: {
+          chosen_candidate_id: string | null
+          emotion: string | null
+          entities: Json | null
+          est_seconds: number | null
+          forced_textcard: boolean
+          id: string
+          idx: number
+          key_phrase: string | null
+          narration: Json | null
+          project_id: string
+          queries: Json | null
+          shot_type: string | null
+          text: string
+          visual_description: string | null
+        }
+        Insert: {
+          chosen_candidate_id?: string | null
+          emotion?: string | null
+          entities?: Json | null
+          est_seconds?: number | null
+          forced_textcard?: boolean
+          id?: string
+          idx: number
+          key_phrase?: string | null
+          narration?: Json | null
+          project_id: string
+          queries?: Json | null
+          shot_type?: string | null
+          text: string
+          visual_description?: string | null
+        }
+        Update: {
+          chosen_candidate_id?: string | null
+          emotion?: string | null
+          entities?: Json | null
+          est_seconds?: number | null
+          forced_textcard?: boolean
+          id?: string
+          idx?: number
+          key_phrase?: string | null
+          narration?: Json | null
+          project_id?: string
+          queries?: Json | null
+          shot_type?: string | null
+          text?: string
+          visual_description?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "beats_chosen_fk"
+            columns: ["chosen_candidate_id"]
+            isOneToOne: false
+            referencedRelation: "candidates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "beats_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      candidates: {
+        Row: {
+          author: string | null
+          beat_id: string
+          duration: number | null
+          height: number | null
+          id: string
+          kind: Database["public"]["Enums"]["media_kind"]
+          license: string | null
+          meta: Json | null
+          page_url: string | null
+          provider: string
+          provider_id: string
+          rank: number | null
+          remote_url: string | null
+          score: number | null
+          thumb_path: string | null
+          width: number | null
+        }
+        Insert: {
+          author?: string | null
+          beat_id: string
+          duration?: number | null
+          height?: number | null
+          id?: string
+          kind: Database["public"]["Enums"]["media_kind"]
+          license?: string | null
+          meta?: Json | null
+          page_url?: string | null
+          provider: string
+          provider_id: string
+          rank?: number | null
+          remote_url?: string | null
+          score?: number | null
+          thumb_path?: string | null
+          width?: number | null
+        }
+        Update: {
+          author?: string | null
+          beat_id?: string
+          duration?: number | null
+          height?: number | null
+          id?: string
+          kind?: Database["public"]["Enums"]["media_kind"]
+          license?: string | null
+          meta?: Json | null
+          page_url?: string | null
+          provider?: string
+          provider_id?: string
+          rank?: number | null
+          remote_url?: string | null
+          score?: number | null
+          thumb_path?: string | null
+          width?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "candidates_beat_id_fkey"
+            columns: ["beat_id"]
+            isOneToOne: false
+            referencedRelation: "beats"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      music_tracks: {
+        Row: {
+          bpm: number | null
+          credit: string | null
+          duration: number | null
+          id: string
+          license: string
+          moods: string[]
+          path: string
+          title: string
+        }
+        Insert: {
+          bpm?: number | null
+          credit?: string | null
+          duration?: number | null
+          id: string
+          license?: string
+          moods: string[]
+          path: string
+          title: string
+        }
+        Update: {
+          bpm?: number | null
+          credit?: string | null
+          duration?: number | null
+          id?: string
+          license?: string
+          moods?: string[]
+          path?: string
+          title?: string
+        }
+        Relationships: []
+      }
+      pipeline_runs: {
+        Row: {
+          attempt: number
+          detail: string | null
+          error: Json | null
+          finished_at: string | null
+          id: string
+          progress: number
+          project_id: string
+          stage: Database["public"]["Enums"]["pipeline_stage"]
+          started_at: string | null
+          status: Database["public"]["Enums"]["run_status"]
+        }
+        Insert: {
+          attempt?: number
+          detail?: string | null
+          error?: Json | null
+          finished_at?: string | null
+          id?: string
+          progress?: number
+          project_id: string
+          stage: Database["public"]["Enums"]["pipeline_stage"]
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["run_status"]
+        }
+        Update: {
+          attempt?: number
+          detail?: string | null
+          error?: Json | null
+          finished_at?: string | null
+          id?: string
+          progress?: number
+          project_id?: string
+          stage?: Database["public"]["Enums"]["pipeline_stage"]
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["run_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_runs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      projects: {
+        Row: {
+          cancel_requested: boolean
+          created_at: string
+          error: Json | null
+          id: string
+          language: string | null
+          script: string
+          settings: Json
+          settings_hash: string | null
+          status: Database["public"]["Enums"]["project_status"]
+          title: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          cancel_requested?: boolean
+          created_at?: string
+          error?: Json | null
+          id?: string
+          language?: string | null
+          script: string
+          settings?: Json
+          settings_hash?: string | null
+          status?: Database["public"]["Enums"]["project_status"]
+          title: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          cancel_requested?: boolean
+          created_at?: string
+          error?: Json | null
+          id?: string
+          language?: string | null
+          script?: string
+          settings?: Json
+          settings_hash?: string | null
+          status?: Database["public"]["Enums"]["project_status"]
+          title?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      provider_usage: {
+        Row: {
+          provider: string
+          requests: number
+          window_start: string
+        }
+        Insert: {
+          provider: string
+          requests?: number
+          window_start: string
+        }
+        Update: {
+          provider?: string
+          requests?: number
+          window_start?: string
+        }
+        Relationships: []
+      }
+      renders: {
+        Row: {
+          aspect: string
+          bytes: number | null
+          created_at: string
+          duration: number | null
+          id: string
+          path: string
+          preset: string
+          project_id: string
+          thumbnail_path: string | null
+          timeline: Json
+        }
+        Insert: {
+          aspect: string
+          bytes?: number | null
+          created_at?: string
+          duration?: number | null
+          id?: string
+          path: string
+          preset: string
+          project_id: string
+          thumbnail_path?: string | null
+          timeline: Json
+        }
+        Update: {
+          aspect?: string
+          bytes?: number | null
+          created_at?: string
+          duration?: number | null
+          id?: string
+          path?: string
+          preset?: string
+          project_id?: string
+          thumbnail_path?: string | null
+          timeline?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "renders_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -48,7 +419,23 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      media_kind: "video" | "image" | "generated" | "textcard"
+      pipeline_stage:
+        | "analyze"
+        | "search"
+        | "score"
+        | "tts"
+        | "align"
+        | "fetch"
+        | "compose"
+      project_status:
+        | "draft"
+        | "queued"
+        | "running"
+        | "awaiting_review"
+        | "failed"
+        | "done"
+      run_status: "pending" | "running" | "done" | "failed" | "skipped"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -178,6 +565,26 @@ export const Constants = {
     Enums: {},
   },
   public: {
-    Enums: {},
+    Enums: {
+      media_kind: ["video", "image", "generated", "textcard"],
+      pipeline_stage: [
+        "analyze",
+        "search",
+        "score",
+        "tts",
+        "align",
+        "fetch",
+        "compose",
+      ],
+      project_status: [
+        "draft",
+        "queued",
+        "running",
+        "awaiting_review",
+        "failed",
+        "done",
+      ],
+      run_status: ["pending", "running", "done", "failed", "skipped"],
+    },
   },
 } as const
