@@ -184,3 +184,72 @@ export async function setBeatNarration(
 ): Promise<void> {
   await sql`update beats set narration = ${sql.json(narration as JsonValue)} where id = ${beatId}`;
 }
+
+// Atomically reserve one request in a window, only if under budget (doc 08 §QuotaGuard).
+// Returns the new count, or null if already at budget.
+export async function reserveQuota(
+  provider: string,
+  windowStart: Date,
+  budget: number,
+): Promise<number | null> {
+  const rows = await sql<{ requests: number }[]>`
+    insert into provider_usage (provider, window_start, requests)
+    values (${provider}, ${windowStart}, 1)
+    on conflict (provider, window_start) do update set requests = provider_usage.requests + 1
+      where provider_usage.requests < ${budget}
+    returning requests`;
+  return rows[0]?.requests ?? null;
+}
+
+export async function getProviderUsage(provider: string, windowStart: Date): Promise<number> {
+  const rows = await sql<{ requests: number }[]>`
+    select requests from provider_usage where provider = ${provider} and window_start = ${windowStart}`;
+  return rows[0]?.requests ?? 0;
+}
+
+export type CandidateRow = Database['public']['Tables']['candidates']['Row'];
+
+export interface CandidateInsert {
+  beatId: string;
+  provider: string;
+  providerId: string;
+  kind: string;
+  width?: number;
+  height?: number;
+  duration?: number;
+  thumbPath?: string;
+  remoteUrl?: string;
+  pageUrl?: string;
+  author?: string;
+  license?: string;
+  score?: number;
+  rank?: number;
+  meta?: unknown;
+}
+
+export async function replaceCandidatesForBeat(
+  beatId: string,
+  candidates: readonly CandidateInsert[],
+): Promise<void> {
+  await sql.begin(async (tx) => {
+    await tx`delete from candidates where beat_id = ${beatId}`;
+    for (const c of candidates) {
+      await tx`
+        insert into candidates
+          (beat_id, provider, provider_id, kind, width, height, duration, thumb_path,
+           remote_url, page_url, author, license, score, rank, meta)
+        values
+          (${beatId}, ${c.provider}, ${c.providerId}, ${c.kind}, ${c.width ?? null},
+           ${c.height ?? null}, ${c.duration ?? null}, ${c.thumbPath ?? null}, ${c.remoteUrl ?? null},
+           ${c.pageUrl ?? null}, ${c.author ?? null}, ${c.license ?? null}, ${c.score ?? null},
+           ${c.rank ?? null}, ${tx.json((c.meta ?? null) as JsonValue)})
+        on conflict (beat_id, provider, provider_id) do nothing`;
+    }
+  });
+}
+
+export async function getCandidatesForBeat(beatId: string): Promise<CandidateRow[]> {
+  const rows = await sql<CandidateRow[]>`
+    select * from candidates where beat_id = ${beatId} order by rank nulls last, id`;
+  return [...rows];
+}

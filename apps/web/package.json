@@ -12,6 +12,7 @@
   "dependencies": {
     "@scriptreel/config": "workspace:*",
     "@scriptreel/core": "workspace:*",
+    "@scriptreel/db": "workspace:*",
     "next": "15.5.20",
     "react": "19.2.7",
     "react-dom": "19.2.7"

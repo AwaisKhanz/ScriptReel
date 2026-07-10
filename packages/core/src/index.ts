@@ -5,6 +5,7 @@ export * from './constants';
 export * from './errors';
 export * from './hash';
 export * from './jobs';
+export * from './providers';
 export * from './settings';
 export * from './subtitles/align';
 export * from './subtitles/buildAss';
