@@ -254,6 +254,34 @@ export async function getCandidatesForBeat(beatId: string): Promise<CandidateRow
   return [...rows];
 }
 
+// Append ladder candidates without wiping tier-1 (doc 09). Returns the rows that
+// were actually inserted (conflicts on an already-present asset are skipped).
+export async function appendCandidatesForBeat(
+  beatId: string,
+  candidates: readonly CandidateInsert[],
+): Promise<CandidateRow[]> {
+  const inserted: CandidateRow[] = [];
+  for (const c of candidates) {
+    const rows = await sql<CandidateRow[]>`
+      insert into candidates
+        (beat_id, provider, provider_id, kind, width, height, duration, thumb_path,
+         remote_url, page_url, author, license, score, rank, meta)
+      values
+        (${beatId}, ${c.provider}, ${c.providerId}, ${c.kind}, ${c.width ?? null},
+         ${c.height ?? null}, ${c.duration ?? null}, ${c.thumbPath ?? null}, ${c.remoteUrl ?? null},
+         ${c.pageUrl ?? null}, ${c.author ?? null}, ${c.license ?? null}, ${c.score ?? null},
+         ${c.rank ?? null}, ${sql.json((c.meta ?? null) as JsonValue)})
+      on conflict (beat_id, provider, provider_id) do nothing
+      returning *`;
+    if (rows[0]) inserted.push(rows[0]);
+  }
+  return inserted;
+}
+
+export async function setBeatForcedTextcard(beatId: string, forced: boolean): Promise<void> {
+  await sql`update beats set forced_textcard = ${forced} where id = ${beatId}`;
+}
+
 // Persist the score stage's result for one beat (doc 09): each candidate's rank +
 // score, then the chosen asset (null when the ladder must take over — Phase 7).
 export async function applyBeatSelection(

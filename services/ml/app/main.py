@@ -18,7 +18,7 @@ from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from app import align, embed, models, tts  # noqa: E402
+from app import align, embed, models, textcard, tts  # noqa: E402
 
 app = FastAPI(title="ScriptReel ML Sidecar", version="0.1.0")
 
@@ -35,6 +35,11 @@ async def _align_error_handler(_request: Request, exc: align.AlignError) -> JSON
 
 @app.exception_handler(embed.EmbedError)
 async def _embed_error_handler(_request: Request, exc: embed.EmbedError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
+
+
+@app.exception_handler(textcard.TextcardError)
+async def _textcard_error_handler(_request: Request, exc: textcard.TextcardError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
 
 
@@ -147,3 +152,21 @@ async def embed_text_endpoint(req: EmbedTextRequest) -> EmbedTextResponse:
 async def embed_image_endpoint(req: EmbedImageRequest) -> EmbedImageResponse:
     vectors, dim, failed = await embed.embed_images(req.paths)
     return EmbedImageResponse(vectors=vectors, dim=dim, failed=failed)
+
+
+class TextcardRequest(BaseModel):
+    phrase: str
+    emotion: str = "neutral"
+    aspect: str = "16:9"
+    theme: str = "neutral"
+    outPath: str
+
+
+class TextcardResponse(BaseModel):
+    path: str
+
+
+@app.post("/textcard", response_model=TextcardResponse)
+def textcard_endpoint(req: TextcardRequest) -> TextcardResponse:
+    path = textcard.render(req.phrase, req.emotion, req.aspect, req.theme, req.outPath)
+    return TextcardResponse(path=path)

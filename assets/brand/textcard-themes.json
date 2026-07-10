@@ -1,0 +1,7 @@
+{
+  "neutral": { "bg": ["#11141A", "#0A0C10"], "text": "#E8EBF0", "accent": "#7C5CFF" },
+  "uplifting": { "bg": ["#1B1430", "#0A0C10"], "text": "#F2EEFF", "accent": "#9B7CFF" },
+  "calm": { "bg": ["#0E1A1E", "#0A0C10"], "text": "#E3F1F0", "accent": "#3FC8B4" },
+  "tense": { "bg": ["#220F14", "#0A0C10"], "text": "#FFE9EC", "accent": "#F0556B" },
+  "corporate": { "bg": ["#0D1520", "#0A0C10"], "text": "#E6EEF7", "accent": "#4C9BF0" }
+}

@@ -6,16 +6,21 @@ import {
   hashObject,
   invariant,
   PipelineError,
+  type Rung,
   type ScoreContext,
   type SelectionBeat,
   type SelectionCandidate,
+  type SubtitleAspect,
   selectBeats,
   targetHeightForAspect,
   varietyPass,
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
+import { QuotaGuard } from '../providers/quota-guard';
+import { SearchClient } from '../providers/search';
 import { embedImage, embedText } from '../sidecar/client';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
+import { type LadderBeat, runLadder } from './ladder';
 
 const EMBED_IMAGE_BATCH = 64; // sidecar accepts ≤64 paths/call (doc 14)
 
@@ -43,6 +48,7 @@ export const scoreStage: Stage = {
       stage: 'score',
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
+      forcedTextcard: beats.map((b) => b.forced_textcard),
       candidates: candidateSets,
       aspect: ctx.settings.aspect,
       mediaPreference: ctx.settings.mediaPreference,
@@ -124,35 +130,85 @@ export const scoreStage: Stage = {
     const firstPass = selectBeats(selectionBeats, scoreCtx);
     const selections = varietyPass(selectionBeats, firstPass, scoreCtx);
 
-    // 4) Persist rank/score + chosen asset; collect the selection audit trail.
+    // 4) Resolve each beat: primary selection, else the fallback ladder (doc 09 §4).
+    const client = new SearchClient(new QuotaGuard(ctx.log), ctx.log);
+    const chosenAssetKeys = new Set<string>();
+    for (let i = 0; i < beats.length; i += 1) {
+      const sel = selections[i];
+      const sc = selectionBeats[i];
+      if (sel?.chosenId && sc) {
+        const chosen = sc.candidates.find((c) => c.id === sel.chosenId);
+        if (chosen) chosenAssetKeys.add(chosen.assetKey);
+      }
+    }
+
     const selectionLog: unknown[] = [];
     const warnings: string[] = [];
+    const rungCounts: Record<string, number> = {};
     let chosenCount = 0;
     let weakCount = 0;
-    let unresolvedCount = 0;
     for (let i = 0; i < beats.length; i += 1) {
       const beat = beats[i];
       const sel = selections[i];
-      if (!beat || !sel) continue;
-      await db.applyBeatSelection(beat.id, sel.ranked, sel.chosenId);
-      if (sel.chosenId) {
-        chosenCount += 1;
-        if (sel.weak) weakCount += 1;
-      } else {
-        unresolvedCount += 1;
-        warnings.push(
-          `E_NO_CANDIDATES: beat ${beat.idx} unresolved (best < τ_lo) — ladder pending`,
-        );
+      const sc = selectionBeats[i];
+      if (!beat || !sel || !sc) continue;
+
+      let chosenId: string | null = sel.chosenId;
+      let rung: Rung = sel.rungUsed;
+      let weak = sel.weak;
+      let ranked = sel.ranked;
+      let chosenAssetKey: string | null = sel.chosenId
+        ? (sc.candidates.find((c) => c.id === sel.chosenId)?.assetKey ?? null)
+        : null;
+
+      // Escalate when tier-1 left the beat unresolved, or the user forced a text card.
+      if (beat.forced_textcard || sel.chosenId === null) {
+        const queries = beat.queries as {
+          literal?: string[];
+          conceptual?: string;
+          mood?: string;
+        } | null;
+        const ladderBeat: LadderBeat = {
+          id: beat.id,
+          idx: beat.idx,
+          keyPhrase: beat.key_phrase ?? '',
+          emotion: beat.emotion ?? 'neutral',
+          aspect: aspect as SubtitleAspect,
+          descEmbedding: descRes.vectors[i] ?? [],
+          literal0: queries?.literal?.[0] ?? '',
+          conceptual: queries?.conceptual ?? '',
+          mood: queries?.mood ?? '',
+          beatDurationSec: Number(beat.est_seconds ?? 0),
+          existing: sc.candidates,
+          forcedTextcard: beat.forced_textcard,
+        };
+        const result = await runLadder(ladderBeat, { ctx, scoreCtx, client, chosenAssetKeys });
+        chosenId = result.chosenId;
+        chosenAssetKey = result.chosenAssetKey;
+        rung = result.rung;
+        weak = result.weak;
+        ranked = result.ranked;
       }
-      const top = sel.ranked[0];
+
+      if (chosenId) {
+        if (chosenAssetKey) chosenAssetKeys.add(chosenAssetKey); // reuse set for later ladders
+        chosenCount += 1;
+        if (weak) weakCount += 1;
+      } else {
+        warnings.push(`E_NO_CANDIDATES: beat ${beat.idx} unresolved after ladder`);
+      }
+      rungCounts[rung] = (rungCounts[rung] ?? 0) + 1;
+
+      await db.applyBeatSelection(beat.id, ranked, chosenId);
+      const top = ranked[0];
       selectionLog.push({
         beatIdx: beat.idx,
-        chosen: sel.chosenId,
-        rungUsed: sel.rungUsed,
-        weak: sel.weak,
+        chosen: chosenId,
+        rungUsed: rung,
+        weak,
         topScore: top ? Number(top.score.toFixed(4)) : null,
-        candidateCount: sel.ranked.length,
-        scores: sel.ranked
+        candidateCount: ranked.length,
+        scores: ranked
           .slice(0, 8)
           .map((r) => ({ id: r.id, score: Number(r.score.toFixed(4)), rank: r.rank })),
       });
@@ -178,7 +234,7 @@ export const scoreStage: Stage = {
         beats: beats.length,
         chosen: chosenCount,
         weak: weakCount,
-        unresolved: unresolvedCount,
+        rungs: rungCounts,
         thumbsEmbedded: thumbEmbeddings.size,
         thumbsFailed: failedThumbs.size,
         dim: descRes.dim,

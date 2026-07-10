@@ -51,6 +51,58 @@ export function searchCacheKey(
   return sha1Hex(`${provider}|${kind}|${orientation}|${normalizeSearchQuery(query)}`);
 }
 
+// Trailing atmosphere/time words carry mood, not subject — strip them before
+// reducing a literal query to its head noun phrase (doc 09 §ladder rung 1).
+const ATMOSPHERE_WORDS = new Set([
+  'dusk',
+  'dawn',
+  'sunset',
+  'sunrise',
+  'morning',
+  'evening',
+  'night',
+  'daylight',
+  'light',
+  'golden',
+  'hour',
+  'bokeh',
+  'cinematic',
+  'moody',
+  'soft',
+  'ambient',
+  'background',
+  'atmosphere',
+  'mood',
+  'closeup',
+  'macro',
+]);
+
+// Rule-based query broadening for the fallback ladder (doc 09 rung 1): drop trailing
+// atmosphere words, then reduce toward the head noun phrase. Returns up to `max`
+// progressively broader forms, never the original. "rusty farm gate dusk" → ["farm
+// gate", "gate"].
+export function broadenQuery(query: string, max = 2): string[] {
+  let words = normalizeSearchQuery(query)
+    .split(' ')
+    .filter((w) => w.length > 0);
+  while (words.length > 1 && ATMOSPHERE_WORDS.has(words[words.length - 1] ?? '')) {
+    words = words.slice(0, -1);
+  }
+  const candidates: string[] = [];
+  if (words.length >= 3) candidates.push(words.slice(-2).join(' '));
+  candidates.push(words.slice(-1).join(' '));
+
+  const seen = new Set([normalizeSearchQuery(query)]);
+  const out: string[] = [];
+  for (const c of candidates) {
+    if (c.length > 0 && !seen.has(c)) {
+      seen.add(c);
+      out.push(c);
+    }
+  }
+  return out.slice(0, max);
+}
+
 export function orientationForAspect(aspect: SubtitleAspect): Orientation {
   switch (aspect) {
     case '9:16':

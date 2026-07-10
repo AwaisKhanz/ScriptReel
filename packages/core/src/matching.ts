@@ -153,7 +153,16 @@ export interface RankedCandidate {
   rank: number;
 }
 
-export type Rung = 'primary' | 'none'; // Phase 7 adds broaden/conceptual/mood/textcard
+// Which selection path resolved a beat (doc 09). 'primary' = tier-1 candidates cleared
+// τ; the ladder rungs (Phase 7) escalate; 'none' = still unresolved (pre-ladder).
+export type Rung =
+  | 'primary'
+  | 'broaden'
+  | 'conceptual'
+  | 'mood'
+  | 'textcard'
+  | 'forced_textcard'
+  | 'none';
 
 export interface BeatSelection {
   beatIdx: number;

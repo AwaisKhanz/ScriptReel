@@ -164,3 +164,21 @@ export function embedText(texts: string[], signal?: AbortSignal): Promise<EmbedT
 export function embedImage(paths: string[], signal?: AbortSignal): Promise<EmbedImageResult> {
   return postSidecar('/embed/image', { paths }, EmbedImageResponseSchema, signal);
 }
+
+const TextcardResponseSchema = z.object({ path: z.string() });
+export type TextcardResult = z.infer<typeof TextcardResponseSchema>;
+
+export interface TextcardParams {
+  phrase: string;
+  emotion: string;
+  aspect: string;
+  theme: string;
+  outPath: string;
+}
+
+export function renderTextcard(
+  params: TextcardParams,
+  signal?: AbortSignal,
+): Promise<TextcardResult> {
+  return postSidecar('/textcard', params, TextcardResponseSchema, signal);
+}

@@ -2,6 +2,7 @@
 export * from './analysis';
 export * from './buildTimeline';
 export * from './constants';
+export * from './emotion';
 export * from './errors';
 export * from './hash';
 export * from './jobs';
