@@ -177,3 +177,10 @@ export async function getBeats(projectId: string): Promise<BeatRow[]> {
     select * from beats where project_id = ${projectId} order by idx`;
   return [...rows];
 }
+
+export async function setBeatNarration(
+  beatId: string,
+  narration: { audioPath: string; durationSec: number; startSec: number },
+): Promise<void> {
+  await sql`update beats set narration = ${sql.json(narration as JsonValue)} where id = ${beatId}`;
+}

@@ -12,9 +12,13 @@ import { analyzeStage } from './pipeline/analyze';
 import type { ProjectCtx, Stage } from './pipeline/context';
 import { FAKE_STAGES } from './pipeline/fake-stages';
 import { runStages } from './pipeline/runner';
+import { ttsStage } from './pipeline/tts';
 
 // Real stages replace fakes as phases land. `fake` forces all fakes (no OpenAI/etc.).
-const REAL_STAGES = new Map<PipelineStage, Stage>([[analyzeStage.name, analyzeStage]]);
+const REAL_STAGES = new Map<PipelineStage, Stage>([
+  [analyzeStage.name, analyzeStage],
+  [ttsStage.name, ttsStage],
+]);
 const FAKE_BY_NAME = new Map<PipelineStage, Stage>(FAKE_STAGES.map((stage) => [stage.name, stage]));
 
 function resolveStages(fake: boolean): Stage[] {

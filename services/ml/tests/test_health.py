@@ -11,12 +11,13 @@ def test_health_ok() -> None:
     body = res.json()
     assert body["ok"] is True
     assert body["device"] in {"mps", "cpu", "cuda", "unavailable"}
+    assert "kokoro" in body["models"]
 
 
-def test_warmup_does_not_load_weights() -> None:
-    res = client.post("/warmup")
+def test_warmup_no_langs_does_not_load_models() -> None:
+    res = client.post("/warmup", json={"langs": []})
     assert res.status_code == 200
     body = res.json()
     assert body["ok"] is True
-    assert body["warmed"] is False
+    assert body["warmedLangs"] == []
     assert "importable" in body

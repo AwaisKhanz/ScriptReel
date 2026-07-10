@@ -20,13 +20,13 @@ export const PROGRESS_WEIGHTS: Readonly<Record<PipelineStage, number>> = {
 export const BASE_WPS: Readonly<Record<string, number>> = {
   'en-US': 2.7,
   'en-GB': 2.7,
-  es: 2.6,
-  fr: 2.5,
-  hi: 2.4,
-  it: 2.6,
-  'pt-BR': 2.6,
+  es: 2.9,
+  fr: 2.8,
+  hi: 2.5,
+  it: 2.9,
+  'pt-BR': 2.8,
   ja: 5.5,
-  zh: 5.0,
+  zh: 4.5,
 };
 export const DEFAULT_WPS = 2.7;
 export const CJK_LANGUAGES = ['ja', 'zh'] as const;
