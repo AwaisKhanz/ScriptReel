@@ -1,0 +1,101 @@
+# 07 — Script Analysis (Beat Segmentation)
+
+## Goal
+
+Turn the raw script into an ordered list of **visual beats** — the atomic unit of the whole system. A beat is a contiguous verbatim slice of the script that shares one visual idea and will map to one media asset. Beats target 4–10 s of narration (pacing-adjusted); **never** naive sentence splitting.
+
+## Interface
+
+```ts
+interface ScriptAnalyzer {
+  analyze(input: { script: string; languageHint?: string; pacing: Pacing }): Promise<AnalysisResult>;
+}
+// Implementations: GeminiAnalyzer (structured output / responseSchema, temperature 0.3),
+// OllamaAnalyzer (format: json, same schema). Selected by env LLM_PROVIDER.
+```
+
+## Output schema (zod — single source of truth in `packages/core/src/analysis.ts`)
+
+```ts
+const Emotion = z.enum(['neutral','uplifting','serious','tense','sad','exciting','calm','inspiring']);
+const ShotType = z.enum(['wide','medium','close','detail','aerial','abstract']);
+
+const Beat = z.object({
+  text: z.string().min(1),                    // VERBATIM slice of the script
+  visualDescription: z.string().max(160),     // English. What the viewer literally sees
+  keyPhrase: z.string().max(48),              // ≤6 words, script language — used for text cards
+  emotion: Emotion,
+  shotType: ShotType,
+  entities: z.object({ people: z.string().array(), places: z.string().array(), objects: z.string().array() }),
+  queries: z.object({
+    literal: z.string().array().length(2),    // tier 1 — concrete, 1–4 words each
+    conceptual: z.string(),                   // tier 2 — the idea, not the words
+    mood: z.string(),                         // tier 3 — atmosphere/texture
+  }),
+});
+const AnalysisResult = z.object({
+  language: z.string(),                       // detected: en-US|en-GB|es|fr|hi|it|pt-BR|ja|zh
+  musicMood: z.enum(['uplifting','calm','corporate','emotional','energetic','tense','none']),
+  beats: Beat.array().min(1),
+});
+```
+
+## System prompt (verbatim; `{PACING_RULE}` substituted)
+
+```
+You segment scripts into VISUAL BEATS for an automated video editor, and you design
+what the viewer should SEE during each beat.
+
+RULES — SEGMENTATION
+1. Beats must reproduce the input script EXACTLY when their `text` fields are
+   concatenated in order. Never rewrite, translate, drop, or add words. Preserve
+   punctuation. Only leading/trailing whitespace between beats may be normalized.
+2. {PACING_RULE}  (e.g. "Target 12–20 spoken words per beat.")
+3. A beat is ONE visual idea. Merge short sentences that share an image. Split long
+   sentences at natural clause boundaries when the imagery changes.
+
+RULES — VISUAL DESIGN
+4. `visualDescription` is ALWAYS ENGLISH, ≤ 20 words, and FILMABLE: describe a shot a
+   stock-video camera could capture — subjects, setting, action, lighting. Never
+   abstract claims ("revenue grew"), never on-screen text, charts with specific
+   numbers, or captions. Translate ideas into imagery: "revenue grew 40%" →
+   "upward trending line graph on laptop screen, modern office, confident team".
+5. NEVER use real people's names, brand names, or logos in visualDescription or
+   queries. Replace with generic roles: "Elon Musk" → "tech CEO speaking on stage".
+6. `queries`: ALWAYS ENGLISH, lowercase, 1–4 words, no punctuation.
+   - literal[0]: the most concrete subject+context ("rusty farm gate dusk")
+   - literal[1]: a different concrete angle of the same idea
+   - conceptual: the underlying concept ("hesitation choice")→ as searchable nouns
+     ("person standing crossroads")
+   - mood: pure atmosphere matching the emotion ("moody countryside sunset")
+7. Vary `shotType` across consecutive beats when plausible; avoid three identical in a row.
+8. `keyPhrase`: the beat's essence in ≤ 6 words, in the SCRIPT'S language, suitable
+   for a bold on-screen card.
+9. Detect `language` of the script (en-US, en-GB, es, fr, hi, it, pt-BR, ja, zh) and
+   an overall `musicMood`.
+
+Return ONLY JSON matching the provided schema.
+```
+
+Pacing rules: fast → "Target 8–13 spoken words per beat.", normal → "Target 12–20.", slow → "Target 18–28." (≈150–170 wpm English; CJK guidance appended: "For Japanese/Chinese target 18–30 characters (fast), 25–45 (normal), 40–65 (slow) per beat.")
+
+## Chunking
+
+Scripts > 1,200 words: split on paragraph boundaries into ≤ 1,200-word chunks; call sequentially (respects free-tier RPM) passing `Previous beat count: N. Continue segmentation; maintain shot variety with previous shotType: X.` Concatenate results. 1 call ≈ most scripts; worst case 3.
+
+## Deterministic post-pass (worker, after LLM)
+
+1. **Verbatim check:** normalize whitespace; `join(beats.text) === normalize(script)` else attempt repair by re-slicing the script using each beat's first/last 4 words as anchors; if repair fails → `PipelineError('E_LLM_SCHEMA', 'analyze')` and retry once with an error-explaining reprompt, then fail.
+2. **Duration estimate:** `estSeconds = words / (baseWps(language) * speed)` (doc 10 table). CJK uses chars-based rate.
+3. **Merge** any beat with `estSeconds < 2.5` into its shorter neighbor (concatenate text, keep the longer beat's visuals, re-index).
+4. **Split** any beat with `estSeconds > 12` at the sentence/clause boundary nearest its midpoint; duplicate visuals but set second half's `literal` queries to the `conceptual`/`mood` tier to force visual variety.
+5. **Query hygiene:** lowercase, strip punctuation, dedupe queries across beats (identical normalized query on consecutive beats → replace later one with its conceptual tier). Cap total unique tier-1 queries; log the plan against quota budget (doc 22).
+6. Persist beats rows + `stages/analyze/beats.json` (includes raw LLM response for audit).
+
+## Failure & fallback
+
+Gemini 429/network → exponential backoff (respect free-tier RPM); after retries, if `OLLAMA_MODEL` configured, fall back automatically and tag manifest `analyzer: 'ollama'`. Schema-invalid JSON → one reprompt with validation errors inlined, then fail with `E_LLM_SCHEMA`.
+
+## Quality bar (Phase 2 exit)
+
+On the golden set (doc 21): verbatim reconstruction 100%; ≥ 90% of beats within pacing band after post-pass; zero brand/person names in queries; spot-check 20 visualDescriptions — all filmable by the rubric.
