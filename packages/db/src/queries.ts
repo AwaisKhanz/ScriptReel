@@ -282,6 +282,93 @@ export async function setBeatForcedTextcard(beatId: string, forced: boolean): Pr
   await sql`update beats set forced_textcard = ${forced} where id = ${beatId}`;
 }
 
+export type AssetCacheRow = Database['public']['Tables']['asset_cache']['Row'];
+
+export interface AssetCacheInsert {
+  provider: string;
+  providerId: string;
+  kind: string;
+  localPath: string;
+  bytes?: number;
+  width?: number;
+  height?: number;
+  duration?: number;
+  license?: string;
+  author?: string;
+  pageUrl?: string;
+  checksum?: string;
+}
+
+// Shared downloaded originals (doc 05, doc 08). Keyed by (provider, provider_id, kind)
+// so the same asset is fetched once across projects.
+export async function getCachedAsset(
+  provider: string,
+  providerId: string,
+  kind: string,
+): Promise<AssetCacheRow | null> {
+  const rows = await sql<AssetCacheRow[]>`
+    select * from asset_cache
+    where provider = ${provider} and provider_id = ${providerId} and kind = ${kind}`;
+  return rows[0] ?? null;
+}
+
+export async function upsertCachedAsset(a: AssetCacheInsert): Promise<AssetCacheRow> {
+  const rows = await sql<AssetCacheRow[]>`
+    insert into asset_cache
+      (provider, provider_id, kind, local_path, bytes, width, height, duration,
+       license, author, page_url, checksum, last_used_at)
+    values
+      (${a.provider}, ${a.providerId}, ${a.kind}, ${a.localPath}, ${a.bytes ?? null},
+       ${a.width ?? null}, ${a.height ?? null}, ${a.duration ?? null}, ${a.license ?? null},
+       ${a.author ?? null}, ${a.pageUrl ?? null}, ${a.checksum ?? null}, now())
+    on conflict (provider, provider_id, kind) do update set
+      local_path = excluded.local_path, bytes = excluded.bytes, width = excluded.width,
+      height = excluded.height, duration = excluded.duration, checksum = excluded.checksum,
+      last_used_at = now()
+    returning *`;
+  const row = rows[0];
+  if (!row) throw new Error('upsertCachedAsset: no row returned');
+  return row;
+}
+
+export async function touchCachedAsset(id: string): Promise<void> {
+  await sql`update asset_cache set last_used_at = now() where id = ${id}`;
+}
+
+export interface ChosenMediaRow {
+  beatId: string;
+  idx: number;
+  text: string;
+  narration: unknown;
+  shotType: string | null;
+  emotion: string | null;
+  provider: string;
+  providerId: string;
+  kind: string;
+  remoteUrl: string | null;
+  thumbPath: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  author: string | null;
+  pageUrl: string | null;
+  license: string | null;
+}
+
+// The chosen asset per beat (doc 09 → doc 13), ordered by beat index — the input to
+// fetch/normalize. Beats without a chosen candidate are omitted.
+export async function getChosenMedia(projectId: string): Promise<ChosenMediaRow[]> {
+  const rows = await sql<ChosenMediaRow[]>`
+    select b.id as "beatId", b.idx, b.text, b.narration, b.shot_type as "shotType", b.emotion,
+      c.provider, c.provider_id as "providerId", c.kind, c.remote_url as "remoteUrl",
+      c.thumb_path as "thumbPath", c.width, c.height, c.duration,
+      c.author, c.page_url as "pageUrl", c.license
+    from beats b join candidates c on c.id = b.chosen_candidate_id
+    where b.project_id = ${projectId}
+    order by b.idx`;
+  return [...rows];
+}
+
 // Persist the score stage's result for one beat (doc 09): each candidate's rank +
 // score, then the chosen asset (null when the ladder must take over — Phase 7).
 export async function applyBeatSelection(

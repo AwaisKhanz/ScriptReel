@@ -1,6 +1,8 @@
 // @scriptreel/core — pure functions, zod schemas, and constants (doc 18). Public root.
 export * from './analysis';
 export * from './buildTimeline';
+export * from './compose/constants';
+export * from './compose/plan';
 export * from './constants';
 export * from './emotion';
 export * from './errors';

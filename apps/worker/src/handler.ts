@@ -12,6 +12,7 @@ import { alignStage } from './pipeline/align';
 import { analyzeStage } from './pipeline/analyze';
 import type { ProjectCtx, Stage } from './pipeline/context';
 import { FAKE_STAGES } from './pipeline/fake-stages';
+import { fetchStage } from './pipeline/fetch';
 import { runStages } from './pipeline/runner';
 import { scoreStage } from './pipeline/score';
 import { searchStage } from './pipeline/search';
@@ -24,6 +25,7 @@ const REAL_STAGES = new Map<PipelineStage, Stage>([
   [scoreStage.name, scoreStage],
   [ttsStage.name, ttsStage],
   [alignStage.name, alignStage],
+  [fetchStage.name, fetchStage],
 ]);
 const FAKE_BY_NAME = new Map<PipelineStage, Stage>(FAKE_STAGES.map((stage) => [stage.name, stage]));
 
