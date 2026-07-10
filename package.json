@@ -1,0 +1,30 @@
+{
+  "name": "scriptreel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "check": "biome check . && tsc -b && tsc -p apps/web/tsconfig.json --noEmit && vitest run --passWithNoTests",
+    "typecheck": "tsc -b && tsc -p apps/web/tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "sidecar": "pnpm --filter @scriptreel/ml dev",
+    "db:migrate": "supabase db push",
+    "db:types": "supabase gen types typescript --linked > packages/db/src/types.ts",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.3",
+    "@types/node": "22.20.1",
+    "husky": "9.1.7",
+    "turbo": "2.10.4",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+.next/
+next-env.d.ts
+dist/
+*.tsbuildinfo
+.turbo/
+
+# data & secrets
+data/
+.env
+.env.local
+
+# python
+.venv/
+services/ml/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# supabase local
+supabase/.branches/
+supabase/.temp/
+
+# test output
+coverage/
+
+# os
+.DS_Store

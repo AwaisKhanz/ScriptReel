@@ -1,21 +1,29 @@
 # 19 — Setup (macOS, Apple Silicon)
 
+> **Stack change — 2026-07-10:** DB is **Supabase Cloud** — skip Docker/OrbStack and `supabase start`; instead `supabase login --token <pat>`, `supabase link --project-ref <ref>`, then `pnpm db:migrate` (= `supabase db push`) and `pnpm db:types` (= `gen types --linked`). §4 (local DB) does not apply. LLM is **OpenAI GPT only** — skip Ollama (§3 Ollama note n/a); set `OPENAI_API_KEY`.
+
 Target: MacBook Pro M3 Pro, macOS 14+, ≥ 18 GB unified memory, ≥ 25 GB free disk. Everything below is free.
 
 ## 1. System dependencies
 
 ```bash
 # Homebrew packages
-brew install ffmpeg node@22 pnpm uv espeak-ng git-lfs
+brew install ffmpeg-full node@22 pnpm uv espeak-ng git-lfs   # NOTE: ffmpeg-full, not ffmpeg — see below
 brew install --cask orbstack            # or Docker Desktop — Supabase local needs a container runtime
 brew install supabase/tap/supabase
 
-ffmpeg -version | head -1                # must be 7.x
-ffmpeg -hide_banner -filters | grep -E 'zoompan|xfade|sidechaincompress|subtitles'  # all four required
-ffmpeg -hide_banner -encoders | grep videotoolbox                                    # h264_videotoolbox present
+FF=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg   # ffmpeg-full is keg-only (not symlinked onto PATH)
+"$FF" -version | head -1                # 8.x is fine
+"$FF" -hide_banner -filters | grep -E 'zoompan|xfade|sidechaincompress|subtitles'  # all four required
+"$FF" -hide_banner -encoders | grep videotoolbox                                    # h264_videotoolbox present
 ```
 
-If `ffmpeg` was built without `--enable-libass`, the `subtitles` filter is missing → reinstall from brew (the bottle includes it). `espeak-ng` is misaki's phonemizer fallback for several Kokoro languages; install it before touching TTS.
+**libass (updated 2026-07):** the plain Homebrew `ffmpeg` formula no longer bundles
+libass, so its `subtitles`/`ass` filters are missing and `brew reinstall ffmpeg`
+does **not** restore them. Install **`ffmpeg-full`** (keg-only, bottled) instead and
+point the app at it with `FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg` in
+`.env`. `espeak-ng` is misaki's phonemizer fallback for several Kokoro languages;
+install it before touching TTS.
 
 Python **3.12 exactly** (Kokoro's dependency chain does not support 3.13): `uv python install 3.12`.
 

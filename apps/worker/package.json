@@ -1,0 +1,19 @@
+{
+  "name": "@scriptreel/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@scriptreel/config": "workspace:*",
+    "pino": "10.3.1"
+  },
+  "devDependencies": {
+    "tsx": "4.23.0"
+  }
+}

@@ -1,5 +1,8 @@
 # 04 — Tech Stack (LOCKED)
 
+> **Stack change — 2026-07-10 (owner directive; supersedes the rows below where they conflict):**
+> **LLM = OpenAI GPT only** (no Ollama, no Gemini). **Database = Supabase Cloud** (no local Docker stack — media/renders still on local disk). Env: `LLM_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`).
+
 Pin exact minor versions in Phase 0 (`pnpm add`, `uv add`) and record them here in a `## Pinned` appendix. Verify each model's HF repo id at setup time (doc 19) — repo ids occasionally move.
 
 ## Application
@@ -53,3 +56,57 @@ Python **3.12** (hard requirement — Kokoro deps don't support 3.13), managed w
 - **Redis/BullMQ** → pg-boss on existing Postgres.
 - **Supabase cloud free tier for renders** → 1 GB storage dies immediately; local disk.
 - **SDXL-Turbo** → non-commercial license.
+
+## Pinned
+
+Recorded at Phase 0 (scaffold). JS versions are the exact resolved installs
+(`pnpm-lock.yaml`). Python versions are the intended specifiers from
+`services/ml/pyproject.toml`; **exact pins land in `services/ml/uv.lock` after
+`uv sync`** (uv + Python 3.12 were not yet installed on this machine — see the
+Phase 0 environment notes below).
+
+### JavaScript / TypeScript
+
+| Package | Version | Row it satisfies |
+|---|---|---|
+| next | 15.5.20 | Next.js 15 |
+| react / react-dom | 19.2.7 | React 19 |
+| tailwindcss | 4.3.2 | Tailwind CSS v4 |
+| @tailwindcss/postcss | 4.3.2 | Tailwind v4 PostCSS plugin |
+| pino | 10.3.1 | Logging: pino (worker) |
+| zod | 4.4.3 | zod (env + boundary validation) |
+| turbo | 2.10.4 | Monorepo: Turborepo |
+| typescript | 5.9.3 | TypeScript 5.x |
+| @biomejs/biome | 2.5.3 | Biome (doc 18) |
+| husky | 9.1.7 | Husky pre-commit (doc 18) |
+| vitest | 4.1.10 | Vitest (doc 18) |
+| tsx | 4.23.0 | Dev TS runner for worker/CLI (not a doc-04 row; approved Phase 0) |
+| @types/node | 22.20.1 | Types for Node 22 |
+| @types/react / @types/react-dom | 19.2.17 / 19.2.3 | Types for React 19 |
+
+### Python sidecar (`services/ml`, exact — from `uv.lock`)
+
+| Package | Version | Row it satisfies |
+|---|---|---|
+| fastapi | 0.139.0 | FastAPI + uvicorn |
+| uvicorn[standard] | 0.51.0 | FastAPI + uvicorn |
+| torch | 2.13.0 | torch (MPS build) — reports `device: mps` on M3 |
+| transformers | 5.13.0 | transformers (SigLIP 2) |
+| mlx / mlx-whisper | 0.32.0 / 0.4.3 | mlx, mlx-whisper |
+| kokoro / misaki | 0.9.4 / 0.9.4 | Kokoro-82M + misaki G2P ([en]; ja/zh added later per doc 19) |
+| soundfile / pillow | 0.14.0 / 12.3.0 | soundfile, Pillow |
+| numpy | 1.26.4 | numpy<2 where required |
+| huggingface-hub | 1.23.0 | Model download for `fetch_models.py` (not a doc-04 row; approved Phase 0) |
+| pytest / httpx (dev) | 9.1.1 / 0.28.1 | pytest for the sidecar (doc 18) |
+
+### Toolchain / system (Phase 0, resolved)
+
+| Tool | Version | Note |
+|---|---|---|
+| Node | 22.12.0 | LTS, matches @types/node major |
+| pnpm | 9.15.9 | `packageManager` pin |
+| uv | 0.11.28 | Python package manager |
+| Python | 3.12.13 | via `uv python install 3.12` |
+| supabase CLI | 2.100.0 | local stack |
+| espeak-ng / git-lfs | installed | doc 19 §1 |
+| **FFmpeg** | **ffmpeg-full 8.1.2** | ⚠️ **Correction to doc 19:** the plain Homebrew `ffmpeg` formula no longer bundles libass (no `subtitles`/`ass` filter, even after `brew reinstall`). Install **`ffmpeg-full`** (keg-only, bottled) and set `FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`. Verified: libass on; `subtitles`/`ass`/`xfade`/`zoompan`/`sidechaincompress` + `h264_videotoolbox` all present; ASS burn test renders. |

@@ -4,6 +4,8 @@
 
 Turn the raw script into an ordered list of **visual beats** — the atomic unit of the whole system. A beat is a contiguous verbatim slice of the script that shares one visual idea and will map to one media asset. Beats target 4–10 s of narration (pacing-adjusted); **never** naive sentence splitting.
 
+> **Stack change — 2026-07-10:** the analyzer is **OpenAI GPT only** (`OpenAiAnalyzer`, OpenAI SDK structured outputs, env `OPENAI_API_KEY` / `OPENAI_MODEL`). The Gemini and Ollama analyzers are removed — ignore Gemini/Ollama references throughout this doc.
+
 ## Interface
 
 ```ts

@@ -1,5 +1,7 @@
 # 03 — Architecture
 
+> **Stack change — 2026-07-10:** the DB is **Supabase Cloud** (no local Docker `supabase start`); the LLM is **OpenAI GPT only** (no Ollama/Gemini). Read the diagram and key list below with that substitution.
+
 ## Processes (all local on the M3 Pro)
 
 ```
@@ -82,4 +84,4 @@ data/
 
 ## Configuration
 
-Single `.env` at repo root, loaded and zod-validated in `packages/config/env.ts` (fail fast with a readable list of missing vars). Keys: `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `DATA_DIR`, `SIDECAR_URL`, `PEXELS_API_KEY`, `PIXABAY_API_KEY`, `LLM_PROVIDER=gemini|ollama`, `GEMINI_API_KEY?`, `GEMINI_MODEL`, `OLLAMA_MODEL`, `FFMPEG_PATH?`.
+Single `.env` at repo root, loaded and zod-validated in `packages/config/env.ts` (fail fast with a readable list of missing vars). Keys: `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `DATA_DIR`, `SIDECAR_URL`, `PEXELS_API_KEY`, `PIXABAY_API_KEY`, `LLM_PROVIDER=openai`, `OPENAI_API_KEY?`, `OPENAI_MODEL`, `FFMPEG_PATH?`.

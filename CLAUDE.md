@@ -8,18 +8,18 @@ AI script-to-video generator. Local-first, free stack, Apple Silicon (M3 Pro). F
 pnpm dev            # web :3000 + worker + sidecar :8484 (turbo)
 pnpm sidecar        # sidecar alone (uv run uvicorn)
 pnpm check          # tsc -b + biome check + vitest      ← must be green to finish a phase
-pnpm db:migrate     # supabase db reset (applies migrations)
+pnpm db:migrate     # supabase db push (applies migrations to Supabase Cloud)
 pnpm db:types       # regenerate packages/db types
 pnpm stage <name> --project <id>   # run one pipeline stage from the CLI
 pnpm eval:matching  # matching precision@1 over the labeled set
 pnpm test:drift <projectId>        # subtitle alignment drift
 ```
 
-Prereqs and model downloads: `docs/19-SETUP-MACOS.md`. `supabase start` must be running.
+Prereqs and model downloads: `docs/19-SETUP-MACOS.md`. The DB is Supabase **Cloud** (no local Docker stack); the CLI is linked, so `pnpm db:migrate` pushes migrations to cloud.
 
 ## Architecture in one paragraph
 
-Three local processes: **web** (Next.js 15 — UI + thin API routes), **worker** (Node 22 — the pipeline, providers, FFmpeg), **sidecar** (Python 3.12 FastAPI — models only: Kokoro TTS, SigLIP 2 embeddings, mlx-whisper alignment, Pillow text cards, optional FLUX). Postgres via local Supabase; pg-boss for jobs; media and renders on disk under `DATA_DIR`. Stages: `analyze → search → score → [review gate] → tts → align → fetch → compose`.
+Three local processes: **web** (Next.js 15 — UI + thin API routes), **worker** (Node 22 — the pipeline, providers, FFmpeg), **sidecar** (Python 3.12 FastAPI — models only: Kokoro TTS, SigLIP 2 embeddings, mlx-whisper alignment, Pillow text cards, optional FLUX). Postgres via Supabase **Cloud** (no local Docker); pg-boss for jobs; media and renders on disk under `DATA_DIR`. Stages: `analyze → search → score → [review gate] → tts → align → fetch → compose`.
 
 ## Non-negotiable invariants
 
@@ -46,9 +46,9 @@ Three local processes: **web** (Next.js 15 — UI + thin API routes), **worker**
 ## Sharp edges
 
 - Kokoro needs Python **3.12** (not 3.13); Japanese needs `unidic` (`make setup-ja`); several languages need `espeak-ng`.
-- FFmpeg must be a libass-enabled build (brew's is). `zoompan` jitters unless you pre-scale ~1.5–2× first.
+- FFmpeg must be a libass-enabled build — plain brew `ffmpeg` is **not** (no `subtitles`/`ass` filter); install `ffmpeg-full` (keg-only) and set `FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`. `zoompan` jitters unless you pre-scale ~1.5–2× first.
 - `xfade` requires identical geometry/fps/pixel format on both inputs; offsets are computed in `buildTimeline`, not improvised in the filtergraph.
 - libass `\k` sweeps `SecondaryColour → PrimaryColour` — for the `pop` preset the accent is *Primary*.
 - Pexels: 200 req/h. Pixabay: 100 req/60 s and responses **must** be cached 24 h.
-- Gemini free tier may train on inputs → `LLM_PROVIDER=ollama` for anything private.
+- LLM is **OpenAI GPT only** — no local LLM (owner directive 2026-07-10). Set `OPENAI_API_KEY`; `LLM_PROVIDER=openai`, default `OPENAI_MODEL=gpt-4o-mini`. No Docker; DB is Supabase Cloud.
 - SigLIP cosine thresholds are model-specific. Never copy `τ` values across model versions; re-run `pnpm eval:matching`.
