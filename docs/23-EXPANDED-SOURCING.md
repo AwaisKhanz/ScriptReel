@@ -21,9 +21,9 @@ NOAA, USGS, ESA) are follow-ons, added the same way once the framework proves ou
 | Pexels *(have)* | video + photo | Pexels License (commercial, no attrib) | modern generic B-roll | key |
 | Pixabay *(have)* | video + photo | Pixabay License | modern generic B-roll | key |
 | **Openverse** | image | CC/PD, **filter to cc0,pdm,by** | universal CC image reach (aggregator) | none (key = higher limits) |
-| **Wikimedia Commons** | image (+ some AV) | per-file PD/CC0/BY/BY-SA | **named** people/places/events, science, history | none (MediaWiki API) |
+| **Wikimedia Commons** | image (+ some AV) | per-file PD/CC0/BY/BY-SA | **named** people/places/events, science, history | none, or OAuth 2.0 (higher limits) |
 | **Internet Archive** | **video**, audio, image | per-item (filter to PD/CC) | public-domain **video**, historical film | none |
-| **NASA** | image + video | mostly public domain | space, Earth, science | none |
+| **NASA** | image + video | mostly public domain | space, Earth, science | none, or api.nasa.gov key (higher limits) |
 | **Smithsonian Open Access** | image | **CC0** | museum objects, art, nature, history | key (free) |
 
 Video sources for clip intelligence (§7): Pexels, Pixabay, **Internet Archive**, **NASA**. Image
@@ -82,7 +82,13 @@ bearer token (Openverse), or nothing (NASA). One declarative source of truth in 
 
 **Adding a new provider** is then: (1) add its `ProviderId` + budgets/windows + credential fields in
 core, (2) one `MediaProvider` module using `applyAuth`, (3) a `resolveAuth` case only if it needs a
-non-trivial exchange. No changes to the DB, admin API, or Settings UI — they're all credential-driven.
+non-trivial exchange. No changes to the DB, admin API, or Settings UI — they're all credential-driven
+(the key manager renders exactly the providers in `KEYED_PROVIDERS`). NASA (api.nasa.gov key → query
+`api_key`) and Wikimedia (OAuth 2.0 client_credentials → bearer) are optionally keyed this way: a key
+raises their limits and, crucially, enrolls the account in `QuotaGuard.reserve`'s **rotation** — the
+guard fills one key until its per-key window is at budget, then advances to the next (sequential
+fill), and only throws `E_QUOTA_*` when every pooled key is exhausted (then the search degrades).
+Every keyed provider is validated + limit-checked live via the per-key **Test** (doc 22 §budgets).
 
 ## 5. Domain router (accuracy)
 

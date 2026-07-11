@@ -1,4 +1,10 @@
-import type { MediaProvider, RawCandidate, RequestAuth, SearchQuery } from '@scriptreel/core';
+import {
+  applyAuth,
+  type MediaProvider,
+  type RawCandidate,
+  type RequestAuth,
+  type SearchQuery,
+} from '@scriptreel/core';
 import { z } from 'zod';
 
 // NASA image library (doc 23): public-domain space/science/Earth imagery, no key.
@@ -31,7 +37,7 @@ function fullRes(preview: string): string {
 export class NasaProvider implements MediaProvider {
   readonly id = 'nasa' as const;
 
-  async search(query: SearchQuery, _auth: RequestAuth): Promise<RawCandidate[]> {
+  async search(query: SearchQuery, auth: RequestAuth): Promise<RawCandidate[]> {
     if (query.kind === 'video') return []; // image-only for now
 
     const url = new URL(NASA_BASE);
@@ -39,10 +45,11 @@ export class NasaProvider implements MediaProvider {
     url.searchParams.set('media_type', 'image');
     url.searchParams.set('page_size', String(query.perPage));
 
-    const res = await fetch(url, {
-      headers: { 'user-agent': 'ScriptReel/1.0 (local script-to-video)' },
-      signal: AbortSignal.timeout(12_000),
-    });
+    const headers: Record<string, string> = {
+      'user-agent': 'ScriptReel/1.0 (local script-to-video)',
+    };
+    applyAuth(url, headers, auth); // optional ?api_key=<key> (anonymous otherwise)
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
     if (!res.ok) throw new Error(`nasa /search → HTTP ${res.status}`);
     const parsed = NasaResponse.parse(await res.json());
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { credentialFields, type ProviderId } from '@scriptreel/core';
+import { credentialFields, KEYED_PROVIDERS, type ProviderId } from '@scriptreel/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Pills } from '../../components/controls';
@@ -39,8 +39,9 @@ interface KeyRow {
   active: boolean;
   fields: FieldView[];
 }
-// Providers that accept pooled credentials (NASA is keyless → not addable).
-const KEY_PROVIDERS = ['pexels', 'pixabay', 'openverse'] as const;
+// Providers that accept pooled credentials — the single source of truth is core's
+// KEYED_PROVIDERS (derived from PROVIDER_CREDENTIALS), so no list to keep in sync.
+const KEY_PROVIDERS = KEYED_PROVIDERS;
 const PROVIDER_OPTIONS = KEY_PROVIDERS.map((p) => ({
   value: p,
   label: p.charAt(0).toUpperCase() + p.slice(1),
@@ -49,6 +50,16 @@ const PROVIDER_HELP: Record<string, string> = {
   pexels: 'https://www.pexels.com/api/',
   pixabay: 'https://pixabay.com/api/docs/',
   openverse: 'https://api.openverse.org/v1/auth_tokens/register/',
+  nasa: 'https://api.nasa.gov/',
+  wikimedia: 'https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration',
+};
+// Providers usable without a key — the field is optional (raises limits / joins rotation).
+const PROVIDER_NOTE: Record<string, string> = {
+  openverse:
+    'Optional — Openverse works anonymously (200/day). Adding an app id + secret raises the limit; the worker exchanges them for a 12-hour token and refreshes it automatically.',
+  nasa: 'Optional — NASA image search works without a key. An api.nasa.gov key lifts limits and lets the account join the pooled rotation.',
+  wikimedia:
+    'Optional — Wikimedia Commons works anonymously. An OAuth 2.0 consumer (client id + secret) raises rate limits; the worker exchanges them for a bearer token automatically.',
 };
 
 export default function SettingsPage() {
@@ -314,11 +325,8 @@ function KeysSection() {
               </Button>
             </div>
           </div>
-          {provider === 'openverse' && (
-            <p className="mt-2 text-xs text-fg-subtle">
-              Optional — Openverse works anonymously (200/day). Adding an app id + secret raises the
-              limit; the worker exchanges them for a 12-hour token and refreshes it automatically.
-            </p>
+          {PROVIDER_NOTE[provider] && (
+            <p className="mt-2 text-xs text-fg-subtle">{PROVIDER_NOTE[provider]}</p>
           )}
           {error && <p className="mt-2 text-sm text-danger">{error}</p>}
         </div>

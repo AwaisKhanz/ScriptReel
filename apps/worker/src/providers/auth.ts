@@ -1,13 +1,18 @@
 import type { ProviderCredentials, ProviderId, RequestAuth } from '@scriptreel/core';
 
-// Turns a pooled key's stored credentials into request auth (doc 23). Static keys
-// map straight through; OAuth providers exchange client credentials for a bearer
-// token and cache/refresh it. Providers never see this flow — they get RequestAuth.
+// Turns a pooled key's stored credentials into request auth (doc 23). Static keys map
+// straight through (header/query); OAuth 2.0 providers exchange client credentials for
+// a bearer token via the client_credentials grant and cache/refresh it. Providers never
+// see this flow — they get a resolved RequestAuth.
 
-const OPENVERSE_TOKEN_URL = 'https://api.openverse.org/v1/auth_tokens/token/';
+// OAuth 2.0 client_credentials token endpoints, keyed by provider.
+const OAUTH_TOKEN_URL: Partial<Record<ProviderId, string>> = {
+  openverse: 'https://api.openverse.org/v1/auth_tokens/token/',
+  wikimedia: 'https://meta.wikimedia.org/w/rest.php/oauth2/access_token',
+};
 
-// clientId → { token, expiresAt(ms) }. Process-lifetime cache (the worker is long
-// lived); Openverse tokens last ~12 h, we refresh 60 s early.
+// `${provider}:${clientId}` → { token, expiresAt(ms) }. Process-lifetime cache (the
+// worker is long lived); refreshed 60 s before expiry.
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 export async function resolveAuth(
@@ -21,18 +26,34 @@ export async function resolveAuth(
         : { kind: 'none' };
     case 'pixabay':
       return creds.apiKey ? { kind: 'query', name: 'key', value: creds.apiKey } : { kind: 'none' };
-    case 'openverse': {
+    case 'nasa':
+      // Optional api.nasa.gov key; anonymous otherwise. images-api ignores it but
+      // api.nasa.gov honors it, and it lets the key join the pooled rotation.
+      return creds.apiKey
+        ? { kind: 'query', name: 'api_key', value: creds.apiKey }
+        : { kind: 'none' };
+    case 'openverse':
+    case 'wikimedia': {
       if (!creds.clientId || !creds.clientSecret) return { kind: 'none' }; // anonymous
-      const token = await openverseToken(creds.clientId, creds.clientSecret);
+      const token = await oauthToken(provider, creds.clientId, creds.clientSecret);
       return { kind: 'header', name: 'Authorization', value: `Bearer ${token}` };
     }
     default:
-      return { kind: 'none' }; // nasa + anything keyless
+      return { kind: 'none' };
   }
 }
 
-async function openverseToken(clientId: string, clientSecret: string): Promise<string> {
-  const cached = tokenCache.get(clientId);
+// OAuth 2.0 client_credentials grant, cached until ~expiry. Openverse and Wikimedia
+// share the exact flow, differing only by token endpoint.
+async function oauthToken(
+  provider: ProviderId,
+  clientId: string,
+  clientSecret: string,
+): Promise<string> {
+  const url = OAUTH_TOKEN_URL[provider];
+  if (!url) throw new Error(`no OAuth token endpoint for ${provider}`);
+  const cacheKey = `${provider}:${clientId}`;
+  const cached = tokenCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
 
   const body = new URLSearchParams({
@@ -40,17 +61,16 @@ async function openverseToken(clientId: string, clientSecret: string): Promise<s
     client_id: clientId,
     client_secret: clientSecret,
   });
-  const res = await fetch(OPENVERSE_TOKEN_URL, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body,
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`openverse token exchange → HTTP ${res.status}`);
-  const json = (await res.json()) as { access_token: string; expires_in: number };
-  tokenCache.set(clientId, {
-    token: json.access_token,
-    expiresAt: Date.now() + json.expires_in * 1000,
-  });
+  if (!res.ok) throw new Error(`${provider} token exchange → HTTP ${res.status}`);
+  const json = (await res.json()) as { access_token: string; expires_in?: number };
+  // Some issuers omit expires_in for client_credentials; default to 1 h and refresh.
+  const ttlSec = json.expires_in ?? 3600;
+  tokenCache.set(cacheKey, { token: json.access_token, expiresAt: Date.now() + ttlSec * 1000 });
   return json.access_token;
 }

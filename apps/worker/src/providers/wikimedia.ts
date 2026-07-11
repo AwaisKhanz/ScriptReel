@@ -1,4 +1,10 @@
-import type { MediaProvider, RawCandidate, RequestAuth, SearchQuery } from '@scriptreel/core';
+import {
+  applyAuth,
+  type MediaProvider,
+  type RawCandidate,
+  type RequestAuth,
+  type SearchQuery,
+} from '@scriptreel/core';
 import { z } from 'zod';
 
 // Wikimedia Commons (doc 23): the universal named-subject archive — people, places,
@@ -66,7 +72,7 @@ function value(field: { value: string } | null | undefined): string | undefined 
 export class WikimediaProvider implements MediaProvider {
   readonly id = 'wikimedia' as const;
 
-  async search(query: SearchQuery, _auth: RequestAuth): Promise<RawCandidate[]> {
+  async search(query: SearchQuery, auth: RequestAuth): Promise<RawCandidate[]> {
     if (query.kind === 'video') return []; // image-only for now
 
     const url = new URL(COMMONS_API);
@@ -86,10 +92,11 @@ export class WikimediaProvider implements MediaProvider {
       'License|LicenseShortName|LicenseUrl|Artist|Attribution|Credit',
     );
 
-    const res = await fetch(url, {
-      headers: { 'user-agent': 'ScriptReel/1.0 (local script-to-video; free CC/PD media)' },
-      signal: AbortSignal.timeout(12_000),
-    });
+    const headers: Record<string, string> = {
+      'user-agent': 'ScriptReel/1.0 (local script-to-video; free CC/PD media)',
+    };
+    applyAuth(url, headers, auth); // optional Authorization: Bearer <OAuth token>
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
     if (!res.ok) throw new Error(`wikimedia /api → HTTP ${res.status}`);
     const parsed = CommonsResponse.parse(await res.json());
 

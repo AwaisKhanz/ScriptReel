@@ -12,7 +12,9 @@ export interface CredentialField {
   hint?: string;
 }
 
-// Empty array = keyless provider (not shown in the key manager).
+// Fields a provider needs. Empty array ⇒ purely keyless (never shown in the key
+// manager). NASA and Wikimedia also work anonymously, but accept optional credentials
+// to lift their rate limits and to join the pooled rotation (doc 23 §4).
 export const PROVIDER_CREDENTIALS: Record<ProviderId, CredentialField[]> = {
   pexels: [{ name: 'apiKey', label: 'API key', secret: true }],
   pixabay: [{ name: 'apiKey', label: 'API key', secret: true }],
@@ -25,9 +27,24 @@ export const PROVIDER_CREDENTIALS: Record<ProviderId, CredentialField[]> = {
     },
     { name: 'clientSecret', label: 'Client secret', secret: true },
   ],
-  nasa: [], // keyless
-  wikimedia: [], // keyless (Commons API is anonymous; a User-Agent is enough)
+  nasa: [{ name: 'apiKey', label: 'API key', secret: true, hint: 'get a key at api.nasa.gov' }],
+  wikimedia: [
+    {
+      name: 'clientId',
+      label: 'Client ID',
+      secret: false,
+      hint: 'OAuth 2.0 consumer at meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration',
+    },
+    { name: 'clientSecret', label: 'Client secret', secret: true },
+  ],
 };
+
+// Providers that accept pooled credentials (i.e. declare ≥1 field) — the single source
+// of truth for the admin API's allow-list and the Settings key manager (no per-provider
+// UI lists to keep in sync).
+export const KEYED_PROVIDERS: readonly ProviderId[] = (
+  Object.keys(PROVIDER_CREDENTIALS) as ProviderId[]
+).filter((p) => PROVIDER_CREDENTIALS[p].length > 0);
 
 export type ProviderCredentials = Record<string, string>;
 
