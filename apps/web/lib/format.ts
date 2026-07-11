@@ -1,13 +1,16 @@
-export function fmtDuration(sec: number | null | undefined): string {
-  if (sec == null || !Number.isFinite(sec)) return '—';
-  const s = Math.round(sec);
+// Postgres numeric columns arrive as strings via postgres.js — coerce before math.
+export function fmtDuration(sec: number | string | null | undefined): string {
+  const n = typeof sec === 'string' ? Number(sec) : sec;
+  if (n == null || !Number.isFinite(n)) return '—';
+  const s = Math.round(n);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-export function fmtBytes(bytes: number | null | undefined): string {
-  if (!bytes) return '—';
-  const mb = bytes / 1_048_576;
-  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+export function fmtBytes(bytes: number | string | null | undefined): string {
+  const n = typeof bytes === 'string' ? Number(bytes) : bytes;
+  if (!n || !Number.isFinite(n)) return '—';
+  const mb = n / 1_048_576;
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
 }
 
 const WORDS_PER_SEC = 2.7; // en baseline (doc 10); rough estimate for the wizard rail

@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Badge, Button, Card, Skeleton } from '../../components/ui';
+import { Badge, Button, Card, Dot, ProgressBar, Skeleton } from '../../components/ui';
 
 interface Health {
   ok: boolean;
@@ -20,6 +20,7 @@ export default function SettingsPage() {
   const health = useQuery<Health>({
     queryKey: ['health'],
     queryFn: () => fetch('/api/health').then((r) => r.json()),
+    refetchInterval: 30_000,
   });
   const quota = useQuery<Quota>({
     queryKey: ['quota'],
@@ -28,20 +29,29 @@ export default function SettingsPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+    <div className="space-y-8 animate-[var(--animate-fade-up)]">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <p className="mt-1 text-sm text-fg-muted">
+          Local engine status, models, and provider budgets.
+        </p>
+      </div>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-fg-muted">System health</h2>
-          <Button variant="ghost" onClick={() => health.refetch()}>
+          <h2 className="text-sm font-semibold">System health</h2>
+          <Button variant="ghost" size="sm" onClick={() => health.refetch()}>
             Re-check
           </Button>
         </div>
         {health.isLoading ? (
-          <Skeleton className="h-28" />
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-24" />
+            ))}
+          </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <HealthCard title="Database" ok={health.data?.checks.db.ok} />
             <HealthCard
               title="Sidecar"
@@ -73,11 +83,12 @@ export default function SettingsPage() {
       </section>
 
       {health.data?.checks.sidecar.models && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium text-fg-muted">Models</h2>
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold">Models</h2>
           <Card className="flex flex-wrap gap-2">
             {Object.entries(health.data.checks.sidecar.models).map(([name, state]) => (
               <Badge key={name} tone={state === 'loaded' ? 'success' : 'neutral'}>
+                {state === 'loaded' && <Dot tone="success" />}
                 {name}: {state}
               </Badge>
             ))}
@@ -85,28 +96,31 @@ export default function SettingsPage() {
         </section>
       )}
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-medium text-fg-muted">Provider quota</h2>
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">Provider quota</h2>
         {quota.isLoading ? (
-          <Skeleton className="h-24" />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-24" />
+            ))}
+          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             {quota.data?.meters.map((m) => {
-              const pct = Math.round((m.used / m.budget) * 100);
+              const pct = m.budget > 0 ? Math.round((m.used / m.budget) * 100) : 0;
+              const tone = pct > 85 ? 'danger' : pct > 60 ? 'progress' : 'accent';
               return (
-                <Card key={m.key} className="space-y-2">
+                <Card key={m.key} className="space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="capitalize">{m.key.replace(':', ' / ')}</span>
+                    <span className="font-medium capitalize">{m.key.replace(':', ' · ')}</span>
                     <span className="font-mono text-xs text-fg-muted">
-                      {m.used}/{m.budget}
+                      {m.used.toLocaleString()}/{m.budget.toLocaleString()}
                     </span>
                   </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-                    <div
-                      className={`h-full rounded-full ${pct > 85 ? 'bg-danger' : 'bg-accent'}`}
-                      style={{ width: `${Math.min(100, pct)}%` }}
-                    />
-                  </div>
+                  <ProgressBar value={pct} tone={tone} className="h-1.5" />
+                  <p className="text-xs text-fg-subtle">
+                    {m.remaining.toLocaleString()} left this {m.unit}
+                  </p>
                 </Card>
               );
             })}
@@ -127,12 +141,10 @@ function HealthCard({
   detail?: string | undefined;
 }) {
   return (
-    <Card className="space-y-1">
+    <Card className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">{title}</span>
-        <span
-          className={`size-2.5 rounded-full ${ok ? 'bg-success' : ok === false ? 'bg-danger' : 'bg-surface-2'}`}
-        />
+        <span className="text-sm font-semibold">{title}</span>
+        <Dot tone={ok ? 'success' : ok === false ? 'danger' : 'neutral'} pulse={ok === true} />
       </div>
       <div className="truncate text-xs text-fg-subtle">
         {detail ?? (ok ? 'healthy' : 'unavailable')}

@@ -1,52 +1,29 @@
 # 17 — Design System
 
-Dark studio aesthetic: video tools live in the dark so the content is the brightest thing on screen. One accent, used sparingly, for *the thing you should click* and *the thing that's alive*.
+**Dual-theme studio aesthetic (redesigned 2026-07-11).** A clean, professional app shell (left sidebar + topbar) that ships **light and dark** modes. Light is airy and neutral; dark is a deep studio so the content is the brightest thing on screen. One indigo→violet→blue **brand gradient** carries "the thing you should click" and "the thing that's alive"; solid `--color-accent` (indigo) carries active/selected states. Motion is tasteful (fade-up on mount, shimmer skeletons, animated hero gradient, per-stage progress) and respects `prefers-reduced-motion`.
 
-## Tokens (`apps/web/app/globals.css`, Tailwind v4 `@theme`)
+## Theming mechanism (`apps/web/app/globals.css`, Tailwind v4 `@theme`)
+
+Semantic color tokens are declared in `@theme` with **light** values (so `:root` = light and the `bg-*/text-*/border-*` utilities generate). The `.dark` class (on `<html>`) overrides the same `--color-*` names with dark values. A tiny inline boot script in `layout.tsx` sets the class before first paint (localStorage → `prefers-color-scheme`) so there is no flash; the topbar toggle flips it and persists to `localStorage.theme`. `@custom-variant dark (&:where(.dark, .dark *))` enables `dark:` utilities where a token swap isn't enough.
 
 ```css
-@import "tailwindcss";
-
-@theme {
-  /* surfaces — each step ≈ +3% lightness, never pure black */
-  --color-bg:            #0A0C10;   /* app background */
-  --color-surface:       #11141A;   /* cards, rails */
-  --color-surface-2:     #171B23;   /* raised: drawers, dialogs, hover */
-  --color-border:        #232833;   /* 1px hairlines */
-  --color-border-strong: #333A48;
-
-  /* foreground */
-  --color-fg:            #E8EBF0;
-  --color-fg-muted:      #98A1B2;   /* ≥ 4.5:1 on --color-bg */
-  --color-fg-subtle:     #6B7385;   /* metadata only, never body text */
-
-  /* accent + semantics */
-  --color-accent:        #7C5CFF;   /* violet — primary actions, active states */
-  --color-accent-hover:  #8E72FF;
-  --color-accent-quiet:  #7C5CFF1F; /* 12% wash for selected rows */
-  --color-progress:      #F5A524;   /* amber — running/working, never success */
-  --color-success:       #29C489;
-  --color-warning:       #E8B84B;
-  --color-danger:        #F0556B;
-
-  /* type */
-  --font-sans: "Inter var", Inter, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --text-xs: 0.75rem; --text-sm: 0.875rem; --text-base: 0.9375rem;
-  --text-lg: 1.125rem; --text-xl: 1.375rem; --text-2xl: 1.75rem; --text-3xl: 2.25rem;
-
-  /* shape & depth */
-  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px; --radius-xl: 20px;
-  --shadow-card: 0 1px 2px #0006;
-  --shadow-pop:  0 12px 32px -8px #000A, 0 0 0 1px var(--color-border);
-
-  /* motion */
-  --ease-out: cubic-bezier(.16,1,.3,1);
-  --dur-fast: 120ms; --dur-base: 180ms; --dur-slow: 280ms;
+@theme {                              /* light defaults; .dark {} overrides these */
+  --color-bg / surface / surface-2 / surface-3;   /* app bg → cards → raised → deeper */
+  --color-border / border-strong;                 /* hairlines */
+  --color-fg / fg-muted / fg-subtle;              /* body → labels → metadata only */
+  --color-accent / accent-hover / accent-fg / accent-quiet;  /* indigo #6366F1 light, #818CF8 dark */
+  --color-progress / success / warning / danger;  /* amber running · emerald · amber · red */
+  --brand-1 #7C5CFF / --brand-2 #6366F1 / --brand-3 #4F86F7;  /* gradient stops (shared) */
+  --font-sans (Inter, next/font) / --font-mono (JetBrains Mono, next/font);
+  --text-xs…4xl; --radius-sm…2xl; --shadow-xs…lg + --shadow-glow;
+  --ease-out / --ease-spring; --dur-fast 120 / base 200 / slow 320;
+  --animate-fade-up / fade-in / scale-in / shimmer / gradient / pulse-ring / float;
 }
 ```
 
-**Rules.** No hardcoded hex, px radius, or duration anywhere in components — token or nothing. Spacing is Tailwind's 4px scale; layout gutters are `space-6` (24px) desktop, `space-4` mobile. Body text `--text-base` at `leading-relaxed`; metadata `--text-xs` in `--color-fg-subtle`. Exactly one `--color-accent` element per view region.
+Component classes in `@layer components`: `.brand-gradient`, `.brand-gradient-animated`, `.text-gradient`, `.hero-surface`, `.app-mesh`, `.skeleton` (shimmer sheen), `.card-interactive` (hover lift), `.accent-rule` (gradient hairline). Reusable UI primitives live in `components/ui.tsx` (Button, Card, Badge, Dot, ProgressBar, Spinner, Skeleton, ErrorPanel) and `components/controls.tsx` (Field, Pills, Slider, AspectToggle); the shell is `components/shell.tsx` (Sidebar, Topbar, ThemeToggle, systems pill).
+
+**Rules.** No hardcoded hex, px radius, or duration in components — token or nothing (raw values allowed only inside `globals.css`, which biome excludes). Both themes must stay legible: rely on semantic tokens that auto-swap rather than `dark:` one-offs. Spacing is Tailwind's 4px scale. Body text `--text-base`; metadata `--text-xs` in `--color-fg-subtle`. The brand gradient is the single "alive/click" cue per region.
 
 ## Component conventions
 
