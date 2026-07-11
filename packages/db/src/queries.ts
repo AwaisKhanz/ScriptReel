@@ -358,6 +358,46 @@ export async function setBeatChosenCandidate(
   await sql`update beats set chosen_candidate_id = ${chosenCandidateId} where id = ${beatId}`;
 }
 
+// Owning project + its status for a beat — the storyboard PATCH/research routes
+// gate on `awaiting_review` (doc 15).
+export async function getBeatOwner(
+  beatId: string,
+): Promise<{ projectId: string; status: ProjectStatus } | null> {
+  const rows = await sql<{ projectId: string; status: ProjectStatus }[]>`
+    select b.project_id as "projectId", p.status
+    from beats b join projects p on p.id = b.project_id
+    where b.id = ${beatId}`;
+  return rows[0] ?? null;
+}
+
+export async function candidateBelongsToBeat(
+  beatId: string,
+  candidateId: string,
+): Promise<boolean> {
+  const rows = await sql`
+    select 1 from candidates where id = ${candidateId} and beat_id = ${beatId} limit 1`;
+  return rows.length > 0;
+}
+
+// Beats + their top-8 candidates by rank, for the storyboard (doc 16). One query
+// for all candidates, grouped in memory (avoids N+1 across beats).
+export async function getStoryboard(
+  projectId: string,
+): Promise<{ beat: BeatRow; candidates: CandidateRow[] }[]> {
+  const beats = await getBeats(projectId);
+  if (beats.length === 0) return [];
+  const ids = beats.map((b) => b.id);
+  const cands = await sql<CandidateRow[]>`
+    select * from candidates where beat_id = any(${ids}) order by rank nulls last, id`;
+  const byBeat = new Map<string, CandidateRow[]>();
+  for (const c of cands) {
+    const arr = byBeat.get(c.beat_id);
+    if (arr) arr.push(c);
+    else byBeat.set(c.beat_id, [c]);
+  }
+  return beats.map((beat) => ({ beat, candidates: (byBeat.get(beat.id) ?? []).slice(0, 8) }));
+}
+
 export type AssetCacheRow = Database['public']['Tables']['asset_cache']['Row'];
 
 export interface AssetCacheInsert {

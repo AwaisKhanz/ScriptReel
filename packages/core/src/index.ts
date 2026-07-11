@@ -8,6 +8,7 @@ export * from './constants';
 export * from './emotion';
 export * from './errors';
 export * from './hash';
+export * from './invalidation';
 export * from './jobs';
 export * from './matching';
 export * from './progress';

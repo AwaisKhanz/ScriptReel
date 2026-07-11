@@ -1,6 +1,8 @@
 import {
   ASPECTS,
+  invalidatedStages,
   MUSIC_MOODS,
+  narrowestMode,
   type ProjectSettings,
   QUALITIES,
   STAGES,
@@ -42,17 +44,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const patch = Object.fromEntries(
     Object.entries(parsed.data).filter(([, v]) => v !== undefined),
   ) as Partial<ProjectSettings>;
-  const aspectChanged =
-    patch.aspect !== undefined && patch.aspect !== (project.settings as { aspect?: string }).aspect;
-  const invalidatedStages = aspectChanged ? ['search', 'score', 'fetch', 'compose'] : ['compose'];
+
+  // Same computation the UI's dry-run preview uses (doc 12: the preview never lies).
+  const current = project.settings as Partial<ProjectSettings>;
+  const stages = invalidatedStages(patch, current);
+  const mode = narrowestMode(stages);
 
   try {
     await db.updateProjectSettings(id, patch);
     await db.ensurePipelineRuns(id, STAGES);
     await db.clearCancel(id);
     await db.setProjectStatus(id, 'queued');
-    await enqueuePipeline(id, aspectChanged ? 'full' : 'composeOnly');
-    return NextResponse.json({ invalidatedStages }, { status: 202 });
+    await enqueuePipeline(id, mode);
+    return NextResponse.json({ invalidatedStages: stages }, { status: 202 });
   } catch (error) {
     return NextResponse.json({ error: 'rerender failed', detail: String(error) }, { status: 502 });
   }

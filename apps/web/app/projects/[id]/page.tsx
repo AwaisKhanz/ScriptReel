@@ -1,7 +1,9 @@
 'use client';
 
 import { use, useState } from 'react';
+import { type Editable, RerenderPanel } from '../../../components/RerenderPanel';
 import { StageStepper } from '../../../components/StageStepper';
+import { Storyboard } from '../../../components/Storyboard';
 import {
   Badge,
   Button,
@@ -14,6 +16,18 @@ import {
 } from '../../../components/ui';
 import { type Render, useProject } from '../../../hooks/useProject';
 import { fileUrl, fmtBytes, fmtDuration } from '../../../lib/format';
+
+// Pull the re-render panel's editable subset out of the stored settings blob.
+function rerenderCurrent(settings: Record<string, unknown>): Editable {
+  return {
+    aspect: (settings.aspect as Editable['aspect']) ?? '16:9',
+    quality: (settings.quality as Editable['quality']) ?? 'final',
+    subtitlePreset: (settings.subtitlePreset as Editable['subtitlePreset']) ?? 'clean',
+    subtitlePosition: (settings.subtitlePosition as Editable['subtitlePosition']) ?? 'bottom',
+    musicMood: (settings.musicMood as Editable['musicMood']) ?? 'auto',
+    musicLevelDb: (settings.musicLevelDb as number) ?? -16,
+  };
+}
 
 export default function Workspace({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -88,7 +102,12 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
       )}
 
       {status === 'awaiting_review' && (
-        <ReviewPane onApprove={() => post('continue')} busy={busy} runs={runs} />
+        <Storyboard
+          projectId={id}
+          aspect={(project.settings.aspect as string) ?? '16:9'}
+          busy={busy}
+          onApprove={() => post('continue')}
+        />
       )}
 
       {status === 'failed' && (
@@ -99,7 +118,16 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
         />
       )}
 
-      {status === 'done' && renders[0] && <Result render={renders[0]} history={renders} />}
+      {status === 'done' && renders[0] && (
+        <>
+          <Result render={renders[0]} history={renders} />
+          <RerenderPanel
+            projectId={id}
+            current={rerenderCurrent(project.settings)}
+            onQueued={() => void refetch()}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -126,51 +154,6 @@ function StatusBadge({ status }: { status: string }) {
       {m?.pulse && <Dot tone="progress" pulse />}
       {m?.label ?? status}
     </Badge>
-  );
-}
-
-function ReviewPane({
-  onApprove,
-  busy,
-  runs,
-}: {
-  onApprove: () => void;
-  busy: boolean;
-  runs: { stage: string; status: string }[];
-}) {
-  return (
-    <Card accent className="space-y-5">
-      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-        <div className="flex items-start gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent-quiet text-accent">
-            <svg
-              viewBox="0 0 24 24"
-              className="size-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              aria-hidden
-            >
-              <rect x="3" y="4" width="18" height="14" rx="2" strokeLinejoin="round" />
-              <path d="M8 21h8M12 18v3" strokeLinecap="round" />
-            </svg>
-          </span>
-          <div>
-            <h2 className="text-sm font-semibold">Storyboard ready</h2>
-            <p className="mt-1 max-w-md text-sm text-fg-muted">
-              Assets are selected. Full swap / re-search lands in the storyboard (Phase 12) —
-              approve to render now.
-            </p>
-          </div>
-        </div>
-        <Button variant="primary" disabled={busy} onClick={onApprove}>
-          {busy ? <Spinner /> : 'Approve & render'}
-        </Button>
-      </div>
-      <div className="border-t border-border pt-4">
-        <StageStepper runs={runs as never} />
-      </div>
-    </Card>
   );
 }
 
