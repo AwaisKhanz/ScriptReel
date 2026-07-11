@@ -4,27 +4,35 @@ import type { ProjectCtx, Reporter, Stage } from './context';
 import { readManifest, writeManifest } from './manifest';
 
 // Throttled progress reporter (doc 06 §3): DB writes at most every 500 ms; flush
-// forces the final value.
+// forces the final value. Writes are chained on one queue so they land in the order
+// they were reported (a slow earlier UPDATE can't overwrite a newer one), and the SQL
+// is monotonic besides (markRunProgress uses greatest()).
 function createReporter(projectId: string, stage: PipelineStage, ctx: ProjectCtx): Reporter {
   let lastWrite = 0;
   let latestPct = 0;
   let latestDetail: string | undefined;
+  let queue: Promise<void> = Promise.resolve();
+
+  const enqueue = (pct: number, detail?: string): Promise<void> => {
+    queue = queue
+      .then(() => db.markRunProgress(projectId, stage, pct, detail))
+      .catch((err) => ctx.log.warn({ err }, 'progress write failed'));
+    return queue;
+  };
 
   const report = ((pct: number, detail?: string): void => {
-    latestPct = pct;
+    latestPct = Math.max(latestPct, pct); // concurrent tasks may report out of order
     latestDetail = detail;
     ctx.log.debug({ stage, pct, detail }, 'progress');
     const now = Date.now();
     if (now - lastWrite >= 500) {
       lastWrite = now;
-      void db
-        .markRunProgress(projectId, stage, pct, detail)
-        .catch((err) => ctx.log.warn({ err }, 'progress write failed'));
+      void enqueue(latestPct, detail);
     }
   }) as Reporter;
 
   report.flush = async (pct?: number): Promise<void> => {
-    await db.markRunProgress(projectId, stage, pct ?? latestPct, latestDetail);
+    await enqueue(pct ?? latestPct, latestDetail);
   };
   return report;
 }

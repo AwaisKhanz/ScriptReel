@@ -173,8 +173,14 @@ export async function markRunProgress(
   detail?: string,
 ): Promise<void> {
   const pct = Math.max(0, Math.min(100, Math.round(progress)));
+  // Monotonic within an attempt: concurrent tasks + cloud RTT variance can land an
+  // older (lower) write after a newer one — never let it regress the bar, and only
+  // take the detail that belongs to the winning (>=) progress. markRunRunning still
+  // hard-resets to 0 on retry.
   await sql`
-    update pipeline_runs set progress = ${pct}, detail = ${detail ?? null}
+    update pipeline_runs set
+      detail = case when ${pct} >= progress then ${detail ?? null} else detail end,
+      progress = greatest(progress, ${pct})
     where project_id = ${projectId} and stage = ${stage}`;
 }
 
@@ -512,6 +518,29 @@ export async function candidateBelongsToBeat(
   const rows = await sql`
     select 1 from candidates where id = ${candidateId} and beat_id = ${beatId} limit 1`;
   return rows.length > 0;
+}
+
+// Live pipeline activity (doc 16): the media found so far, newest first — the run
+// screen streams these thumbs in as search/score progress.
+export interface RecentCandidateRow {
+  id: string;
+  beatIdx: number;
+  provider: string;
+  kind: string;
+  thumbPath: string | null;
+}
+
+export async function getRecentCandidates(
+  projectId: string,
+  limit = 24,
+): Promise<RecentCandidateRow[]> {
+  const rows = await sql<RecentCandidateRow[]>`
+    select c.id, b.idx as "beatIdx", c.provider, c.kind, c.thumb_path as "thumbPath"
+    from candidates c join beats b on b.id = c.beat_id
+    where b.project_id = ${projectId} and c.thumb_path is not null
+    order by c.created_at desc, c.id
+    limit ${limit}`;
+  return [...rows];
 }
 
 // Beats + their top-N candidates by rank (STORYBOARD_CANDIDATES), for the storyboard
