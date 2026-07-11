@@ -10,6 +10,15 @@ const SidecarErrorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
 
+// A wedged sidecar (e.g. after many hours) must not hang a stage forever. Bound
+// every request with a timeout, combined with the caller's cancel signal. On
+// timeout fetch throws → surfaces as a retryable E_SIDECAR_DOWN so pg-boss retries
+// once the sidecar recovers, instead of the job sitting at 0% indefinitely.
+function reqSignal(signal: AbortSignal | undefined, ms: number): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 export interface TtsParams {
   text: string;
   voice: string;
@@ -25,7 +34,7 @@ export async function ttsSynthesize(params: TtsParams, signal?: AbortSignal): Pr
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(params),
-      ...(signal ? { signal } : {}),
+      signal: reqSignal(signal, 120_000),
     });
   } catch (cause) {
     throw new PipelineError(
@@ -70,7 +79,7 @@ export async function alignAudio(params: AlignParams, signal?: AbortSignal): Pro
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(params),
-      ...(signal ? { signal } : {}),
+      signal: reqSignal(signal, 120_000),
     });
   } catch (cause) {
     throw new PipelineError(
@@ -119,6 +128,7 @@ async function postSidecar<T>(
   body: unknown,
   schema: z.ZodType<T>,
   signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<T> {
   let res: Response;
   try {
@@ -126,7 +136,7 @@ async function postSidecar<T>(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      ...(signal ? { signal } : {}),
+      signal: reqSignal(signal, timeoutMs),
     });
   } catch (cause) {
     throw new PipelineError(
@@ -158,11 +168,11 @@ async function postSidecar<T>(
 }
 
 export function embedText(texts: string[], signal?: AbortSignal): Promise<EmbedTextResult> {
-  return postSidecar('/embed/text', { texts }, EmbedTextResponseSchema, signal);
+  return postSidecar('/embed/text', { texts }, EmbedTextResponseSchema, signal, 90_000);
 }
 
 export function embedImage(paths: string[], signal?: AbortSignal): Promise<EmbedImageResult> {
-  return postSidecar('/embed/image', { paths }, EmbedImageResponseSchema, signal);
+  return postSidecar('/embed/image', { paths }, EmbedImageResponseSchema, signal, 90_000);
 }
 
 const TextcardResponseSchema = z.object({ path: z.string() });
@@ -180,5 +190,5 @@ export function renderTextcard(
   params: TextcardParams,
   signal?: AbortSignal,
 ): Promise<TextcardResult> {
-  return postSidecar('/textcard', params, TextcardResponseSchema, signal);
+  return postSidecar('/textcard', params, TextcardResponseSchema, signal, 60_000);
 }

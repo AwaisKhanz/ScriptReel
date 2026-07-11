@@ -39,16 +39,19 @@ export async function assembleVisual(
   const f = plan.crossfadeSec.toFixed(3);
   const parts: string[] = [];
 
-  // Each segment → a labeled video stream (concat when it holds >1 clip).
+  // Each segment → a labeled video stream (concat when it holds >1 clip). settb=AVTB
+  // pins every segment to a common timebase (1/1000000): xfade rejects inputs whose
+  // timebases differ, and a chained xfade's output otherwise picks up a different tb
+  // than the raw segment it's crossfaded with (the 3rd+ transition fails without this).
   const segLabels = plan.segments.map((seg, k) => {
     if (seg.clipIndices.length === 1) {
       const label = `s${k}`;
-      parts.push(`[${seg.clipIndices[0]}:v]null[${label}]`);
+      parts.push(`[${seg.clipIndices[0]}:v]settb=AVTB[${label}]`);
       return label;
     }
     const ins = seg.clipIndices.map((i) => `[${i}:v]`).join('');
     const label = `s${k}`;
-    parts.push(`${ins}concat=n=${seg.clipIndices.length}:v=1:a=0[${label}]`);
+    parts.push(`${ins}concat=n=${seg.clipIndices.length}:v=1:a=0,settb=AVTB[${label}]`);
     return label;
   });
 
@@ -56,8 +59,9 @@ export async function assembleVisual(
   for (let k = 0; k < segLabels.length - 1; k += 1) {
     const next = segLabels[k + 1];
     const label = `x${k}`;
+    // settb=AVTB after each xfade so the next xfade sees a matching timebase.
     parts.push(
-      `[${vout}][${next}]xfade=transition=fade:duration=${f}:offset=${plan.fadeOffsets[k]?.toFixed(3)}[${label}]`,
+      `[${vout}][${next}]xfade=transition=fade:duration=${f}:offset=${plan.fadeOffsets[k]?.toFixed(3)},settb=AVTB[${label}]`,
     );
     vout = label;
   }

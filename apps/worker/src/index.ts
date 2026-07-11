@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   const boss = new PgBoss({
     connectionString: env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }, // Supabase pooler requires TLS
-    max: 4, // session pooler budget (see packages/db/client.ts): worker gets 4+4
+    max: 3, // session pooler budget (see packages/db/client.ts): worker gets 3+3
   });
   boss.on('error', (err) => log.error({ err }, 'pg-boss error'));
   await boss.start();

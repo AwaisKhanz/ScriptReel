@@ -125,17 +125,46 @@ export async function runPipeline(
       return;
     }
     const pipelineError = err instanceof PipelineError ? err : null;
+    // Transient DB/pooler blips (EMAXCONNSESSION, DNS ENOTFOUND, dropped socket)
+    // aren't real failures — let pg-boss retry (retryLimit 2, retryDelay 30) so the
+    // job self-heals once connections free up instead of dying with E_INVARIANT.
+    const transient = !pipelineError && isTransientDbError(err);
+    const retryable = pipelineError?.retryable ?? transient;
     await db.setProjectError(projectId, {
       stage: pipelineError?.stage ?? 'worker',
-      code: pipelineError?.code ?? 'E_INVARIANT',
+      code: pipelineError?.code ?? (transient ? 'E_DB_TRANSIENT' : 'E_INVARIANT'),
       message: err instanceof Error ? err.message : String(err),
     });
-    opts.log.error({ err, retryable: pipelineError?.retryable ?? false }, 'pipeline failed');
-    // Retryable (network/quota/ffmpeg/sidecar) → rethrow so pg-boss retries; others stay failed.
-    if (pipelineError?.retryable) throw err;
+    opts.log.error({ err, retryable }, 'pipeline failed');
+    // Retryable (network/quota/ffmpeg/sidecar/db-transient) → rethrow so pg-boss retries.
+    if (retryable) throw err;
   } finally {
     clearInterval(cancelPoll);
   }
+}
+
+// Transient connection failures against the Supabase pooler (or a flaky network)
+// that should be retried rather than treated as a permanent invariant violation.
+function isTransientDbError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  const code =
+    typeof (err as { code?: unknown })?.code === 'string' ? (err as { code: string }).code : '';
+  return (
+    /EMAXCONNSESSION|max clients reached|too many clients|Connection terminated|connection timeout|read ECONNRESET/i.test(
+      msg,
+    ) ||
+    /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|EPIPE/i.test(msg) ||
+    [
+      'ENOTFOUND',
+      'ECONNREFUSED',
+      'ETIMEDOUT',
+      'ECONNRESET',
+      'EPIPE',
+      '53300',
+      '57P01',
+      'XX000',
+    ].includes(code)
+  );
 }
 
 function stageOfMode(mode: JobMode): PipelineStage | null {

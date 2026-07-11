@@ -8,10 +8,11 @@ import postgres from 'postgres';
 // Connection budget: the session pooler caps total clients at 15. Both the web
 // server and the worker import this pool AND each run a pg-boss pool, so the four
 // pools must sum to < 15 or the pooler throws EMAXCONNSESSION and the worker dies
-// mid-run. Budget: web 4 (pg) + 2 (boss), worker 4 (pg) + 4 (boss) = 14. Keep this
-// small; idle connections release after idle_timeout.
+// mid-run. Budget with one web + one worker: web 3 (pg) + 2 (boss), worker 3 (pg)
+// + 3 (boss) = 11, leaving ~4 slots of headroom. Never run two workers against the
+// same pooler (2×6 + 5 = 17 > 15). Idle connections release after idle_timeout.
 export const sql = postgres(env.DATABASE_URL, {
-  max: 4,
+  max: 3,
   idle_timeout: 20,
   ssl: 'require',
 });
