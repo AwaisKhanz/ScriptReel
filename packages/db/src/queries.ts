@@ -2,6 +2,7 @@ import {
   defaultSettings,
   type PipelineStage,
   type ProjectSettings,
+  parseSettings,
   settingsHash,
 } from '@scriptreel/core';
 import { sql } from './client';
@@ -54,8 +55,65 @@ export async function getProject(id: string): Promise<ProjectRow | null> {
   return rows[0] ?? null;
 }
 
+export interface ProjectCardRow {
+  id: string;
+  title: string;
+  status: ProjectStatus;
+  updated_at: string;
+  duration: number | null;
+  thumbnail_path: string | null;
+  aspect: string | null;
+}
+
+// Dashboard cards (doc 15): projects newest-first, each with its latest render's
+// thumbnail + duration (if any).
+export async function listProjects(limit = 60): Promise<ProjectCardRow[]> {
+  const rows = await sql<ProjectCardRow[]>`
+    select p.id, p.title, p.status, p.updated_at, r.duration, r.thumbnail_path, r.aspect
+    from projects p
+    left join lateral (
+      select duration, thumbnail_path, aspect from renders
+      where project_id = p.id order by created_at desc limit 1
+    ) r on true
+    order by p.updated_at desc
+    limit ${limit}`;
+  return [...rows];
+}
+
+export async function getRenders(projectId: string): Promise<RenderRow[]> {
+  const rows = await sql<RenderRow[]>`
+    select * from renders where project_id = ${projectId} order by created_at desc`;
+  return [...rows];
+}
+
 export async function setProjectStatus(id: string, status: ProjectStatus): Promise<void> {
   await sql`update projects set status = ${status}, updated_at = now() where id = ${id}`;
+}
+
+// Merge a settings patch over the project's current settings, re-validate, and
+// recompute settings_hash (doc 15 PATCH). Stage invalidation is by hash (doc 06).
+export async function updateProjectSettings(
+  id: string,
+  patch: Partial<ProjectSettings>,
+): Promise<ProjectRow> {
+  const project = await getProject(id);
+  if (!project) throw new Error(`updateProjectSettings: project ${id} not found`);
+  const merged = parseSettings({ ...(project.settings as object), ...patch });
+  const hash = settingsHash(merged);
+  const rows = await sql<ProjectRow[]>`
+    update projects set settings = ${sql.json(merged)}, settings_hash = ${hash}, updated_at = now()
+    where id = ${id} returning *`;
+  const row = rows[0];
+  if (!row) throw new Error('updateProjectSettings: no row returned');
+  return row;
+}
+
+export async function updateProjectScript(
+  id: string,
+  script: string,
+  title?: string,
+): Promise<void> {
+  await sql`update projects set script = ${script}, ${title !== undefined ? sql`title = ${title},` : sql``} updated_at = now() where id = ${id}`;
 }
 
 export async function setProjectError(id: string, error: JsonError): Promise<void> {

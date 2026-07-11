@@ -13,9 +13,12 @@
     "@scriptreel/config": "workspace:*",
     "@scriptreel/core": "workspace:*",
     "@scriptreel/db": "workspace:*",
+    "@tanstack/react-query": "^5.101.2",
     "next": "15.5.20",
+    "pg-boss": "10.4.2",
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.2",
