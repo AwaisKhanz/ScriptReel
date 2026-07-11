@@ -90,6 +90,13 @@ export async function setProjectStatus(id: string, status: ProjectStatus): Promi
   await sql`update projects set status = ${status}, updated_at = now() where id = ${id}`;
 }
 
+// Delete a project row; beats/candidates/pipeline_runs/renders cascade (FK on delete
+// cascade, migration 0001). The caller removes DATA_DIR/projects/{id} (doc 15).
+export async function deleteProject(id: string): Promise<boolean> {
+  const rows = await sql`delete from projects where id = ${id} returning id`;
+  return rows.length > 0;
+}
+
 // Merge a settings patch over the project's current settings, re-validate, and
 // recompute settings_hash (doc 15 PATCH). Stage invalidation is by hash (doc 06).
 export async function updateProjectSettings(

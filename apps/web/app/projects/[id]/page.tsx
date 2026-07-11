@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { use, useState } from 'react';
 import { type Editable, RerenderPanel } from '../../../components/RerenderPanel';
 import { StageStepper } from '../../../components/StageStepper';
@@ -31,6 +32,7 @@ function rerenderCurrent(settings: Record<string, unknown>): Editable {
 
 export default function Workspace({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const { data, isLoading, isError, refetch } = useProject(id);
   const [busy, setBusy] = useState(false);
 
@@ -39,6 +41,14 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
     await fetch(`/api/projects/${id}/${path}`, { method: 'POST' }).catch(() => {});
     await refetch();
     setBusy(false);
+  }
+
+  async function del() {
+    if (!window.confirm('Delete this project and its render? This cannot be undone.')) return;
+    setBusy(true);
+    const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' }).catch(() => null);
+    if (res?.ok) router.push('/');
+    else setBusy(false);
   }
 
   if (isLoading) {
@@ -61,7 +71,33 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
           <h1 className="truncate text-xl font-semibold tracking-tight">{project.title}</h1>
           <p className="mt-0.5 font-mono text-xs text-fg-subtle">#{project.id.slice(0, 8)}</p>
         </div>
-        <StatusBadge status={status} />
+        <div className="flex shrink-0 items-center gap-2">
+          <StatusBadge status={status} />
+          {status !== 'queued' && status !== 'running' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={del}
+              aria-label="Delete project"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                aria-hidden
+              >
+                <path
+                  d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </Button>
+          )}
+        </div>
       </div>
 
       {status === 'draft' && (
