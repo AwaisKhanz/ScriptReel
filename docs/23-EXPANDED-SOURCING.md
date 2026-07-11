@@ -157,6 +157,17 @@ Contract change (doc 12): a beat's `media` becomes `media | media[]` (ordered su
 its own `inPointSec`/`durationSec` summing to the beat's narration length). Single-segment beats are
 unchanged, so it's backward compatible.
 
+**Shipped (23e-1) — motion-aware best-window in-point.** The single-segment half, backward-compatible
+and calibration-free. The fetch stage samples per-frame motion (one fast downscaled `ffmpeg scdet`
+pass → `lavfi.scd.mafd`, `apps/worker/src/ffmpeg/motion.ts`) and the pure `pickBestWindow`
+(`packages/core/src/clip.ts`) chooses the highest-motion window as `inPointSec`, so clips open on the
+active part instead of a static intro — the exact "stock clips start static" problem. SigLIP is
+deliberately not used here (23d showed raw cosine is a noisy separator; motion is a clean anti-boring
+signal). Degrades to the geometric center/skip-10% heuristic on any ffmpeg/parse failure (§8). **Still
+deferred:** multi-segment `media[]` montage (needs the timeline-schema + filtergraph change — a
+separate slice so the working single-input renderer isn't destabilized), plus sharpness/SigLIP
+refinements and the per-asset analysis cache (§8/§9.5).
+
 ## 8. Free & lightweight discipline
 
 - Every source is free (public / CC / PD). No paid tier, ever, in this scope.

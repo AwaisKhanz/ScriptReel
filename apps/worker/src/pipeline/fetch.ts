@@ -8,12 +8,14 @@ import {
   FRAME_SEC,
   hashObject,
   invariant,
+  type MotionSample,
   PipelineError,
   type Timeline,
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import pLimit from 'p-limit';
 import { ensureDiskSpace } from '../cache/disk-guard';
+import { analyzeMotion } from '../ffmpeg/motion';
 import { normalizeStill, normalizeVideo } from '../ffmpeg/normalize';
 import { probeAudio, probeVideo } from '../ffmpeg/probe';
 import { downloadToCache } from '../providers/download';
@@ -32,6 +34,7 @@ interface ResolvedSource {
   kind: 'video' | 'image' | 'generated' | 'textcard';
   path: string; // local
   sourceDurationSec?: number;
+  motionSamples?: MotionSample[]; // per-frame motion for best-window in-point (doc 23 §7)
 }
 
 // fetch stage (doc 13 Pass A): download every chosen asset (shared asset_cache),
@@ -98,10 +101,23 @@ export const fetchStage: Stage = {
               downloads += 1;
               if (m.kind === 'video') {
                 const probe = await probeVideo(row.local_path);
+                // Best-window in-point (doc 23 §7). Only worth it when there's slack to
+                // move within; any failure degrades to the geometric fallback (§8).
+                const needsWindow = probe.durationSec > 0;
+                const motionSamples = needsWindow
+                  ? await analyzeMotion(row.local_path, ctx.signal).catch((err) => {
+                      ctx.log.warn(
+                        { err, beat: m.idx },
+                        'motion analysis failed — geometric in-point',
+                      );
+                      return [] as MotionSample[];
+                    })
+                  : [];
                 return {
                   kind: 'video',
                   path: row.local_path,
                   sourceDurationSec: probe.durationSec,
+                  ...(motionSamples.length > 0 ? { motionSamples } : {}),
                 };
               }
               return { kind: 'image', path: row.local_path };
@@ -144,6 +160,7 @@ export const fetchStage: Stage = {
               ...(src.sourceDurationSec !== undefined
                 ? { sourceDurationSec: src.sourceDurationSec }
                 : {}),
+              ...(src.motionSamples ? { motionSamples: src.motionSamples } : {}),
             }
           : { kind: src.kind, path: src.path };
       beatsInput.push({

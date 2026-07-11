@@ -1,3 +1,4 @@
+import { type MotionSample, pickBestWindow } from './clip';
 import { FRAME_SEC } from './constants';
 import { invariant } from './errors';
 import { type Timeline, TimelineSchema } from './timeline';
@@ -17,8 +18,30 @@ interface Provenance {
 }
 
 export type BuildBeatMedia =
-  | ({ kind: 'video'; path: string; sourceDurationSec?: number } & Provenance)
+  | ({
+      kind: 'video';
+      path: string;
+      sourceDurationSec?: number;
+      // Per-frame motion sampled by the fetch stage (doc 23 §7). When present, the
+      // in-point is the most dynamic window; absent ⇒ the geometric fallback below.
+      motionSamples?: readonly MotionSample[];
+    } & Provenance)
   | ({ kind: StillKind; path: string } & Provenance);
+
+// In-point for a video beat (doc 23 §7). Prefer the motion-scored best window; fall
+// back to the pre-23e heuristic (center the window, skip the first 10% — stock clips
+// often start static) when no motion signal is available.
+function chooseInPoint(
+  source: number | undefined,
+  durationSec: number,
+  samples: readonly MotionSample[] | undefined,
+): number {
+  if (source === undefined || source <= durationSec) return 0;
+  if (samples && samples.length > 0) return pickBestWindow(samples, source, durationSec);
+  const skip = 0.1 * source;
+  const centered = Math.max(0, skip + (source - skip - durationSec) / 2);
+  return centered + durationSec > source ? Math.max(0, source - durationSec) : centered;
+}
 
 export interface BuildBeatInput {
   idx: number;
@@ -103,15 +126,8 @@ export function buildTimeline(input: BuildTimelineInput): Timeline {
     const provenance = provenanceOf(media);
 
     if (media.kind === 'video') {
-      let inPointSec = 0;
       const source = media.sourceDurationSec;
-      if (source !== undefined && source > durationSec) {
-        const skip = 0.1 * source; // stock clips often start static
-        inPointSec = Math.max(0, skip + (source - skip - durationSec) / 2);
-        if (inPointSec + durationSec > source) {
-          inPointSec = Math.max(0, source - durationSec);
-        }
-      }
+      const inPointSec = chooseInPoint(source, durationSec, media.motionSamples);
       const videoMedia = {
         kind: 'video' as const,
         path: media.path,

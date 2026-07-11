@@ -67,7 +67,7 @@ export interface TimelineBeat {
 
 `buildTimeline(project, beats, selections, settings) → Timeline`:
 - durations: `beat.durationSec = narration.durationSec + pauseSec` (pause attaches to the *preceding* beat; last beat gets remaining audio tail).
-- videos: `inPointSec` chosen to center the used window in the source when `sourceDuration > needed` (skip first 10% of source — stock clips often start static); if source shorter → normalization already looped it.
+- videos: `inPointSec` is the **most dynamic window** of the source (doc 23 §7) — the fetch stage samples per-frame motion (`ffmpeg scdet` mean-abs-frame-diff) and `pickBestWindow` picks the highest-motion window of the needed length, so a clip doesn't open on a static intro. Fallback when no motion signal is available: center the used window, skipping the first 10%. If source shorter than needed → normalization already looped it.
 - smart-mix transitions: boundary = `cut` when `shotType` equal AND emotion equal on both sides, else `crossfade` (from beats table).
 - stills get `kenburns` with direction cycling `in-tl → out-tr → in-br → out-bl`.
 - Frozen copy stored on the `renders` row for reproducibility.
