@@ -83,4 +83,46 @@ describe('buildTimeline', () => {
       }
     }
   });
+
+  it('emits a montage: segments sum to the beat duration and stay valid (doc 23 §7)', () => {
+    const input: BuildTimelineInput = {
+      projectId: 'p',
+      createdAt: '2026-07-10T00:00:00Z',
+      render: { aspect: '16:9', width: 1920, height: 1080, preset: 'final' },
+      narration: { audioPath: '/vo.wav', durationSec: 8 },
+      beats: [
+        {
+          idx: 0,
+          text: 'chilly morning in NYC, a crowded subway station, a man at the gate',
+          narrationDurationSec: 8,
+          media: { kind: 'image', path: '/clips/0a.jpg' },
+          segments: [
+            { media: { kind: 'image', path: '/clips/0a.jpg' }, weight: 1 },
+            { media: { kind: 'image', path: '/clips/0b.jpg' }, weight: 1 },
+            { media: { kind: 'video', path: '/clips/0c.mp4', sourceDurationSec: 20 }, weight: 2 },
+          ],
+        },
+      ],
+      pauseSec: 0,
+      transitions: { style: 'cut', crossfadeSec: 0.4 },
+      music: null,
+      subtitles: null,
+      credits: '',
+    };
+    const timeline = buildTimeline(input);
+    expect(() => assertTimelineInvariants(timeline)).not.toThrow();
+    const beat = timeline.beats[0];
+    expect(beat?.segments).toHaveLength(3);
+    const segSum = (beat?.segments ?? []).reduce((a, s) => a + s.durationSec, 0);
+    expect(Math.abs(segSum - (beat?.durationSec ?? 0))).toBeLessThanOrEqual(1e-9);
+    // representative media is the first segment; the video segment got the best window
+    expect(beat?.media).toEqual(beat?.segments?.[0]?.media);
+    const vid = beat?.segments?.[2]?.media;
+    expect(vid?.kind).toBe('video');
+    // stills alternate Ken Burns direction across the montage
+    const dirs = (beat?.segments ?? [])
+      .map((s) => (s.media.kind !== 'video' ? s.media.kenburns.direction : null))
+      .filter(Boolean);
+    expect(new Set(dirs).size).toBe(dirs.length);
+  });
 });

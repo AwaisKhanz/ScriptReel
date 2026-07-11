@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '@scriptreel/config';
 import {
@@ -16,7 +16,7 @@ import * as db from '@scriptreel/db';
 import pLimit from 'p-limit';
 import { ensureDiskSpace } from '../cache/disk-guard';
 import { analyzeMotion } from '../ffmpeg/motion';
-import { normalizeStill, normalizeVideo } from '../ffmpeg/normalize';
+import { concatClips, normalizeStill, normalizeVideo } from '../ffmpeg/normalize';
 import { probeAudio, probeVideo } from '../ffmpeg/probe';
 import { downloadToCache } from '../providers/download';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
@@ -35,6 +35,76 @@ interface ResolvedSource {
   path: string; // local
   sourceDurationSec?: number;
   motionSamples?: MotionSample[]; // per-frame motion for best-window in-point (doc 23 §7)
+}
+
+// Normalize one visual (video window or Ken Burns still) to a uniform clip of `lengthSec`.
+async function normalizeOne(
+  media: Timeline['beats'][number]['media'],
+  lengthSec: number,
+  headPadSec: number,
+  dims: { width: number; height: number },
+  outPath: string,
+  signal: AbortSignal,
+): Promise<void> {
+  if (media.kind === 'video') {
+    await normalizeVideo({
+      src: media.path,
+      inPointSec: media.inPointSec ?? 0,
+      headPadSec,
+      lengthSec,
+      sourceDurationSec: media.sourceDurationSec ?? lengthSec,
+      width: dims.width,
+      height: dims.height,
+      outPath,
+      signal,
+    });
+  } else {
+    await normalizeStill({
+      src: media.path,
+      kenburns: media.kenburns,
+      lengthSec,
+      width: dims.width,
+      height: dims.height,
+      outPath,
+      signal,
+    });
+  }
+}
+
+// Render a beat's clip: a single visual, or — for a montage beat (doc 23 §7) — each
+// segment normalized to a sub-clip and concatenated. The crossfade pads live only at
+// the beat's outer edges, so they attach to the first (head) and last (tail) segment;
+// internal boundaries are exact hard cuts. compose still sees one clip per beat.
+async function renderBeatClip(
+  beat: Timeline['beats'][number],
+  entry: { lengthSec: number; headPadSec: number },
+  dims: { width: number; height: number },
+  clipsDir: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const outPath = join(clipsDir, `${beat.idx}.mp4`);
+  if (!beat.segments) {
+    await normalizeOne(beat.media, entry.lengthSec, entry.headPadSec, dims, outPath, signal);
+    return;
+  }
+  const headPad = entry.headPadSec;
+  const tailPad = entry.lengthSec - beat.durationSec - entry.headPadSec;
+  const temps: string[] = [];
+  try {
+    for (let k = 0; k < beat.segments.length; k += 1) {
+      const seg = beat.segments[k];
+      if (!seg) continue;
+      const isFirst = k === 0;
+      const isLast = k === beat.segments.length - 1;
+      const lengthSec = seg.durationSec + (isFirst ? headPad : 0) + (isLast ? tailPad : 0);
+      const dst = join(clipsDir, `${beat.idx}.seg${k}.mp4`);
+      temps.push(dst);
+      await normalizeOne(seg.media, lengthSec, isFirst ? headPad : 0, dims, dst, signal);
+    }
+    await concatClips(temps, outPath, signal);
+  } finally {
+    await Promise.all(temps.map((t) => rm(t, { force: true }).catch(() => {})));
+  }
 }
 
 // fetch stage (doc 13 Pass A): download every chosen asset (shared asset_cache),
@@ -198,30 +268,7 @@ export const fetchStage: Stage = {
           if (ctx.signal.aborted) throw new PipelineError('E_CANCELLED', 'fetch', 'cancelled');
           const entry = plan[i];
           invariant(entry, `clip plan missing for beat ${beat.idx}`, 'fetch');
-          const outPath = join(clipsDir, `${beat.idx}.mp4`);
-          if (beat.media.kind === 'video') {
-            await normalizeVideo({
-              src: beat.media.path,
-              inPointSec: beat.media.inPointSec ?? 0,
-              headPadSec: entry.headPadSec,
-              lengthSec: entry.lengthSec,
-              sourceDurationSec: beat.media.sourceDurationSec ?? entry.lengthSec,
-              width,
-              height,
-              outPath,
-              signal: ctx.signal,
-            });
-          } else {
-            await normalizeStill({
-              src: beat.media.path,
-              kenburns: beat.media.kenburns,
-              lengthSec: entry.lengthSec,
-              width,
-              height,
-              outPath,
-              signal: ctx.signal,
-            });
-          }
+          await renderBeatClip(beat, entry, { width, height }, clipsDir, ctx.signal);
           done += 1;
           report(
             20 + Math.round((70 * done) / timeline.beats.length),

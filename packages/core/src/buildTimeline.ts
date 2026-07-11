@@ -1,4 +1,4 @@
-import { type MotionSample, pickBestWindow } from './clip';
+import { type MotionSample, pickBestWindow, splitSegmentFrames } from './clip';
 import { FRAME_SEC } from './constants';
 import { invariant } from './errors';
 import { type Timeline, TimelineSchema } from './timeline';
@@ -50,7 +50,12 @@ export interface BuildBeatInput {
   shotType?: string;
   emotion?: string;
   media: BuildBeatMedia;
+  // Montage (doc 23 §7): an ordered visual sequence for this beat. When ≥2, the beat's
+  // narration span is split across them (by `weight`); `media` is set to the first.
+  segments?: { media: BuildBeatMedia; weight?: number }[];
 }
+
+type OutMedia = Timeline['beats'][number]['media'];
 
 export interface BuildTimelineInput {
   projectId: string;
@@ -85,6 +90,29 @@ function provenanceOf(media: BuildBeatMedia): Provenance {
   if (media.author !== undefined) out.author = media.author;
   if (media.pageUrl !== undefined) out.pageUrl = media.pageUrl;
   return out;
+}
+
+function buildVideoMedia(media: BuildBeatMedia, durationSec: number): OutMedia {
+  const source = media.kind === 'video' ? media.sourceDurationSec : undefined;
+  const samples = media.kind === 'video' ? media.motionSamples : undefined;
+  return {
+    kind: 'video',
+    path: media.path,
+    inPointSec: chooseInPoint(source, durationSec, samples),
+    ...(source !== undefined ? { sourceDurationSec: source } : {}),
+    ...provenanceOf(media),
+  };
+}
+
+function buildStillMedia(media: BuildBeatMedia, stillIdx: number): OutMedia {
+  const kb = KENBURNS_CYCLE[stillIdx % KENBURNS_CYCLE.length];
+  invariant(kb !== undefined, 'buildTimeline: ken-burns cycle index', 'compose');
+  return {
+    kind: media.kind as StillKind,
+    path: media.path,
+    kenburns: { direction: kb.direction, zoomFrom: kb.zoomFrom, zoomTo: kb.zoomTo },
+    ...provenanceOf(media),
+  };
 }
 
 export function buildTimeline(input: BuildTimelineInput): Timeline {
@@ -122,32 +150,43 @@ export function buildTimeline(input: BuildTimelineInput): Timeline {
     const durationSec = frames * FRAME_SEC;
     startFrames += frames;
 
-    const media = beat.media;
-    const provenance = provenanceOf(media);
+    // Build one visual, advancing the Ken Burns cycle for each still (montage segments
+    // and single beats share one cycle, so consecutive stills always alternate).
+    const buildVisual = (m: BuildBeatMedia, dur: number): OutMedia => {
+      if (m.kind === 'video') return buildVideoMedia(m, dur);
+      const out = buildStillMedia(m, stillCount);
+      stillCount += 1;
+      return out;
+    };
 
-    if (media.kind === 'video') {
-      const source = media.sourceDurationSec;
-      const inPointSec = chooseInPoint(source, durationSec, media.motionSamples);
-      const videoMedia = {
-        kind: 'video' as const,
-        path: media.path,
-        inPointSec,
-        ...(source !== undefined ? { sourceDurationSec: source } : {}),
-        ...provenance,
+    if (beat.segments && beat.segments.length >= 2) {
+      const segFrames = splitSegmentFrames(
+        frames,
+        beat.segments.map((s) => s.weight ?? 1),
+      );
+      const segments = beat.segments.map((s, k) => {
+        const segDur = (segFrames[k] ?? 1) * FRAME_SEC;
+        return { media: buildVisual(s.media, segDur), durationSec: segDur };
+      });
+      const first = segments[0];
+      invariant(first !== undefined, 'buildTimeline: empty segments', 'compose');
+      return {
+        idx: beat.idx,
+        text: beat.text,
+        startSec,
+        durationSec,
+        media: first.media,
+        segments,
       };
-      return { idx: beat.idx, text: beat.text, startSec, durationSec, media: videoMedia };
     }
 
-    const kb = KENBURNS_CYCLE[stillCount % KENBURNS_CYCLE.length];
-    invariant(kb !== undefined, 'buildTimeline: ken-burns cycle index', 'compose');
-    stillCount += 1;
-    const stillMedia = {
-      kind: media.kind,
-      path: media.path,
-      kenburns: { direction: kb.direction, zoomFrom: kb.zoomFrom, zoomTo: kb.zoomTo },
-      ...provenance,
+    return {
+      idx: beat.idx,
+      text: beat.text,
+      startSec,
+      durationSec,
+      media: buildVisual(beat.media, durationSec),
     };
-    return { idx: beat.idx, text: beat.text, startSec, durationSec, media: stillMedia };
   });
 
   // Smart-mix: cut when shotType AND emotion match across the boundary, else crossfade.

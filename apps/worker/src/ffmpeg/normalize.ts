@@ -154,3 +154,28 @@ export async function normalizeStill(p: NormalizeStillParams): Promise<void> {
     p.signal,
   );
 }
+
+// Concatenate already-normalized, uniform sub-clips into one beat clip (doc 23 §7
+// montage). Internal boundaries are hard cuts (the crossfade pads live only at the
+// beat's outer edges, baked into the first/last sub-clip), so a plain concat filter —
+// the same approach the assemble stage uses for cut-runs — is exact. Re-encoded so the
+// output is a single uniform stream the composer treats like any other beat clip.
+export async function concatClips(
+  inputs: readonly string[],
+  outPath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (inputs.length === 1 && inputs[0]) {
+    // Nothing to join — a degenerate single-segment beat; the caller normalized directly.
+    return;
+  }
+  const args: string[] = [];
+  for (const inp of inputs) args.push('-i', inp);
+  const chain = inputs.map((_, i) => `[${i}:v]`).join('');
+  const filter = `${chain}concat=n=${inputs.length}:v=1:a=0,${NORMALIZE_FILTER_TAIL}[v]`;
+  await ff(
+    [...args, '-filter_complex', filter, '-map', '[v]', '-an', ...ENCODE, outPath],
+    outPath,
+    signal,
+  );
+}

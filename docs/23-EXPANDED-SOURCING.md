@@ -153,9 +153,22 @@ is choosing it, and using more than one window per beat:
 - **Variety/pacing pass:** avoid back-to-back similar shots; alternate wide/close, motion/still,
   video/photo; **saliency-aware Ken Burns** on stills (pan toward the subject, not arbitrary).
 
-Contract change (doc 12): a beat's `media` becomes `media | media[]` (ordered sub-segments, each with
-its own `inPointSec`/`durationSec` summing to the beat's narration length). Single-segment beats are
-unchanged, so it's backward compatible.
+Contract change (doc 12): a beat's `media` gains an optional ordered `segments[]` (each with its own
+media + `durationSec` summing to the beat's narration length). Single-segment beats are unchanged, so
+it's backward compatible. **Why segments and not finer beats:** TTS is synthesized *per beat*, so
+splitting a sentence into more beats would make the voice speak each fragment in isolation (choppy
+prosody). Segments keep the beat = one natural utterance and montage only the visual.
+
+**Shipped (23e-2 stages 1–2):** the contract + render path. Core: `segments` on the timeline beat
+(invariant: each frame-quantized, Σ === beat duration) and pure `splitSegmentFrames`
+(`packages/core/src/clip.ts`); `buildTimeline` splits a beat's frames across its segments by weight.
+Fetch: `renderBeatClip` normalizes each segment to a sub-clip (video window / Ken Burns still — head &
+tail crossfade pads attach to the first/last segment, internal boundaries are exact cuts) and
+`concatClips` joins them into one uniform beat clip — **so the composer/assemble stage is unchanged**.
+Verified end-to-end (video window + Ken Burns still → one 1920×1080@30 clip of the exact summed
+length). **Remaining:** stage 3 — analyze emits the sentence's visual moments and search/score picks a
+clip per moment (short → image, long → video), populating the segment plan; stage 4 — the storyboard
+shows an editable per-segment filmstrip.
 
 **Shipped (23e-1) — motion-aware best-window in-point.** The single-segment half, backward-compatible
 and calibration-free. The fetch stage samples per-frame motion (one fast downscaled `ffmpeg scdet`
