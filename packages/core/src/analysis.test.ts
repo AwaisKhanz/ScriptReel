@@ -47,6 +47,7 @@ function processed(
     shotType: 'wide',
     entities: { people: [], places: [], objects: [] },
     queries: { literal: ['a', 'b'], conceptual: 'c', mood: 'm' },
+    visualMoments: [],
     estSeconds,
     ...over,
   };
@@ -102,6 +103,16 @@ describe('mergeShortBeats', () => {
     const out = mergeShortBeats(beats, 'en-US', 1);
     expect(out.length).toBe(2);
     expect(out.every((b) => b.estSeconds >= 2.5)).toBe(true);
+  });
+
+  it('keeps montage moments in text order when merging (doc 23 §7b)', () => {
+    const beats = [
+      processed(words(20), 0, { visualMoments: ['dawn street', 'subway station'] }),
+      processed(words(4), 0, { visualMoments: ['man by gate'] }), // short trailer merges left
+    ];
+    const out = mergeShortBeats(beats, 'en-US', 1);
+    expect(out.length).toBe(1);
+    expect(out[0]?.visualMoments).toEqual(['dawn street', 'subway station', 'man by gate']);
   });
 });
 

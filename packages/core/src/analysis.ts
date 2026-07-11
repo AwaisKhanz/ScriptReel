@@ -111,11 +111,13 @@ RULES — VISUAL DESIGN
    for a bold on-screen card.
 9. Detect \`language\` of the script (en-US, en-GB, es, fr, hi, it, pt-BR, ja, zh) and
    an overall \`musicMood\`.
-10. \`visualMoments\`: when a beat's sentence moves through SEVERAL distinct images
-   ("a chilly morning in New York, inside a crowded subway, a man sat by the gate"),
-   emit 2–4 ordered ENGLISH, filmable phrases — one per image, in the order they occur
-   (["quiet city street at dawn", "crowded subway platform", "man sitting by ticket
-   gate"]). For a beat that is ONE image, emit an empty array []. Same rules as
+10. \`visualMoments\`: when a beat's sentence moves through SEVERAL distinct images,
+   emit 2–4 ordered ENGLISH, filmable phrases — one per image, in the order they
+   occur. MOST sentences that mention a time/atmosphere, a place, AND a subject or
+   action have 2–4 moments — emit them. Example: "On a chilly morning in New York
+   City, inside a crowded subway station, a man sat quietly near the ticket gate" →
+   ["quiet city street at cold dawn", "crowded subway station interior", "man sitting
+   alone by ticket gate"]. Only a beat that is truly ONE image gets []. Same rules as
    \`visualDescription\`: no real names/brands, no on-screen text.
 
 For Japanese/Chinese target 18–30 characters (fast), 25–45 (normal), 40–65 (slow) per beat.
@@ -316,7 +318,9 @@ export function mergeShortBeats(
     const merged: ProcessedBeat = {
       ...longer,
       text,
-      visualMoments: [], // merged sentence no longer matches either beat's moments
+      // Keep the montage moments in text order — merging a short trailing sentence
+      // ("His name was Henry.") must not throw away the long beat's moments (doc 23 §7b).
+      visualMoments: [...first.visualMoments, ...second.visualMoments].slice(0, 4),
       estSeconds: estimateSeconds(text, language, speed),
     };
     list.splice(lo, 2, merged);

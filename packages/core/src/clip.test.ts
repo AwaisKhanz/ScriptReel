@@ -143,6 +143,49 @@ describe('planMontage', () => {
   });
 });
 
+describe('montage kind mixing (photo ⇄ video)', () => {
+  const c = (
+    id: string,
+    kind: 'video' | 'image',
+    score: number,
+    e: number[],
+  ): MontageCandidate => ({ id, kind, score, thumbEmbedding: e });
+
+  it('diverse montage pulls in the best image when every pick so far is video', () => {
+    const cands = [
+      c('v1', 'video', 0.9, [1, 0, 0]), // chosen
+      c('v2', 'video', 0.85, [0, 1, 0]), // top alternate by score
+      c('i1', 'image', 0.8, [0, 0, 1]), // image within the rank window
+    ];
+    const plan = planMontage('v1', cands, 9);
+    expect(plan?.map((p) => p.candidateId)).toContain('i1');
+  });
+
+  it('semantic montage prefers a close other-kind candidate over a same-kind top', () => {
+    const cands = [
+      c('v1', 'video', 0.5, [1, 0, 0]),
+      c('v2', 'video', 0.5, [0, 1, 0]),
+      c('i1', 'image', 0.5, [0, 0.9, 0.44]),
+    ];
+    const moments = [
+      { embedding: [1, 0, 0], weight: 1 }, // → v1
+      { embedding: [0, 1, 0], weight: 1 }, // v2 is top, but i1 ranks 2nd → mix picks i1
+    ];
+    const plan = planSemanticMontage(moments, cands);
+    expect(plan?.map((p) => p.candidateId)).toEqual(['v1', 'i1']);
+  });
+
+  it('no other-kind candidate available → keeps the top pick (no forced mix)', () => {
+    const cands = [
+      c('v1', 'video', 0.9, [1, 0, 0]),
+      c('v2', 'video', 0.8, [0, 1, 0]),
+      c('v3', 'video', 0.7, [0, 0, 1]),
+    ];
+    const plan = planMontage('v1', cands, 9);
+    expect(plan?.length).toBeGreaterThanOrEqual(2); // still montages, all video
+  });
+});
+
 describe('planSemanticMontage', () => {
   const cand = (id: string, e: number[]): MontageCandidate => ({
     id,

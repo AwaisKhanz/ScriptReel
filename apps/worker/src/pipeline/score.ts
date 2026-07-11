@@ -62,7 +62,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'montage-2', // bump to re-run score when the selection logic changes (doc 23 §7)
+      logic: 'montage-3', // bump to re-run score when the selection logic changes (doc 23 §7)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),

@@ -118,15 +118,16 @@ export const searchStage: Stage = {
       // Per-moment pool enrichment (doc 23 §7b): give a montage beat a purpose-found
       // clip for each of its visual moments, so score's semantic matcher has one to
       // assign. Lean (1 video + 1 image per moment, respecting mediaPreference) to keep
-      // quota bounded; the 40-cap + round-robin still balance the pool.
-      for (const moment of parseMoments(beat.visual_moments)) {
+      // quota bounded; image sources alternate pixabay/openverse so the pool isn't a
+      // single-provider monoculture. The 40-cap + round-robin still balance the pool.
+      parseMoments(beat.visual_moments).forEach((moment, mi) => {
         const q = normalizeSearchQuery(moment);
-        if (!q) continue;
+        if (!q) return;
         if (mediaPreference !== 'photos')
           plan.push({ provider: 'pexels', kind: 'video', query: q });
         if (mediaPreference !== 'videos')
-          plan.push({ provider: 'pixabay', kind: 'image', query: q });
-      }
+          plan.push({ provider: mi % 2 === 0 ? 'pixabay' : 'openverse', kind: 'image', query: q });
+      });
 
       // All of this beat's requests in flight together (bounded by reqLimit);
       // Promise.all preserves plan order, so the round-robin interleave — and thus

@@ -76,6 +76,10 @@ export const MONTAGE_TARGET_SEG_SEC = 3.0; // aim for ~3 s per montage segment
 export const MONTAGE_MAX_SEGMENTS = 3; // never fragment a beat past this
 export const MONTAGE_MIN_SEG_SEC = 1.8; // a segment shorter than this feels like a flash
 export const MONTAGE_DIVERSITY_COSINE = 0.85; // segments must differ (thumb cosine ≤ this)
+// Kind mixing (photo ⇄ video) inside a montage: when every segment so far is one kind,
+// prefer the best other-kind candidate if it ranks within this window for the slot —
+// rank-based (no absolute sim threshold), so it needs no re-calibration. [CALIBRATE 23e]
+export const MONTAGE_MIX_RANK = 5;
 
 // Greedy selection thresholds in base-score space. SigLIP cosine ranges are
 // model-specific — these were CALIBRATED in Phase 6 from 30 labeled pairs (G1–G3)

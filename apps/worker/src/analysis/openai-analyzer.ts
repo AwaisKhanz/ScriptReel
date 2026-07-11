@@ -39,6 +39,7 @@ const RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
           'shotType',
           'entities',
           'queries',
+          'visualMoments',
         ],
         properties: {
           text: { type: 'string' },
@@ -81,6 +82,9 @@ const RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
               mood: { type: 'string' },
             },
           },
+          // Ordered montage sub-phrases (doc 23 §7b). Strict mode rejects fields not
+          // listed here, so omitting this silently disabled the semantic montage.
+          visualMoments: { type: 'array', items: { type: 'string' } },
         },
       },
     },

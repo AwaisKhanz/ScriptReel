@@ -2,6 +2,7 @@ import {
   MONTAGE_DIVERSITY_COSINE,
   MONTAGE_MAX_SEGMENTS,
   MONTAGE_MIN_SEG_SEC,
+  MONTAGE_MIX_RANK,
   MONTAGE_TARGET_SEG_SEC,
 } from './constants';
 import { cosine } from './matching';
@@ -104,12 +105,32 @@ export interface SegmentPlanItem {
   weight: number;
 }
 
+// Kind mixing (doc 23 §7b): a montage that is all-video (or all-photo) so far takes
+// the best other-kind candidate for the next slot instead, provided it ranks within
+// MONTAGE_MIX_RANK of the slot's best-first ordering. Rank-based — no absolute sim
+// threshold to calibrate — so a strong photo joins a video sequence (and vice versa),
+// giving the photo+video texture of an edited documentary rather than wall-to-wall
+// stock video.
+function pickWithKindMix(
+  eligible: readonly MontageCandidate[], // best-first for this slot
+  picked: readonly MontageCandidate[],
+): MontageCandidate | null {
+  const top = eligible[0];
+  if (!top) return null;
+  const firstKind = picked[0]?.kind;
+  const monotone = firstKind !== undefined && picked.every((p) => p.kind === firstKind);
+  if (!monotone || top.kind !== firstKind) return top;
+  const other = eligible.slice(0, MONTAGE_MIX_RANK).find((c) => c.kind !== firstKind);
+  return other ?? top;
+}
+
 // Plan a beat's visual montage (doc 23 §7) from its scored candidates. Anchors on the
 // chosen clip, then adds the highest-scoring alternates that are visually DISTINCT from
 // what's already picked (thumb cosine ≤ MONTAGE_DIVERSITY_COSINE), so the sequence looks
-// varied rather than three near-identical shots. Segment count is bounded so each holds
-// ≥ MONTAGE_MIN_SEG_SEC. Returns null (⇒ single visual, unchanged) when the beat is too
-// short or its candidates are all near-duplicates of the chosen one. Equal weights.
+// varied rather than three near-identical shots — mixing photo and video (kind-mix rule
+// above). Segment count is bounded so each holds ≥ MONTAGE_MIN_SEG_SEC. Returns null
+// (⇒ single visual, unchanged) when the beat is too short or its candidates are all
+// near-duplicates of the chosen one. Equal weights.
 export function planMontage(
   chosenId: string,
   candidates: readonly MontageCandidate[],
@@ -128,12 +149,15 @@ export function planMontage(
 
   const picked: MontageCandidate[] = [chosen];
   const rest = candidates.filter((c) => c.id !== chosenId).sort((a, b) => b.score - a.score);
-  for (const c of rest) {
-    if (picked.length >= target) break;
-    const distinct = picked.every(
-      (p) => cosine(c.thumbEmbedding, p.thumbEmbedding) <= MONTAGE_DIVERSITY_COSINE,
+  while (picked.length < target) {
+    const eligible = rest.filter(
+      (c) =>
+        !picked.includes(c) &&
+        picked.every((p) => cosine(c.thumbEmbedding, p.thumbEmbedding) <= MONTAGE_DIVERSITY_COSINE),
     );
-    if (distinct) picked.push(c);
+    const next = pickWithKindMix(eligible, picked);
+    if (!next) break;
+    picked.push(next);
   }
   if (picked.length < 2) return null;
   return picked.map((c) => ({ candidateId: c.id, weight: 1 }));
@@ -145,36 +169,37 @@ export interface MomentInput {
 }
 
 // Semantic montage (doc 23 §7b): assign each ordered visual moment its best-matching,
-// visually-distinct candidate. For each moment in turn, pick the unused candidate with
-// the highest cosine(moment phrase, thumb) that isn't a near-duplicate of an already-
-// chosen segment. A moment with no distinct match is dropped. Returns an ordered plan
-// (≥2 assigned) or null — the caller then falls back to the diverse planMontage.
+// visually-distinct candidate — mixing photo and video via the kind-mix rule. For each
+// moment in turn, rank the unused, non-duplicate candidates by cosine(moment phrase,
+// thumb) and take the best (or the best other-kind within MONTAGE_MIX_RANK when the
+// sequence so far is all one kind). A moment with no distinct match is dropped. Returns
+// an ordered plan (≥2 assigned) or null — the caller then falls back to planMontage.
 export function planSemanticMontage(
   moments: readonly MomentInput[],
   candidates: readonly MontageCandidate[],
 ): SegmentPlanItem[] | null {
   const used = new Set<string>();
-  const picked: { id: string; weight: number; emb: readonly number[] }[] = [];
+  const picked: MontageCandidate[] = [];
+  const weights: number[] = [];
   for (const m of moments) {
-    let best: MontageCandidate | null = null;
-    let bestSim = Number.NEGATIVE_INFINITY;
-    for (const c of candidates) {
-      if (used.has(c.id)) continue;
-      const distinct = picked.every(
-        (p) => cosine(c.thumbEmbedding, p.emb) <= MONTAGE_DIVERSITY_COSINE,
-      );
-      if (!distinct) continue;
-      const sim = cosine(m.embedding, c.thumbEmbedding);
-      if (sim > bestSim) {
-        bestSim = sim;
-        best = c;
-      }
-    }
+    const eligible = candidates
+      .filter(
+        (c) =>
+          !used.has(c.id) &&
+          picked.every(
+            (p) => cosine(c.thumbEmbedding, p.thumbEmbedding) <= MONTAGE_DIVERSITY_COSINE,
+          ),
+      )
+      .map((c) => ({ c, sim: cosine(m.embedding, c.thumbEmbedding) }))
+      .sort((a, b) => b.sim - a.sim)
+      .map((e) => e.c);
+    const best = pickWithKindMix(eligible, picked);
     if (best) {
       used.add(best.id);
-      picked.push({ id: best.id, weight: m.weight, emb: best.thumbEmbedding });
+      picked.push(best);
+      weights.push(m.weight);
     }
   }
   if (picked.length < 2) return null;
-  return picked.map((p) => ({ candidateId: p.id, weight: p.weight }));
+  return picked.map((p, i) => ({ candidateId: p.id, weight: weights[i] ?? 1 }));
 }
