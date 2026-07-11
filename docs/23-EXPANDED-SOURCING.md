@@ -63,8 +63,26 @@ migration 0004; managed in Settings → *API keys & accounts*). `QuotaGuard.rese
 across the pool — the first key with budget in **all** its windows wins, per-key usage is accounted
 under `pexels:hour#<keyId>` — so combined free-tier quota is (per-key budget × active keys) and the
 pipeline keeps running past a single account's cap. No pooled keys → falls back to the single `.env`
-key (Openverse falls back to anonymous). Secrets are stored server-side and never returned to the
-client (masked tail only). `providers[].search(query, apiKey)` receives the selected key.
+key (Openverse/NASA fall back to anonymous). Secrets are stored server-side and never returned to the
+client (masked tail only).
+
+**Auth abstraction (scalable per-provider credentials).** Providers differ in *how* they authenticate
+— a header key (Pexels), a query key (Pixabay), an OAuth id+secret pair exchanged for a refreshing
+bearer token (Openverse), or nothing (NASA). One declarative source of truth in `packages/core`:
+
+- `PROVIDER_CREDENTIALS[provider]: CredentialField[]` — the fields a provider needs (`name`, `label`,
+  `secret`, optional `hint`). Drives the DB (JSON in `provider_keys.secret`), the admin API validation,
+  **and** the Settings form (rendered dynamically — no per-provider UI code). A keyless provider
+  declares `[]` and isn't addable.
+- `RequestAuth` (`none | header | query`) + `applyAuth(url, headers, auth)` — the only thing a provider
+  receives: `search(query, auth)`. Providers never touch keys, tokens, or refresh logic.
+- `resolveAuth(provider, creds)` (worker) turns stored credentials into `RequestAuth` at call time:
+  static keys map straight through; OAuth providers exchange client credentials for a bearer token and
+  **cache/refresh** it (Openverse ~12 h, refreshed 60 s early) in-process.
+
+**Adding a new provider** is then: (1) add its `ProviderId` + budgets/windows + credential fields in
+core, (2) one `MediaProvider` module using `applyAuth`, (3) a `resolveAuth` case only if it needs a
+non-trivial exchange. No changes to the DB, admin API, or Settings UI — they're all credential-driven.
 
 ## 5. Domain router (accuracy)
 

@@ -3,6 +3,7 @@ import {
   PipelineError,
   PROVIDER_QUOTA_CODE,
   PROVIDER_WINDOWS,
+  type ProviderCredentials,
   type ProviderId,
   truncateWindow,
   usageKeyFor,
@@ -11,13 +12,13 @@ import * as db from '@scriptreel/db';
 import type { Logger } from 'pino';
 
 // Durable, per-KEY token accounting in provider_usage (doc 08 + doc 23 key pool).
-// Reserves one request across a provider's pool of keys and returns the key/token to
-// use; rotates to the next key when one is at budget. Throws E_QUOTA_* only when
-// every key is exhausted (the SearchClient then degrades that request to empty).
+// Reserves one request across a provider's pool of keys and returns the winning
+// key's credentials; rotates to the next key when one is at budget. Throws E_QUOTA_*
+// only when every key is exhausted (SearchClient then degrades to empty).
 export class QuotaGuard {
   constructor(private readonly log: Logger) {}
 
-  async reserve(provider: ProviderId): Promise<string> {
+  async reserve(provider: ProviderId): Promise<ProviderCredentials> {
     const keys = await this.keysFor(provider);
     const windows = PROVIDER_WINDOWS[provider];
     const now = new Date();
@@ -34,7 +35,7 @@ export class QuotaGuard {
           break;
         }
       }
-      if (ok) return key.secret;
+      if (ok) return key.creds;
     }
     this.log.warn({ provider, keys: keys.length }, 'all keys at budget — skipping request');
     throw new PipelineError(
@@ -45,18 +46,21 @@ export class QuotaGuard {
   }
 
   // Pooled DB keys first; else the single .env key (backward compatible); else
-  // anonymous for Openverse. No key at all → provider unavailable.
-  private async keysFor(provider: ProviderId): Promise<{ id: string; secret: string }[]> {
+  // anonymous for keyless providers. No credentials → provider unavailable.
+  private async keysFor(
+    provider: ProviderId,
+  ): Promise<{ id: string; creds: ProviderCredentials }[]> {
     const pooled = await db.activeKeysFor(provider);
     if (pooled.length > 0) return pooled;
     if (provider === 'pexels' && env.PEXELS_API_KEY) {
-      return [{ id: 'env', secret: env.PEXELS_API_KEY }];
+      return [{ id: 'env', creds: { apiKey: env.PEXELS_API_KEY } }];
     }
     if (provider === 'pixabay' && env.PIXABAY_API_KEY) {
-      return [{ id: 'env', secret: env.PIXABAY_API_KEY }];
+      return [{ id: 'env', creds: { apiKey: env.PIXABAY_API_KEY } }];
     }
-    if (provider === 'openverse') return [{ id: 'anon', secret: '' }]; // anonymous 200/day
-    if (provider === 'nasa') return [{ id: 'anon', secret: '' }]; // NASA images-api is keyless
+    if (provider === 'openverse' || provider === 'nasa') {
+      return [{ id: 'anon', creds: {} }]; // Openverse anonymous / NASA keyless
+    }
     return [];
   }
 }

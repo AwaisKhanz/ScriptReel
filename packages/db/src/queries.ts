@@ -2,6 +2,7 @@ import {
   defaultSettings,
   type PipelineStage,
   type ProjectSettings,
+  type ProviderCredentials,
   parseSettings,
   settingsHash,
 } from '@scriptreel/core';
@@ -289,42 +290,74 @@ export async function getCombinedUsage(budgetKey: string, windowStart: Date): Pr
 }
 
 // ---- Provider key pool (doc 23) ------------------------------------------------
-export interface ProviderKeyRow {
+// The `secret` column holds a JSON credentials object ({apiKey} or {clientId,
+// clientSecret}), so a provider can need one field or several (doc 23 auth model).
+export interface ProviderKeyMeta {
   id: string;
   provider: string;
   label: string | null;
-  secret: string;
   active: boolean;
   created_at: string;
+  creds: ProviderCredentials;
+}
+
+function parseCreds(secret: string): ProviderCredentials {
+  try {
+    const v: unknown = JSON.parse(secret);
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as ProviderCredentials;
+  } catch {
+    // not JSON — treat a legacy raw string as a single apiKey
+  }
+  return { apiKey: secret };
 }
 
 export async function insertProviderKey(input: {
   provider: string;
-  secret: string;
+  credentials: ProviderCredentials;
   label?: string;
-}): Promise<ProviderKeyRow> {
-  const rows = await sql<ProviderKeyRow[]>`
+}): Promise<ProviderKeyMeta> {
+  const rows = await sql<
+    { id: string; provider: string; label: string | null; created_at: string }[]
+  >`
     insert into provider_keys (provider, label, secret)
-    values (${input.provider}, ${input.label ?? null}, ${input.secret})
-    returning *`;
+    values (${input.provider}, ${input.label ?? null}, ${JSON.stringify(input.credentials)})
+    returning id, provider, label, created_at`;
   const row = rows[0];
   if (!row) throw new Error('insertProviderKey: no row returned');
-  return row;
+  return { ...row, active: true, creds: input.credentials };
 }
 
-export async function listProviderKeys(): Promise<ProviderKeyRow[]> {
+// All keys with parsed credentials (never expose raw secrets to callers by default;
+// the admin route masks them).
+export async function listProviderKeys(): Promise<ProviderKeyMeta[]> {
   const rows = await sql<
-    ProviderKeyRow[]
-  >`select * from provider_keys order by provider, created_at`;
-  return [...rows];
+    {
+      id: string;
+      provider: string;
+      label: string | null;
+      active: boolean;
+      created_at: string;
+      secret: string;
+    }[]
+  >`select id, provider, label, active, created_at, secret from provider_keys order by provider, created_at`;
+  return rows.map((r) => ({
+    id: r.id,
+    provider: r.provider,
+    label: r.label,
+    active: r.active,
+    created_at: r.created_at,
+    creds: parseCreds(r.secret),
+  }));
 }
 
-// Active keys for a provider (id + secret), for the QuotaGuard pool.
-export async function activeKeysFor(provider: string): Promise<{ id: string; secret: string }[]> {
+// Active keys for a provider with parsed credentials, for the QuotaGuard pool.
+export async function activeKeysFor(
+  provider: string,
+): Promise<{ id: string; creds: ProviderCredentials }[]> {
   const rows = await sql<{ id: string; secret: string }[]>`
     select id, secret from provider_keys
     where provider = ${provider} and active = true order by created_at`;
-  return [...rows];
+  return rows.map((r) => ({ id: r.id, creds: parseCreds(r.secret) }));
 }
 
 export async function deleteProviderKey(id: string): Promise<boolean> {

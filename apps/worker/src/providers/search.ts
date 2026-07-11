@@ -6,6 +6,7 @@ import {
   type SearchQuery,
 } from '@scriptreel/core';
 import type { Logger } from 'pino';
+import { resolveAuth } from './auth';
 import { NasaProvider } from './nasa';
 import { OpenverseProvider } from './openverse';
 import { PexelsProvider } from './pexels';
@@ -41,8 +42,9 @@ export class SearchClient {
     if (cached) return { candidates: cached, cacheHit: true };
 
     try {
-      const apiKey = await this.guard.reserve(providerId); // pooled key/token (doc 23)
-      const candidates = await this.providers[providerId].search(query, apiKey);
+      const creds = await this.guard.reserve(providerId); // pooled credentials (doc 23)
+      const auth = await resolveAuth(providerId, creds); // static key or refreshed OAuth token
+      const candidates = await this.providers[providerId].search(query, auth);
       await writeSearchCache(providerId, query.kind, query.orientation, query.query, candidates);
       return { candidates, cacheHit: false };
     } catch (err) {

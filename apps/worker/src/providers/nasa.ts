@@ -1,4 +1,4 @@
-import type { MediaProvider, RawCandidate, SearchQuery } from '@scriptreel/core';
+import type { MediaProvider, RawCandidate, RequestAuth, SearchQuery } from '@scriptreel/core';
 import { z } from 'zod';
 
 // NASA image library (doc 23): public-domain space/science/Earth imagery, no key.
@@ -31,7 +31,7 @@ function fullRes(preview: string): string {
 export class NasaProvider implements MediaProvider {
   readonly id = 'nasa' as const;
 
-  async search(query: SearchQuery, _apiKey: string): Promise<RawCandidate[]> {
+  async search(query: SearchQuery, _auth: RequestAuth): Promise<RawCandidate[]> {
     if (query.kind === 'video') return []; // image-only for now
 
     const url = new URL(NASA_BASE);

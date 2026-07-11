@@ -1,7 +1,8 @@
 'use client';
 
+import { credentialFields, type ProviderId } from '@scriptreel/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pills } from '../../components/controls';
 import { Badge, Button, Card, Dot, ProgressBar, Skeleton, Spinner } from '../../components/ui';
 import { fmtBytes } from '../../lib/format';
@@ -25,23 +26,29 @@ interface Quota {
     keys?: number;
   }[];
 }
+interface FieldView {
+  name: string;
+  label: string;
+  secret: boolean;
+  value: string; // masked for secret fields, plain for public ones
+}
 interface KeyRow {
   id: string;
   provider: string;
   label: string | null;
   active: boolean;
-  masked: string;
+  fields: FieldView[];
 }
+// Providers that accept pooled credentials (NASA is keyless → not addable).
 const KEY_PROVIDERS = ['pexels', 'pixabay', 'openverse'] as const;
-const PROVIDER_OPTIONS = [
-  { value: 'pexels', label: 'Pexels' },
-  { value: 'pixabay', label: 'Pixabay' },
-  { value: 'openverse', label: 'Openverse' },
-];
+const PROVIDER_OPTIONS = KEY_PROVIDERS.map((p) => ({
+  value: p,
+  label: p.charAt(0).toUpperCase() + p.slice(1),
+}));
 const PROVIDER_HELP: Record<string, string> = {
   pexels: 'https://www.pexels.com/api/',
   pixabay: 'https://pixabay.com/api/docs/',
-  openverse: 'https://api.openverse.org/',
+  openverse: 'https://api.openverse.org/v1/auth_tokens/register/',
 };
 
 export default function SettingsPage() {
@@ -168,7 +175,7 @@ export default function SettingsPage() {
 function KeysSection() {
   const qc = useQueryClient();
   const [provider, setProvider] = useState<string>('pexels');
-  const [secret, setSecret] = useState('');
+  const [creds, setCreds] = useState<Record<string, string>>({});
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -177,20 +184,35 @@ function KeysSection() {
     queryFn: () => fetch('/api/keys').then((r) => r.json()),
   });
 
+  // The credential fields for the selected provider drive the whole form —
+  // one API key, or an OAuth id + secret pair, etc. (doc 23 auth model).
+  const fields = useMemo(() => credentialFields(provider as ProviderId), [provider]);
+
+  function selectProvider(p: string) {
+    setProvider(p);
+    setCreds({}); // fields differ per provider — never carry a stale value across
+    setError(null);
+  }
+
   async function add() {
-    if (secret.trim().length < 6) {
-      setError('Enter a valid key');
-      return;
+    for (const f of fields) {
+      if ((creds[f.name]?.trim().length ?? 0) < 4) {
+        setError(`Enter a valid ${f.label.toLowerCase()}`);
+        return;
+      }
     }
     setBusy(true);
     setError(null);
+    const credentials = Object.fromEntries(
+      fields.map((f) => [f.name, creds[f.name]?.trim() ?? '']),
+    );
     const res = await fetch('/api/keys', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider, secret: secret.trim(), label: label.trim() || undefined }),
+      body: JSON.stringify({ provider, credentials, label: label.trim() || undefined }),
     });
     if (res.ok) {
-      setSecret('');
+      setCreds({});
       setLabel('');
       await qc.invalidateQueries({ queryKey: ['keys'] });
       await qc.invalidateQueries({ queryKey: ['quota'] });
@@ -241,7 +263,7 @@ function KeysSection() {
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
             >
-              get a {provider} key
+              get {provider} credentials
               <svg
                 viewBox="0 0 24 24"
                 className="size-3"
@@ -255,30 +277,49 @@ function KeysSection() {
             </a>
           </div>
           <div className="mt-3">
-            <Pills value={provider} options={PROVIDER_OPTIONS} onChange={setProvider} />
+            <Pills value={provider} options={PROVIDER_OPTIONS} onChange={selectProvider} />
           </div>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <input
-              type="password"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && add()}
-              placeholder={
-                provider === 'openverse' ? 'token (optional — anonymous works)' : 'paste API key…'
-              }
-              className="h-10 flex-1 rounded-lg border border-border bg-bg px-3 font-mono text-sm outline-none transition-colors focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
-            />
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && add()}
-              placeholder="label (optional)"
-              className="h-10 rounded-lg border border-border bg-bg px-3 text-sm outline-none transition-colors focus:border-accent/50 sm:w-44"
-            />
-            <Button variant="primary" disabled={busy} onClick={add}>
-              {busy ? <Spinner /> : 'Add key'}
-            </Button>
+          <div className="mt-3 space-y-2">
+            {fields.map((f) => (
+              <div key={f.name}>
+                <label
+                  htmlFor={`cred-${provider}-${f.name}`}
+                  className="mb-1 block text-xs font-medium text-fg-muted"
+                >
+                  {f.label}
+                  {f.hint && <span className="ml-1.5 font-normal text-fg-subtle">— {f.hint}</span>}
+                </label>
+                <input
+                  id={`cred-${provider}-${f.name}`}
+                  type={f.secret ? 'password' : 'text'}
+                  autoComplete="off"
+                  value={creds[f.name] ?? ''}
+                  onChange={(e) => setCreds((c) => ({ ...c, [f.name]: e.target.value }))}
+                  onKeyDown={(e) => e.key === 'Enter' && add()}
+                  placeholder={`paste ${f.label.toLowerCase()}…`}
+                  className="h-10 w-full rounded-lg border border-border bg-bg px-3 font-mono text-sm outline-none transition-colors focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
+                />
+              </div>
+            ))}
+            <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && add()}
+                placeholder="label (optional — e.g. account 2)"
+                className="h-10 flex-1 rounded-lg border border-border bg-bg px-3 text-sm outline-none transition-colors focus:border-accent/50"
+              />
+              <Button variant="primary" disabled={busy} onClick={add}>
+                {busy ? <Spinner /> : 'Add key'}
+              </Button>
+            </div>
           </div>
+          {provider === 'openverse' && (
+            <p className="mt-2 text-xs text-fg-subtle">
+              Optional — Openverse works anonymously (200/day). Adding an app id + secret raises the
+              limit; the worker exchanges them for a 12-hour token and refreshes it automatically.
+            </p>
+          )}
           {error && <p className="mt-2 text-sm text-danger">{error}</p>}
         </div>
 
@@ -312,7 +353,17 @@ function KeysSection() {
                       >
                         <div className="flex min-w-0 items-center gap-3">
                           <Dot tone={k.active ? 'success' : 'neutral'} />
-                          <span className="font-mono text-sm">{k.masked}</span>
+                          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-sm">
+                            {k.fields.map((f, i) => (
+                              <span key={f.name} className="inline-flex items-center gap-1.5">
+                                {i > 0 && <span className="text-fg-subtle">·</span>}
+                                {k.fields.length > 1 && (
+                                  <span className="text-[11px] text-fg-subtle">{f.label}</span>
+                                )}
+                                <span className="truncate">{f.value}</span>
+                              </span>
+                            ))}
+                          </span>
                           {k.label && (
                             <span className="truncate text-xs text-fg-subtle">{k.label}</span>
                           )}

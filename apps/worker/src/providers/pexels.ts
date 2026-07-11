@@ -1,7 +1,9 @@
 import {
+  applyAuth,
   type MediaProvider,
   PipelineError,
   type RawCandidate,
+  type RequestAuth,
   type SearchQuery,
 } from '@scriptreel/core';
 import { z } from 'zod';
@@ -95,9 +97,9 @@ export function mapPexelsPhotos(json: unknown): RawCandidate[] {
 export class PexelsProvider implements MediaProvider {
   readonly id = 'pexels' as const;
 
-  async search(query: SearchQuery, apiKey: string): Promise<RawCandidate[]> {
-    const key = apiKey;
-    if (!key) throw new PipelineError('E_ENV', 'search', 'PEXELS_API_KEY is not set');
+  async search(query: SearchQuery, auth: RequestAuth): Promise<RawCandidate[]> {
+    if (auth.kind === 'none')
+      throw new PipelineError('E_ENV', 'search', 'no Pexels key configured');
     const base =
       query.kind === 'video'
         ? 'https://api.pexels.com/videos/search'
@@ -108,10 +110,9 @@ export class PexelsProvider implements MediaProvider {
     url.searchParams.set('per_page', String(query.perPage));
     if (query.kind === 'video') url.searchParams.set('size', 'medium');
 
-    const res = await fetch(url, {
-      headers: { Authorization: key },
-      signal: AbortSignal.timeout(15_000),
-    });
+    const headers: Record<string, string> = {};
+    applyAuth(url, headers, auth); // Authorization: <key>
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) {
       throw new PipelineError(
         'E_PROVIDER_HTTP',

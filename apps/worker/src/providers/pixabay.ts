@@ -1,7 +1,9 @@
 import {
+  applyAuth,
   type MediaProvider,
   PipelineError,
   type RawCandidate,
+  type RequestAuth,
   type SearchQuery,
 } from '@scriptreel/core';
 import { z } from 'zod';
@@ -77,13 +79,14 @@ export function mapPixabayImages(json: unknown): RawCandidate[] {
 export class PixabayProvider implements MediaProvider {
   readonly id = 'pixabay' as const;
 
-  async search(query: SearchQuery, apiKey: string): Promise<RawCandidate[]> {
-    const key = apiKey;
-    if (!key) throw new PipelineError('E_ENV', 'search', 'PIXABAY_API_KEY is not set');
+  async search(query: SearchQuery, auth: RequestAuth): Promise<RawCandidate[]> {
+    if (auth.kind === 'none') {
+      throw new PipelineError('E_ENV', 'search', 'no Pixabay key configured');
+    }
     const url = new URL(
       query.kind === 'video' ? 'https://pixabay.com/api/videos/' : 'https://pixabay.com/api/',
     );
-    url.searchParams.set('key', key);
+    applyAuth(url, {}, auth); // ?key=<key>
     url.searchParams.set('q', query.query);
     url.searchParams.set('per_page', String(query.perPage));
     url.searchParams.set('safesearch', 'true');

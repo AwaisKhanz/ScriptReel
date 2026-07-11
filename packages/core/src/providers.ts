@@ -7,6 +7,7 @@ import {
 } from './constants';
 import type { Domain } from './domain';
 import { sha1Hex } from './hash';
+import type { RequestAuth } from './provider-auth';
 import type { SubtitleAspect } from './subtitles/presets';
 
 // Media provider seam (doc 08). Types + pure helpers live here; the HTTP impls
@@ -41,9 +42,9 @@ export interface RawCandidate {
 
 export interface MediaProvider {
   id: ProviderId;
-  // one HTTP request max; apiKey is the key/token the QuotaGuard selected from the
-  // pool (doc 23) — '' for anonymous providers (Openverse without a token).
-  search(query: SearchQuery, apiKey: string): Promise<RawCandidate[]>;
+  // one HTTP request max; `auth` is already resolved (a key or a refreshed OAuth
+  // token) by the worker's auth resolver — providers just apply it (doc 23).
+  search(query: SearchQuery, auth: RequestAuth): Promise<RawCandidate[]>;
 }
 
 // SearchCache key (doc 08): sha1(provider + kind + orientation + normalize(query)).

@@ -1,4 +1,10 @@
-import type { MediaProvider, RawCandidate, SearchQuery } from '@scriptreel/core';
+import {
+  applyAuth,
+  type MediaProvider,
+  type RawCandidate,
+  type RequestAuth,
+  type SearchQuery,
+} from '@scriptreel/core';
 import { z } from 'zod';
 
 // Openverse (doc 23): universal aggregator of copyright-free images (CC0/PD/CC-BY).
@@ -30,7 +36,7 @@ function aspectRatio(orientation: string): string {
 export class OpenverseProvider implements MediaProvider {
   readonly id = 'openverse' as const;
 
-  async search(query: SearchQuery, apiKey: string): Promise<RawCandidate[]> {
+  async search(query: SearchQuery, auth: RequestAuth): Promise<RawCandidate[]> {
     if (query.kind === 'video') return []; // Openverse has no video
 
     const url = new URL(OV_BASE);
@@ -44,7 +50,7 @@ export class OpenverseProvider implements MediaProvider {
     const headers: Record<string, string> = {
       'user-agent': 'ScriptReel/1.0 (local script-to-video; free CC media)',
     };
-    if (apiKey) headers.authorization = `Bearer ${apiKey}`; // token → higher rate limit
+    applyAuth(url, headers, auth); // Authorization: Bearer <token> when authenticated
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
     if (!res.ok) throw new Error(`openverse /images → HTTP ${res.status}`);
     const parsed = OvResponse.parse(await res.json());
