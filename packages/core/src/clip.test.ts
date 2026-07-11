@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type MomentInput,
   type MontageCandidate,
   type MotionSample,
   pickBestWindow,
   planMontage,
+  planSemanticMontage,
   splitSegmentFrames,
 } from './clip';
 
@@ -138,5 +140,37 @@ describe('planMontage', () => {
 
   it('returns null when the chosen candidate is not in the pool', () => {
     expect(planMontage('x', [cand('a', 0.9, [1, 0, 0])], 9)).toBeNull();
+  });
+});
+
+describe('planSemanticMontage', () => {
+  const cand = (id: string, e: number[]): MontageCandidate => ({
+    id,
+    kind: 'image',
+    score: 0.5,
+    thumbEmbedding: e,
+  });
+  const moment = (e: number[], weight = 1): MomentInput => ({ embedding: e, weight });
+
+  it('assigns each moment its best-matching distinct candidate, in order', () => {
+    const cands = [cand('morning', [1, 0, 0]), cand('subway', [0, 1, 0]), cand('gate', [0, 0, 1])];
+    const plan = planSemanticMontage([moment([0, 1, 0]), moment([0, 0, 1])], cands);
+    expect(plan?.map((p) => p.candidateId)).toEqual(['subway', 'gate']);
+  });
+
+  it('carries the moment weights through', () => {
+    const cands = [cand('a', [1, 0, 0]), cand('b', [0, 1, 0])];
+    const plan = planSemanticMontage([moment([1, 0, 0], 3), moment([0, 1, 0], 5)], cands);
+    expect(plan?.map((p) => p.weight)).toEqual([3, 5]);
+  });
+
+  it('drops a moment with no distinct match (all candidates already used)', () => {
+    const cands = [cand('a', [1, 0, 0])];
+    // two moments both map best to 'a'; only one can be assigned → < 2 → null
+    expect(planSemanticMontage([moment([1, 0, 0]), moment([1, 0, 0])], cands)).toBeNull();
+  });
+
+  it('returns null when fewer than two moments can be assigned', () => {
+    expect(planSemanticMontage([moment([1, 0, 0])], [cand('a', [1, 0, 0])])).toBeNull();
   });
 });

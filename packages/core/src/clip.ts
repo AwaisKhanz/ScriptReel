@@ -138,3 +138,43 @@ export function planMontage(
   if (picked.length < 2) return null;
   return picked.map((c) => ({ candidateId: c.id, weight: 1 }));
 }
+
+export interface MomentInput {
+  embedding: readonly number[]; // the moment phrase embedding (from the sidecar)
+  weight: number; // relative duration (e.g. the phrase's word count)
+}
+
+// Semantic montage (doc 23 §7b): assign each ordered visual moment its best-matching,
+// visually-distinct candidate. For each moment in turn, pick the unused candidate with
+// the highest cosine(moment phrase, thumb) that isn't a near-duplicate of an already-
+// chosen segment. A moment with no distinct match is dropped. Returns an ordered plan
+// (≥2 assigned) or null — the caller then falls back to the diverse planMontage.
+export function planSemanticMontage(
+  moments: readonly MomentInput[],
+  candidates: readonly MontageCandidate[],
+): SegmentPlanItem[] | null {
+  const used = new Set<string>();
+  const picked: { id: string; weight: number; emb: readonly number[] }[] = [];
+  for (const m of moments) {
+    let best: MontageCandidate | null = null;
+    let bestSim = Number.NEGATIVE_INFINITY;
+    for (const c of candidates) {
+      if (used.has(c.id)) continue;
+      const distinct = picked.every(
+        (p) => cosine(c.thumbEmbedding, p.emb) <= MONTAGE_DIVERSITY_COSINE,
+      );
+      if (!distinct) continue;
+      const sim = cosine(m.embedding, c.thumbEmbedding);
+      if (sim > bestSim) {
+        bestSim = sim;
+        best = c;
+      }
+    }
+    if (best) {
+      used.add(best.id);
+      picked.push({ id: best.id, weight: m.weight, emb: best.thumbEmbedding });
+    }
+  }
+  if (picked.length < 2) return null;
+  return picked.map((p) => ({ candidateId: p.id, weight: p.weight }));
+}
