@@ -10,6 +10,7 @@ export * from './errors';
 export * from './hash';
 export * from './invalidation';
 export * from './jobs';
+export * from './license';
 export * from './matching';
 export * from './progress';
 export * from './providers';

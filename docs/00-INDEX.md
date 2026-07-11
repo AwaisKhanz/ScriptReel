@@ -43,6 +43,7 @@
 | 20 | ROADMAP | 15 phases (0–14) with exit criteria |
 | 21 | TESTING-QUALITY | Golden scripts, stage tests, visual QA rubric |
 | 22 | RISKS-LIMITS-LICENSES | Quota math, license table, mitigations |
+| 23 | EXPANDED-SOURCING | Copyright-free archive providers, license gate, clip intelligence (post-v1) |
 | — | `CLAUDE.md` (repo root) | Commands, invariants, working rules for Claude Code |
 
 ## Core invariants (memorize)
