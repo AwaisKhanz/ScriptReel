@@ -97,6 +97,20 @@ describe('planTier1Requests', () => {
     );
   });
 
+  it('routes named-subject domains to Wikimedia, but not generic/urban (doc 23)', () => {
+    const history = planTier1Requests(literal, 'mixed', 'history').map((r) => r.provider);
+    expect(history).toContain('wikimedia');
+    const people = planTier1Requests(literal, 'mixed', 'people').map((r) => r.provider);
+    expect(people).toContain('wikimedia');
+    // stock-covered domains keep Wikimedia out of the fan-out
+    expect(planTier1Requests(literal, 'mixed', 'urban').map((r) => r.provider)).not.toContain(
+      'wikimedia',
+    );
+    expect(planTier1Requests(literal, 'mixed', 'generic').map((r) => r.provider)).not.toContain(
+      'wikimedia',
+    );
+  });
+
   it('falls back to literal[0] when literal[1] is missing, and drops empty queries', () => {
     expect(planTier1Requests(['only'], 'videos')).toEqual([
       { provider: 'pexels', kind: 'video', query: 'only' },
@@ -163,6 +177,7 @@ describe('quota windows', () => {
       'pexels:hour',
       'pexels:month',
       'pixabay:minute',
+      'wikimedia:hour',
     ]);
     expect([...new Set(QUOTA_BUDGETS.map((b) => b.unit))].sort()).toEqual([
       'day',

@@ -26,6 +26,7 @@ export const PROVIDER_CREDENTIALS: Record<ProviderId, CredentialField[]> = {
     { name: 'clientSecret', label: 'Client secret', secret: true },
   ],
   nasa: [], // keyless
+  wikimedia: [], // keyless (Commons API is anonymous; a User-Agent is enough)
 };
 
 export type ProviderCredentials = Record<string, string>;

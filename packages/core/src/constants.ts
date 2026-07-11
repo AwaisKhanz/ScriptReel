@@ -41,6 +41,7 @@ export const PEXELS_MONTH_BUDGET = 19_000; // of 20,000
 export const PIXABAY_MINUTE_BUDGET = 90; // of 100
 export const OPENVERSE_DAY_BUDGET = 180; // of 200/day anonymous (doc 23)
 export const NASA_HOUR_BUDGET = 300; // NASA images-api is generous; a safety cap (doc 23)
+export const WIKIMEDIA_HOUR_BUDGET = 500; // Commons API has no hard key cap; a polite ceiling (doc 23)
 export const RESEARCH_RESERVE = 30; // kept free for storyboard re-search
 export const SEARCH_CACHE_TTL_H = 24; // Pixabay requires ≥24 h caching
 export const PER_PAGE_VIDEO = 20;

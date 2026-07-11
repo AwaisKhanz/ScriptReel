@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server';
 // worker's QuotaGuard enforces per key.
 export const dynamic = 'force-dynamic';
 
-const PROVIDERS: ProviderId[] = ['pexels', 'pixabay', 'openverse', 'nasa'];
+const PROVIDERS: ProviderId[] = ['pexels', 'pixabay', 'openverse', 'nasa', 'wikimedia'];
 
 export async function GET() {
   const now = new Date();

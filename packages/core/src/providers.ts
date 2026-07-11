@@ -4,6 +4,7 @@ import {
   PEXELS_HOUR_BUDGET,
   PEXELS_MONTH_BUDGET,
   PIXABAY_MINUTE_BUDGET,
+  WIKIMEDIA_HOUR_BUDGET,
 } from './constants';
 import type { Domain } from './domain';
 import { sha1Hex } from './hash';
@@ -14,7 +15,7 @@ import type { SubtitleAspect } from './subtitles/presets';
 // (PexelsProvider/PixabayProvider) live in the worker. Every call goes through
 // QuotaGuard then SearchCache — no path may hit a provider directly.
 
-export type ProviderId = 'pexels' | 'pixabay' | 'openverse' | 'nasa';
+export type ProviderId = 'pexels' | 'pixabay' | 'openverse' | 'nasa' | 'wikimedia';
 export type MediaKind = 'video' | 'image';
 export type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -187,6 +188,7 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'pixabay:minute', unit: 'minute', budget: PIXABAY_MINUTE_BUDGET },
   { key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET },
   { key: 'nasa:hour', unit: 'hour', budget: NASA_HOUR_BUDGET },
+  { key: 'wikimedia:hour', unit: 'hour', budget: WIKIMEDIA_HOUR_BUDGET },
 ];
 
 // Per-KEY budget windows a provider must satisfy to serve one request (doc 23). With
@@ -199,6 +201,7 @@ export const PROVIDER_WINDOWS: Record<ProviderId, readonly QuotaBudget[]> = {
   pixabay: [{ key: 'pixabay:minute', unit: 'minute', budget: PIXABAY_MINUTE_BUDGET }],
   openverse: [{ key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET }],
   nasa: [{ key: 'nasa:hour', unit: 'hour', budget: NASA_HOUR_BUDGET }],
+  wikimedia: [{ key: 'wikimedia:hour', unit: 'hour', budget: WIKIMEDIA_HOUR_BUDGET }],
 };
 
 // provider_usage key for one key's window, e.g. "pexels:hour#<keyId>" (doc 23).
@@ -211,6 +214,7 @@ export const PROVIDER_QUOTA_CODE = {
   pixabay: 'E_QUOTA_PIXABAY',
   openverse: 'E_QUOTA_OPENVERSE',
   nasa: 'E_QUOTA_NASA',
+  wikimedia: 'E_QUOTA_WIKIMEDIA',
 } as const;
 
 // Domain-specific archive providers (doc 23 §5): fired only for beats whose domain
@@ -220,7 +224,17 @@ export const ARCHIVE_PROVIDERS: {
   id: ProviderId;
   kind: MediaKind;
   domains: readonly Domain[];
-}[] = [{ id: 'nasa', kind: 'image', domains: ['space', 'science', 'nature'] }];
+}[] = [
+  { id: 'nasa', kind: 'image', domains: ['space', 'science', 'nature'] },
+  // Wikimedia Commons is the universal named-subject archive (people, places,
+  // events, works) — route it to every identifiable domain, leaving generic mood
+  // beats and cityscapes to the stock providers.
+  {
+    id: 'wikimedia',
+    kind: 'image',
+    domains: ['space', 'nature', 'science', 'history', 'art', 'people', 'tech'],
+  },
+];
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock
 // read) so it stays pure and testable; callers pass `new Date()`.

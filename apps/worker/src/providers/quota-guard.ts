@@ -58,8 +58,8 @@ export class QuotaGuard {
     if (provider === 'pixabay' && env.PIXABAY_API_KEY) {
       return [{ id: 'env', creds: { apiKey: env.PIXABAY_API_KEY } }];
     }
-    if (provider === 'openverse' || provider === 'nasa') {
-      return [{ id: 'anon', creds: {} }]; // Openverse anonymous / NASA keyless
+    if (provider === 'openverse' || provider === 'nasa' || provider === 'wikimedia') {
+      return [{ id: 'anon', creds: {} }]; // Openverse anonymous / NASA + Wikimedia keyless
     }
     return [];
   }

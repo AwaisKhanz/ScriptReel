@@ -13,6 +13,7 @@ import { PexelsProvider } from './pexels';
 import { PixabayProvider } from './pixabay';
 import type { QuotaGuard } from './quota-guard';
 import { readSearchCache, writeSearchCache } from './search-cache';
+import { WikimediaProvider } from './wikimedia';
 
 export interface SearchResult {
   candidates: RawCandidate[];
@@ -34,6 +35,7 @@ export class SearchClient {
       pixabay: new PixabayProvider(),
       openverse: new OpenverseProvider(),
       nasa: new NasaProvider(),
+      wikimedia: new WikimediaProvider(),
     };
   }
 
@@ -54,7 +56,8 @@ export class SearchClient {
         (err.code === 'E_QUOTA_PEXELS' ||
           err.code === 'E_QUOTA_PIXABAY' ||
           err.code === 'E_QUOTA_OPENVERSE' ||
-          err.code === 'E_QUOTA_NASA')
+          err.code === 'E_QUOTA_NASA' ||
+          err.code === 'E_QUOTA_WIKIMEDIA')
       ) {
         this.log.warn({ providerId, code: err.code }, 'quota exhausted — skipping request');
         return { candidates: [], cacheHit: false };
