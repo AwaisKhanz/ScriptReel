@@ -123,7 +123,6 @@ export function Storyboard({
   onApprove: () => void;
 }) {
   const qc = useQueryClient();
-  const [swapBeat, setSwapBeat] = useState<Beat | null>(null);
   const [swapSeg, setSwapSeg] = useState<{ beatId: string; index: number } | null>(null);
   const [researchBeat, setResearchBeat] = useState<Beat | null>(null);
   const [researching, setResearching] = useState<Record<string, number>>({}); // beatId → prior candidate count
@@ -151,26 +150,6 @@ export function Storyboard({
 
   const weakCount = beats.filter(isWeak).length;
   const total = beats.reduce((sum, b) => sum + (b.estSeconds ?? 0), 0);
-
-  // Optimistic swap: update the cache immediately, then PATCH.
-  async function choose(beatId: string, candidateId: string) {
-    qc.setQueryData<{ beats: Beat[] }>(['beats', projectId], (prev) =>
-      prev
-        ? {
-            beats: prev.beats.map((b) =>
-              b.id === beatId ? { ...b, chosenCandidateId: candidateId } : b,
-            ),
-          }
-        : prev,
-    );
-    setSwapBeat((s) => (s && s.id === beatId ? { ...s, chosenCandidateId: candidateId } : s));
-    const res = await fetch(`/api/beats/${beatId}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chosenCandidateId: candidateId }),
-    }).catch(() => null);
-    if (!res?.ok) refetch();
-  }
 
   // Swap one shot within a montage (doc 23 §7b): update segment `index`, keep the rest.
   async function chooseSegment(beatId: string, index: number, candidateId: string) {
@@ -261,7 +240,6 @@ export function Storyboard({
             beat={beat}
             aspect={aspect}
             researching={beat.id in researching}
-            onSwap={() => setSwapBeat(beat)}
             onSegmentSwap={(index) => setSwapSeg({ beatId: beat.id, index })}
             onResearch={() => setResearchBeat(beat)}
             onTextcard={() => toggleTextcard(beat)}
@@ -294,13 +272,6 @@ export function Storyboard({
         </div>
       </Portal>
 
-      {swapBeat && (
-        <SwapDrawer
-          beat={beats.find((b) => b.id === swapBeat.id) ?? swapBeat}
-          onChoose={(cid) => choose(swapBeat.id, cid)}
-          onClose={() => setSwapBeat(null)}
-        />
-      )}
       {swapSeg &&
         (() => {
           const b = beats.find((x) => x.id === swapSeg.beatId);
@@ -333,7 +304,6 @@ function BeatCard({
   beat,
   aspect,
   researching,
-  onSwap,
   onResearch,
   onSegmentSwap,
   onTextcard,
@@ -341,7 +311,6 @@ function BeatCard({
   beat: Beat;
   aspect: string;
   researching: boolean;
-  onSwap: () => void;
   onSegmentSwap: (index: number) => void;
   onResearch: () => void;
   onTextcard: () => void;
@@ -424,7 +393,6 @@ function BeatCard({
           {chosen?.provider && !beat.forcedTextcard && <span>· {chosen.provider}</span>}
         </div>
         <div className="mt-auto flex gap-1.5 pt-1">
-          <ActionBtn onClick={onSwap} label="Swap" />
           <ActionBtn onClick={onResearch} label="Re-search" />
           <ActionBtn
             onClick={onTextcard}
