@@ -61,19 +61,24 @@ describe('planTier1Requests', () => {
     ]);
   });
 
-  it('mixed: adds a Pixabay image', () => {
+  it('mixed: adds Pixabay + Openverse images (doc 23)', () => {
     const plan = planTier1Requests(literal, 'mixed');
-    expect(plan).toHaveLength(3);
-    expect(plan[2]).toEqual({ provider: 'pixabay', kind: 'image', query: 'sunrise beach' });
-  });
-
-  it('photos: adds Pixabay image + Pexels photo', () => {
-    const plan = planTier1Requests(literal, 'photos');
-    expect(plan).toHaveLength(4);
     expect(plan.map((r) => `${r.provider}:${r.kind}`)).toEqual([
       'pexels:video',
       'pixabay:video',
       'pixabay:image',
+      'openverse:image',
+    ]);
+    expect(plan[3]).toEqual({ provider: 'openverse', kind: 'image', query: 'sunrise beach' });
+  });
+
+  it('photos: adds Pixabay + Openverse images + Pexels photo', () => {
+    const plan = planTier1Requests(literal, 'photos');
+    expect(plan.map((r) => `${r.provider}:${r.kind}`)).toEqual([
+      'pexels:video',
+      'pixabay:video',
+      'pixabay:image',
+      'openverse:image',
       'pexels:image',
     ]);
   });
@@ -132,11 +137,12 @@ describe('quota windows', () => {
     const d = new Date('2026-07-11T13:47:29.512Z');
     expect(truncateWindow(d, 'minute').toISOString()).toBe('2026-07-11T13:47:00.000Z');
     expect(truncateWindow(d, 'hour').toISOString()).toBe('2026-07-11T13:00:00.000Z');
+    expect(truncateWindow(d, 'day').toISOString()).toBe('2026-07-11T00:00:00.000Z');
     expect(truncateWindow(d, 'month').toISOString()).toBe('2026-07-01T00:00:00.000Z');
   });
   it('exposes one budget per rate window', () => {
     const pixabay = QUOTA_BUDGETS.find((b) => b.key === 'pixabay:minute');
     expect(pixabay?.budget).toBe(PIXABAY_MINUTE_BUDGET);
-    expect(QUOTA_BUDGETS.map((b) => b.unit).sort()).toEqual(['hour', 'minute', 'month']);
+    expect(QUOTA_BUDGETS.map((b) => b.unit).sort()).toEqual(['day', 'hour', 'minute', 'month']);
   });
 });

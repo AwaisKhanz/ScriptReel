@@ -1,6 +1,7 @@
 import {
   hashObject,
   invariant,
+  isLicenseAllowed,
   MAX_CANDIDATES_PER_BEAT,
   matchesOrientation,
   normalizeSearchQuery,
@@ -64,7 +65,7 @@ export const searchStage: Stage = {
       const queries = beat.queries as { literal?: string[] } | null;
       const plan = planTier1Requests(queries?.literal ?? [], mediaPreference);
 
-      const collected: RawCandidate[] = [];
+      const groups: RawCandidate[][] = [];
       for (const req of plan) {
         const perPage = req.kind === 'video' ? PER_PAGE_VIDEO : PER_PAGE_PHOTO;
         const query: SearchQuery = { query: req.query, kind: req.kind, orientation, perPage };
@@ -77,13 +78,26 @@ export const searchStage: Stage = {
           if (result.cacheHit) cacheHits += 1;
           else networkCalls += 1;
         }
-        collected.push(...candidates);
+        groups.push(candidates);
+      }
+
+      // Round-robin interleave across the plan's providers so every source is
+      // represented before the MAX_CANDIDATES_PER_BEAT cap (doc 23). Otherwise the
+      // first plan entries (stock video) fill the cap and starve later sources like
+      // Openverse; scoring (doc 09) then ranks the mixed pool on merit.
+      const collected: RawCandidate[] = [];
+      for (let r = 0; groups.some((g) => r < g.length); r += 1) {
+        for (const g of groups) {
+          const c = g[r];
+          if (c) collected.push(c);
+        }
       }
 
       // Hygiene → orientation post-filter (Pixabay videos) → dedupe → cap 40.
       const seen = new Set<string>();
       const kept: RawCandidate[] = [];
       for (const c of collected) {
+        if (!isLicenseAllowed(c.license)) continue; // no-strike gate (doc 23 §3)
         if (!passesHygiene(c, targetHeight)) continue;
         if (
           c.provider === 'pixabay' &&

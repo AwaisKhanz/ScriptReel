@@ -6,6 +6,7 @@ import {
   type SearchQuery,
 } from '@scriptreel/core';
 import type { Logger } from 'pino';
+import { OpenverseProvider } from './openverse';
 import { PexelsProvider } from './pexels';
 import { PixabayProvider } from './pixabay';
 import type { QuotaGuard } from './quota-guard';
@@ -26,7 +27,11 @@ export class SearchClient {
     private readonly guard: QuotaGuard,
     private readonly log: Logger,
   ) {
-    this.providers = { pexels: new PexelsProvider(), pixabay: new PixabayProvider() };
+    this.providers = {
+      pexels: new PexelsProvider(),
+      pixabay: new PixabayProvider(),
+      openverse: new OpenverseProvider(),
+    };
   }
 
   async search(query: SearchQuery, providerId: ProviderId): Promise<SearchResult> {
@@ -42,7 +47,9 @@ export class SearchClient {
       if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
       if (
         err instanceof PipelineError &&
-        (err.code === 'E_QUOTA_PEXELS' || err.code === 'E_QUOTA_PIXABAY')
+        (err.code === 'E_QUOTA_PEXELS' ||
+          err.code === 'E_QUOTA_PIXABAY' ||
+          err.code === 'E_QUOTA_OPENVERSE')
       ) {
         this.log.warn({ providerId, code: err.code }, 'quota exhausted — skipping request');
         return { candidates: [], cacheHit: false };

@@ -1,4 +1,9 @@
-import { PEXELS_HOUR_BUDGET, PEXELS_MONTH_BUDGET, PIXABAY_MINUTE_BUDGET } from './constants';
+import {
+  OPENVERSE_DAY_BUDGET,
+  PEXELS_HOUR_BUDGET,
+  PEXELS_MONTH_BUDGET,
+  PIXABAY_MINUTE_BUDGET,
+} from './constants';
 import { sha1Hex } from './hash';
 import type { SubtitleAspect } from './subtitles/presets';
 
@@ -6,7 +11,7 @@ import type { SubtitleAspect } from './subtitles/presets';
 // (PexelsProvider/PixabayProvider) live in the worker. Every call goes through
 // QuotaGuard then SearchCache — no path may hit a provider directly.
 
-export type ProviderId = 'pexels' | 'pixabay';
+export type ProviderId = 'pexels' | 'pixabay' | 'openverse';
 export type MediaKind = 'video' | 'image';
 export type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -137,6 +142,8 @@ export function planTier1Requests(
   ];
   if (mediaPreference === 'mixed' || mediaPreference === 'photos') {
     requests.push({ provider: 'pixabay', kind: 'image', query: l0 });
+    // Openverse: universal copyright-free CC/PD image reach (doc 23), image-only.
+    requests.push({ provider: 'openverse', kind: 'image', query: l0 });
   }
   if (mediaPreference === 'photos') {
     requests.push({ provider: 'pexels', kind: 'image', query: l1 });
@@ -156,7 +163,7 @@ export function passesHygiene(candidate: RawCandidate, targetHeight: number): bo
 
 // Durable quota accounting (doc 08 §QuotaGuard). One bucket key per rate window;
 // shared by the worker guard (reserve) and the web /api/quota meter (read).
-export type QuotaWindowUnit = 'minute' | 'hour' | 'month';
+export type QuotaWindowUnit = 'minute' | 'hour' | 'day' | 'month';
 
 export interface QuotaBudget {
   key: string; // provider_usage.provider value
@@ -168,6 +175,7 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'pexels:hour', unit: 'hour', budget: PEXELS_HOUR_BUDGET },
   { key: 'pexels:month', unit: 'month', budget: PEXELS_MONTH_BUDGET },
   { key: 'pixabay:minute', unit: 'minute', budget: PIXABAY_MINUTE_BUDGET },
+  { key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET },
 ];
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock
@@ -176,11 +184,9 @@ export function truncateWindow(date: Date, unit: QuotaWindowUnit): Date {
   const d = new Date(date);
   d.setUTCMilliseconds(0);
   d.setUTCSeconds(0);
-  if (unit === 'hour' || unit === 'month') d.setUTCMinutes(0);
-  if (unit === 'month') {
-    d.setUTCHours(0);
-    d.setUTCDate(1);
-  }
+  if (unit !== 'minute') d.setUTCMinutes(0);
+  if (unit === 'day' || unit === 'month') d.setUTCHours(0);
+  if (unit === 'month') d.setUTCDate(1);
   return d;
 }
 

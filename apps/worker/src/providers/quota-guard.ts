@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  OPENVERSE_DAY_BUDGET,
   PEXELS_HOUR_BUDGET,
   PEXELS_MONTH_BUDGET,
   PIXABAY_MINUTE_BUDGET,
@@ -18,6 +19,17 @@ export class QuotaGuard {
 
   async reserve(provider: ProviderId): Promise<void> {
     const now = new Date();
+    if (provider === 'openverse') {
+      const day = await db.reserveQuota(
+        'openverse:day',
+        truncateWindow(now, 'day'),
+        OPENVERSE_DAY_BUDGET,
+      );
+      if (day === null) {
+        throw new PipelineError('E_QUOTA_OPENVERSE', 'search', 'Openverse daily budget reached');
+      }
+      return;
+    }
     if (provider === 'pexels') {
       const hour = await db.reserveQuota(
         'pexels:hour',

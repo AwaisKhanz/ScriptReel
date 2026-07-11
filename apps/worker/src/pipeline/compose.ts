@@ -7,6 +7,7 @@ import {
   assertTimelineInvariants,
   type BuildBeatInput,
   buildTimeline,
+  classifyLicense,
   composePlan,
   hashObject,
   invariant,
@@ -298,12 +299,17 @@ export const composeStage: Stage = {
 // credits.txt (doc 08 §Credits, doc 13): one line per used asset + music + voice.
 function buildCredits(media: db.ChosenMediaRow[], musicCredit: string | null): string {
   const providerName = (p: string): string =>
-    p === 'pexels' ? 'Pexels' : p === 'pixabay' ? 'Pixabay' : p;
+    p === 'pexels' ? 'Pexels' : p === 'pixabay' ? 'Pixabay' : p === 'openverse' ? 'Openverse' : p;
+  // Stock providers need no per-item attribution; archive/CC items must name the
+  // license (doc 23 no-strike → correct CC BY attribution).
+  const noAttrib = new Set(['pexels', 'pixabay', 'textcard', 'generated']);
   const lines = media.map((m) => {
     const author = m.author ?? 'Unknown';
     const via = m.provider === 'textcard' ? 'ScriptReel' : `${providerName(m.provider)}`;
+    const lic =
+      m.license && !noAttrib.has(m.provider) ? ` (${classifyLicense(m.license).label})` : '';
     const url = m.pageUrl ? ` — ${m.pageUrl}` : '';
-    return `#${m.idx}: ${m.kind} by ${author} via ${via}${url}`;
+    return `#${m.idx}: ${m.kind} by ${author} via ${via}${lic}${url}`;
   });
   if (musicCredit) lines.push(musicCredit);
   lines.push('Voice: Kokoro-82M (Apache-2.0)');
