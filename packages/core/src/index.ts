@@ -10,6 +10,7 @@ export * from './errors';
 export * from './hash';
 export * from './jobs';
 export * from './matching';
+export * from './progress';
 export * from './providers';
 export * from './settings';
 export * from './subtitles/align';

@@ -9,10 +9,13 @@ import { FFMPEG_BIN } from './bin';
 
 // Compose Pass B (visual assembly) + Pass C (subtitles/audio/encode), doc 13.
 
-async function ff(args: string[], stage: string): Promise<void> {
+async function ff(args: string[], stage: string, signal?: AbortSignal): Promise<void> {
   try {
-    await execa(FFMPEG_BIN, ['-y', '-hide_banner', '-loglevel', 'warning', ...args]);
+    await execa(FFMPEG_BIN, ['-y', '-hide_banner', '-loglevel', 'warning', ...args], {
+      ...(signal ? { cancelSignal: signal } : {}),
+    });
   } catch (cause) {
+    if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'compose', 'cancelled');
     const stderr = cause instanceof Error && 'stderr' in cause ? String(cause.stderr) : '';
     throw new PipelineError(
       'E_FFMPEG',
@@ -30,6 +33,7 @@ export async function assembleVisual(
   clipPaths: string[],
   plan: ComposePlan,
   outPath: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const inputs = clipPaths.flatMap((p) => ['-i', p]);
   const f = plan.crossfadeSec.toFixed(3);
@@ -74,6 +78,7 @@ export async function assembleVisual(
       outPath,
     ],
     'Pass B (assemble)',
+    signal,
   );
 }
 
@@ -91,6 +96,7 @@ export interface PassCParams {
   aspect: string;
   preset: 'draft' | 'final';
   outPath: string;
+  signal?: AbortSignal;
 }
 
 function draftDims(width: number, height: number): [number, number] {
@@ -158,6 +164,7 @@ export async function encodeFinal(p: PassCParams): Promise<void> {
       p.outPath,
     ],
     'Pass C (encode)',
+    p.signal,
   );
 }
 
@@ -166,9 +173,11 @@ export async function makeThumbnail(
   finalPath: string,
   atSec: number,
   outPath: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   await ff(
     ['-ss', atSec.toFixed(3), '-i', finalPath, '-frames:v', '1', '-vf', 'scale=640:-2', outPath],
     'thumbnail',
+    signal,
   );
 }

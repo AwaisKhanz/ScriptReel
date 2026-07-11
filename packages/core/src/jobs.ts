@@ -5,6 +5,7 @@ export const STAGES = ['analyze', 'search', 'score', 'tts', 'align', 'fetch', 'c
 export type PipelineStage = (typeof STAGES)[number];
 
 export const PIPELINE_QUEUE = 'pipeline' as const;
+export const BEAT_RESEARCH_QUEUE = 'beat-research' as const;
 
 // Job payload mode (doc 06 §Job model).
 export type JobMode = 'full' | 'continue' | 'composeOnly' | `stage:${PipelineStage}`;
@@ -28,3 +29,12 @@ export const PipelinePayloadSchema = z.object({
   mode: z.custom<JobMode>((v) => typeof v === 'string' && isJobMode(v), 'invalid job mode'),
 });
 export type PipelinePayload = z.infer<typeof PipelinePayloadSchema>;
+
+// Single-beat re-search from the storyboard (doc 06 §Review gate, doc 09).
+export const BeatResearchPayloadSchema = z.object({
+  projectId: uuid,
+  beatId: uuid,
+  visualDescription: z.string().min(1).optional(),
+  customQuery: z.string().min(1).optional(),
+});
+export type BeatResearchPayload = z.infer<typeof BeatResearchPayloadSchema>;

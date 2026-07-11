@@ -4,10 +4,13 @@ import { PipelineError } from '@scriptreel/core';
 import { execa } from 'execa';
 import { FFMPEG_BIN } from './bin';
 
-async function ff(args: string[]): Promise<void> {
+async function ff(args: string[], signal?: AbortSignal): Promise<void> {
   try {
-    await execa(FFMPEG_BIN, ['-v', 'error', '-nostdin', ...args]);
+    await execa(FFMPEG_BIN, ['-v', 'error', '-nostdin', ...args], {
+      ...(signal ? { cancelSignal: signal } : {}),
+    });
   } catch (cause) {
+    if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'tts', 'cancelled');
     throw new PipelineError('E_FFMPEG', 'tts', `ffmpeg failed: ${args.join(' ').slice(0, 120)}`, {
       cause,
     });
@@ -29,6 +32,7 @@ export async function buildNarration(
   beatPaths: string[],
   pauseSec: number,
   audioDir: string,
+  signal?: AbortSignal,
 ): Promise<NarrationPaths> {
   const silencePath = join(audioDir, 'silence.wav');
   const listPath = join(audioDir, 'concat.txt');
@@ -36,18 +40,21 @@ export async function buildNarration(
   const voPath = join(audioDir, 'vo.wav');
 
   if (pauseSec > 0) {
-    await ff([
-      '-f',
-      'lavfi',
-      '-i',
-      'anullsrc=r=24000:cl=mono',
-      '-t',
-      pauseSec.toFixed(3),
-      '-c:a',
-      'pcm_s16le',
-      '-y',
-      silencePath,
-    ]);
+    await ff(
+      [
+        '-f',
+        'lavfi',
+        '-i',
+        'anullsrc=r=24000:cl=mono',
+        '-t',
+        pauseSec.toFixed(3),
+        '-c:a',
+        'pcm_s16le',
+        '-y',
+        silencePath,
+      ],
+      signal,
+    );
   }
 
   const lines: string[] = [];
@@ -60,36 +67,42 @@ export async function buildNarration(
   await writeFile(listPath, lines.join('\n'), 'utf8');
 
   // Re-encode to a uniform PCM stream while concatenating (inputs already match).
-  await ff([
-    '-f',
-    'concat',
-    '-safe',
-    '0',
-    '-i',
-    listPath,
-    '-ac',
-    '1',
-    '-ar',
-    '24000',
-    '-c:a',
-    'pcm_s16le',
-    '-y',
-    voRawPath,
-  ]);
+  await ff(
+    [
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      listPath,
+      '-ac',
+      '1',
+      '-ar',
+      '24000',
+      '-c:a',
+      'pcm_s16le',
+      '-y',
+      voRawPath,
+    ],
+    signal,
+  );
 
   // Single-pass loudnorm preserves duration; 48 kHz for the final mux (doc 10 §4).
-  await ff([
-    '-i',
-    voRawPath,
-    '-af',
-    'loudnorm=I=-16:TP=-1.5:LRA=11',
-    '-ar',
-    '48000',
-    '-ac',
-    '1',
-    '-y',
-    voPath,
-  ]);
+  await ff(
+    [
+      '-i',
+      voRawPath,
+      '-af',
+      'loudnorm=I=-16:TP=-1.5:LRA=11',
+      '-ar',
+      '48000',
+      '-ac',
+      '1',
+      '-y',
+      voPath,
+    ],
+    signal,
+  );
 
   return { voRawPath, voPath };
 }

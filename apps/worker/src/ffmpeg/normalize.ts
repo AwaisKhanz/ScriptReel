@@ -15,10 +15,13 @@ import { FFMPEG_BIN } from './bin';
 
 const ENCODE = ['-c:v', VIDEO_CODEC_HW, '-b:v', NORMALIZE_BITRATE, '-allow_sw', '1'] as const;
 
-async function ff(args: string[], outPath: string): Promise<void> {
+async function ff(args: string[], outPath: string, signal?: AbortSignal): Promise<void> {
   try {
-    await execa(FFMPEG_BIN, ['-y', '-hide_banner', '-loglevel', 'warning', ...args]);
+    await execa(FFMPEG_BIN, ['-y', '-hide_banner', '-loglevel', 'warning', ...args], {
+      ...(signal ? { cancelSignal: signal } : {}),
+    });
   } catch (cause) {
+    if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'fetch', 'cancelled');
     const stderr = cause instanceof Error && 'stderr' in cause ? String(cause.stderr) : '';
     const tail = stderr.split('\n').slice(-40).join('\n');
     throw new PipelineError('E_NORMALIZE', 'fetch', `normalize failed → ${outPath}\n${tail}`, {
@@ -44,6 +47,7 @@ export interface NormalizeVideoParams {
   width: number;
   height: number;
   outPath: string;
+  signal?: AbortSignal;
 }
 
 export async function normalizeVideo(p: NormalizeVideoParams): Promise<void> {
@@ -57,6 +61,7 @@ export async function normalizeVideo(p: NormalizeVideoParams): Promise<void> {
     await ff(
       ['-ss', startAt.toFixed(3), '-i', p.src, '-t', t, '-vf', vf, '-an', ...ENCODE, p.outPath],
       p.outPath,
+      p.signal,
     );
     return;
   }
@@ -78,13 +83,14 @@ export async function normalizeVideo(p: NormalizeVideoParams): Promise<void> {
         p.outPath,
       ],
       p.outPath,
+      p.signal,
     );
     return;
   }
   // Looping would repeat too often → play once, then hold the last frame (doc 13).
   const pad = Math.max(0, L - p.sourceDurationSec).toFixed(3);
   const heldVf = `${coverVf(p.width, p.height)},tpad=stop_mode=clone:stop_duration=${pad}`;
-  await ff(['-i', p.src, '-t', t, '-vf', heldVf, '-an', ...ENCODE, p.outPath], p.outPath);
+  await ff(['-i', p.src, '-t', t, '-vf', heldVf, '-an', ...ENCODE, p.outPath], p.outPath, p.signal);
 }
 
 // Anchor corner (fraction of the pan range) per Ken Burns direction (doc 13).
@@ -122,6 +128,7 @@ export interface NormalizeStillParams {
   width: number;
   height: number;
   outPath: string;
+  signal?: AbortSignal;
 }
 
 export async function normalizeStill(p: NormalizeStillParams): Promise<void> {
@@ -144,5 +151,6 @@ export async function normalizeStill(p: NormalizeStillParams): Promise<void> {
       p.outPath,
     ],
     p.outPath,
+    p.signal,
   );
 }

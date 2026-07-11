@@ -103,7 +103,7 @@ export const ttsStage: Stage = {
     }
 
     report(80, 'concatenating + loudnorm');
-    const { voPath } = await buildNarration(beatPaths, pauseSec, audioDir);
+    const { voPath } = await buildNarration(beatPaths, pauseSec, audioDir, ctx.signal);
 
     const probe = await probeAudio(voPath);
     const expected =

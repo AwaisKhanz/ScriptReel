@@ -190,6 +190,7 @@ export const fetchStage: Stage = {
               width,
               height,
               outPath,
+              signal: ctx.signal,
             });
           } else {
             await normalizeStill({
@@ -199,6 +200,7 @@ export const fetchStage: Stage = {
               width,
               height,
               outPath,
+              signal: ctx.signal,
             });
           }
           done += 1;

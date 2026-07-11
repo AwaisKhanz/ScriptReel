@@ -214,7 +214,7 @@ export const composeStage: Stage = {
     await mkdir(renderDir, { recursive: true });
     const clipPaths = timeline.beats.map((b) => join(clipsDir, `${b.idx}.mp4`));
     const videoNoSub = join(renderDir, 'video_nosub.mp4');
-    await assembleVisual(clipPaths, composePlan(timeline), videoNoSub);
+    await assembleVisual(clipPaths, composePlan(timeline), videoNoSub, ctx.signal);
 
     // 5) Pass C — subtitles + audio + encode.
     report(60, 'encoding final');
@@ -231,6 +231,7 @@ export const composeStage: Stage = {
       aspect,
       preset,
       outPath: finalPath,
+      signal: ctx.signal,
     });
 
     // 6) Post-render assertions (doc 13 §Post-render) — E_COMPOSE_VERIFY on any mismatch.
@@ -254,7 +255,7 @@ export const composeStage: Stage = {
 
     // 7) Thumbnail + credits.txt + renders row (frozen timeline).
     const thumbPath = join(renderDir, 'thumbnail.jpg');
-    await makeThumbnail(finalPath, timeline.narration.durationSec * 0.15, thumbPath);
+    await makeThumbnail(finalPath, timeline.narration.durationSec * 0.15, thumbPath, ctx.signal);
     await writeFile(join(renderDir, 'credits.txt'), credits, 'utf8');
     await db.insertRender({
       projectId: ctx.projectId,

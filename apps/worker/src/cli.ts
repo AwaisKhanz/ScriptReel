@@ -13,6 +13,7 @@ const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 interface Args {
   stage?: PipelineStage;
+  mode?: 'full' | 'continue' | 'composeOnly';
   projectId?: string;
   scriptFile?: string;
   title?: string;
@@ -44,6 +45,11 @@ function parseArgs(argv: string[]): Args {
     } else if (token === '--cancel-after') {
       i += 1;
       args.cancelAfterMs = Number(argv[i]);
+    } else if (token === '--mode') {
+      i += 1;
+      const value = argv[i];
+      if (value === 'full' || value === 'continue' || value === 'composeOnly') args.mode = value;
+      else throw new Error(`--mode must be full|continue|composeOnly`);
     } else if (token !== undefined && !token.startsWith('--')) {
       if ((STAGES as readonly string[]).includes(token)) {
         args.stage = token as PipelineStage;
@@ -104,14 +110,10 @@ async function main(): Promise<void> {
     }, ms);
   }
 
+  const mode = args.stage ? (`stage:${args.stage}` as const) : (args.mode ?? 'full');
   await runPipeline(
-    { projectId, mode: args.stage ? `stage:${args.stage}` : 'full' },
-    {
-      fake: args.fake,
-      force: args.force,
-      ...(args.stage ? { only: args.stage } : {}),
-      log: log.child({ projectId }),
-    },
+    { projectId, mode },
+    { fake: args.fake, force: args.force, log: log.child({ projectId }) },
   );
 
   const runs = await db.getPipelineRuns(projectId);

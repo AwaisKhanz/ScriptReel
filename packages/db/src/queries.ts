@@ -123,6 +123,13 @@ export async function markRunSkipped(projectId: string, stage: PipelineStage): P
     where project_id = ${projectId} and stage = ${stage}`;
 }
 
+// On cancel: a stage left mid-run reverts to pending so the draft resumes cleanly.
+export async function resetRunningRuns(projectId: string): Promise<void> {
+  await sql`
+    update pipeline_runs set status = 'pending', progress = 0, detail = null
+    where project_id = ${projectId} and status = 'running'`;
+}
+
 export async function markRunFailed(
   projectId: string,
   stage: PipelineStage,
@@ -280,6 +287,17 @@ export async function appendCandidatesForBeat(
 
 export async function setBeatForcedTextcard(beatId: string, forced: boolean): Promise<void> {
   await sql`update beats set forced_textcard = ${forced} where id = ${beatId}`;
+}
+
+export async function setBeatVisualDescription(beatId: string, description: string): Promise<void> {
+  await sql`update beats set visual_description = ${description} where id = ${beatId}`;
+}
+
+export async function setBeatChosenCandidate(
+  beatId: string,
+  chosenCandidateId: string | null,
+): Promise<void> {
+  await sql`update beats set chosen_candidate_id = ${chosenCandidateId} where id = ${beatId}`;
 }
 
 export type AssetCacheRow = Database['public']['Tables']['asset_cache']['Row'];

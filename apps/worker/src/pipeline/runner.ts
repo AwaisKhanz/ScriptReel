@@ -50,7 +50,8 @@ export async function runStages(
   opts: RunStagesOptions,
 ): Promise<void> {
   for (const stage of stages) {
-    const cancelRequested = await db.isCancelRequested(ctx.projectId);
+    // Stop on a user cancel (DB flag) or a sibling-branch failure (controller abort).
+    const cancelRequested = ctx.signal.aborted || (await db.isCancelRequested(ctx.projectId));
     ctx.log.debug({ stage: stage.name, cancelRequested }, 'cancel check');
     if (cancelRequested) {
       opts.controller.abort();
@@ -82,11 +83,15 @@ export async function runStages(
       ctx.log.info({ stage: stage.name }, 'done');
     } catch (err) {
       const pipelineError = toPipelineError(err, stage.name);
-      await db.markRunFailed(ctx.projectId, stage.name, {
-        stage: stage.name,
-        code: pipelineError.code,
-        message: pipelineError.message,
-      });
+      // A cancel isn't a stage failure — leave the run resumable (no manifest was
+      // written), the project is reset to draft by the handler.
+      if (pipelineError.code !== 'E_CANCELLED') {
+        await db.markRunFailed(ctx.projectId, stage.name, {
+          stage: stage.name,
+          code: pipelineError.code,
+          message: pipelineError.message,
+        });
+      }
       throw pipelineError;
     }
   }
