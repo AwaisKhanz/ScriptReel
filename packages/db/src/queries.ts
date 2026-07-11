@@ -350,6 +350,16 @@ export async function listProviderKeys(): Promise<ProviderKeyMeta[]> {
   }));
 }
 
+// One key with parsed credentials, for the per-key live "Test" (doc 23 §4).
+export async function getProviderKey(
+  id: string,
+): Promise<{ id: string; provider: string; creds: ProviderCredentials } | null> {
+  const rows = await sql<{ id: string; provider: string; secret: string }[]>`
+    select id, provider, secret from provider_keys where id = ${id}`;
+  const row = rows[0];
+  return row ? { id: row.id, provider: row.provider, creds: parseCreds(row.secret) } : null;
+}
+
 // Active keys for a provider with parsed credentials, for the QuotaGuard pool.
 export async function activeKeysFor(
   provider: string,

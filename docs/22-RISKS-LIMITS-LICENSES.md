@@ -14,13 +14,19 @@ A 3-minute script ≈ 470–500 words ≈ **44 beats** (doc 07 pacing).
 
 Escalation (ladder rungs 1–3) fires only on beats below `τ_lo` — budget **1 extra request per weak beat, max 20% of beats** → ≈ +9. Storyboard re-search: ≤ 4 requests per beat, gated below reserve.
 
-**Budgets** (`packages/core/src/constants.ts`, enforced by `QuotaGuard`):
+**Budgets** (`packages/core/src/constants.ts`, enforced by `QuotaGuard`). These are the
+real documented free-tier limits and serve as the pre-test estimate only — the per-key
+**Test** action (Settings → API keys) reads each key's true limit live from the provider
+(`x-ratelimit-*` headers / Openverse `rate_limit` endpoint), doc 23 §4:
 
 ```
-PEXELS_HOUR_BUDGET   = 190   // of 200; 10 held back
-PEXELS_MONTH_BUDGET  = 19_000 // of 20,000
-PIXABAY_MINUTE_BUDGET = 90    // of 100
-RESEARCH_RESERVE     = 30    // requests kept free for storyboard re-search
+PEXELS_HOUR_BUDGET    = 200    // Pexels free: 200 req/hour
+PEXELS_MONTH_BUDGET   = 20_000 // Pexels free: 20,000 req/month
+PIXABAY_MINUTE_BUDGET = 100    // Pixabay free: 100 req / 60 s
+OPENVERSE_DAY_BUDGET  = 10_000 // Openverse OAuth (registered) ≈ 10k/day; anon ≈ 100/day
+NASA_HOUR_BUDGET      = 1_000  // no published cap — self-imposed polite ceiling
+WIKIMEDIA_HOUR_BUDGET = 1_000  // no published cap — self-imposed polite ceiling
+RESEARCH_RESERVE      = 30     // requests kept free for storyboard re-search
 ```
 
 Consequences to accept: **~3 cold 3-minute videos per hour** on Pexels' free tier (mixed preference). Warm re-runs and re-renders are free (24 h cache). If the hour budget hits zero mid-run, the ladder degrades to conceptual/text-card rather than stalling — the run always finishes. Pexels offers a free unlimited tier on application with attribution proof; do that before treating this as a product.

@@ -35,13 +35,16 @@ export const CJK_LANGUAGES = ['ja', 'zh'] as const;
 export const MERGE_MIN_SEC = 2.5;
 export const SPLIT_MAX_SEC = 12;
 
-// Media provider budgets + cache (doc 22 §budgets, doc 08). Enforced by QuotaGuard.
-export const PEXELS_HOUR_BUDGET = 190; // of 200; 10 held back
-export const PEXELS_MONTH_BUDGET = 19_000; // of 20,000
-export const PIXABAY_MINUTE_BUDGET = 90; // of 100
-export const OPENVERSE_DAY_BUDGET = 180; // of 200/day anonymous (doc 23)
-export const NASA_HOUR_BUDGET = 300; // NASA images-api is generous; a safety cap (doc 23)
-export const WIKIMEDIA_HOUR_BUDGET = 500; // Commons API has no hard key cap; a polite ceiling (doc 23)
+// Media provider budgets + cache (doc 22 §budgets, doc 08). These are the real
+// documented free-tier limits and act only as the pre-test estimate — the per-key
+// "Test" action reads each key's TRUE limit live from the provider (x-ratelimit-*
+// headers / Openverse rate_limit endpoint), which can be higher (doc 23 §4).
+export const PEXELS_HOUR_BUDGET = 200; // Pexels free: 200 req/hour
+export const PEXELS_MONTH_BUDGET = 20_000; // Pexels free: 20,000 req/month
+export const PIXABAY_MINUTE_BUDGET = 100; // Pixabay free: 100 req / 60 s
+export const OPENVERSE_DAY_BUDGET = 10_000; // Openverse registered (OAuth) tier ≈ 10k/day; anon ≈ 100/day
+export const NASA_HOUR_BUDGET = 1_000; // NASA images-api has no published cap; self-imposed polite ceiling
+export const WIKIMEDIA_HOUR_BUDGET = 1_000; // Commons API has no hard key cap; self-imposed polite ceiling
 export const RESEARCH_RESERVE = 30; // kept free for storyboard re-search
 export const SEARCH_CACHE_TTL_H = 24; // Pixabay requires ≥24 h caching
 export const PER_PAGE_VIDEO = 20;

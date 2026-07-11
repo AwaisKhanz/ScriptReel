@@ -347,37 +347,7 @@ function KeysSection() {
                   </div>
                   <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
                     {provKeys.map((k) => (
-                      <div
-                        key={k.id}
-                        className="flex items-center justify-between gap-3 px-3.5 py-2.5"
-                      >
-                        <div className="flex min-w-0 items-center gap-3">
-                          <Dot tone={k.active ? 'success' : 'neutral'} />
-                          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-sm">
-                            {k.fields.map((f, i) => (
-                              <span key={f.name} className="inline-flex items-center gap-1.5">
-                                {i > 0 && <span className="text-fg-subtle">·</span>}
-                                {k.fields.length > 1 && (
-                                  <span className="text-[11px] text-fg-subtle">{f.label}</span>
-                                )}
-                                <span className="truncate">{f.value}</span>
-                              </span>
-                            ))}
-                          </span>
-                          {k.label && (
-                            <span className="truncate text-xs text-fg-subtle">{k.label}</span>
-                          )}
-                          {!k.active && <Badge tone="warning">paused</Badge>}
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => toggle(k)}>
-                            {k.active ? 'Pause' : 'Resume'}
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => remove(k.id)}>
-                            Delete
-                          </Button>
-                        </div>
-                      </div>
+                      <KeyRowItem key={k.id} k={k} onToggle={toggle} onRemove={remove} />
                     ))}
                   </div>
                 </div>
@@ -387,6 +357,118 @@ function KeysSection() {
         )}
       </Card>
     </section>
+  );
+}
+
+interface ProbeResult {
+  ok: boolean;
+  status: number;
+  limit: number | null;
+  remaining: number | null;
+  resetAt: string | null;
+  window: string | null;
+  detail?: string;
+}
+
+// One pooled key: shows its masked credentials and — on Test — a live validity + real
+// limit chip read straight from the provider (doc 23 §4). Local state per row.
+function KeyRowItem({
+  k,
+  onToggle,
+  onRemove,
+}: {
+  k: KeyRow;
+  onToggle: (k: KeyRow) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<ProbeResult | null>(null);
+
+  async function test() {
+    setTesting(true);
+    setResult(null);
+    try {
+      const res = await fetch(`/api/keys/${k.id}/test`, { method: 'POST' });
+      setResult(await res.json());
+    } catch {
+      setResult({
+        ok: false,
+        status: 0,
+        limit: null,
+        remaining: null,
+        resetAt: null,
+        window: null,
+        detail: 'request failed',
+      });
+    }
+    setTesting(false);
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+        <Dot tone={k.active ? 'success' : 'neutral'} />
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-sm">
+          {k.fields.map((f, i) => (
+            <span key={f.name} className="inline-flex items-center gap-1.5">
+              {i > 0 && <span className="text-fg-subtle">·</span>}
+              {k.fields.length > 1 && <span className="text-[11px] text-fg-subtle">{f.label}</span>}
+              <span className="truncate">{f.value}</span>
+            </span>
+          ))}
+        </span>
+        {k.label && <span className="truncate text-xs text-fg-subtle">{k.label}</span>}
+        {!k.active && <Badge tone="warning">paused</Badge>}
+        {result && <TestResult r={result} />}
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button variant="ghost" size="sm" disabled={testing} onClick={test}>
+          {testing ? <Spinner /> : 'Test'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => onToggle(k)}>
+          {k.active ? 'Pause' : 'Resume'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => onRemove(k.id)}>
+          Delete
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Short reset hint from the provider's real reset time: a clock for < 24 h, a date
+// beyond — so we never mislabel a monthly window as hourly.
+function resetHint(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const hoursOut = (d.getTime() - Date.now()) / 3_600_000;
+  return hoursOut <= 24
+    ? ` · resets ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : ` · resets ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+}
+
+function TestResult({ r }: { r: ProbeResult }) {
+  if (!r.ok) return <Badge tone="danger">✗ {r.detail ?? 'invalid'}</Badge>;
+
+  // Three truthful shapes: live remaining/limit, a bare cap (usage unknown), or no cap.
+  let limitText = '';
+  if (r.limit != null && r.remaining != null) {
+    limitText = `${r.remaining.toLocaleString()}/${r.limit.toLocaleString()} left`;
+    limitText += r.resetAt ? resetHint(r.resetAt) : r.window ? ` per ${r.window}` : '';
+  } else if (r.limit != null) {
+    limitText = `up to ${r.limit.toLocaleString()}${r.window ? ` / ${r.window}` : ''}`;
+  }
+
+  return (
+    <Badge tone="success">
+      <Dot tone="success" />
+      valid
+      {limitText && <span className="ml-1 font-mono text-[11px]">{limitText}</span>}
+      {r.detail && !limitText.includes(r.detail) && (
+        <span className="ml-1 text-[11px] opacity-80">{r.detail}</span>
+      )}
+    </Badge>
   );
 }
 

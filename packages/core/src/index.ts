@@ -15,6 +15,7 @@ export * from './license';
 export * from './matching';
 export * from './progress';
 export * from './provider-auth';
+export * from './provider-probe';
 export * from './providers';
 export * from './settings';
 export * from './subtitles/align';
