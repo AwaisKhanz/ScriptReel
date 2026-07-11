@@ -189,7 +189,12 @@ gate); existing projects keep the diverse montage until re-analyzed.
 per-moment query (1 video + 1 image per moment, respecting `mediaPreference`), so a purpose-found clip
 for each moment lands in the pool; score's semantic matcher then assigns it by embedding similarity —
 no candidate schema change, and the 40-cap + round-robin keep the pool balanced and quota bounded.
-**Remaining:** per-segment swap/re-search in the storyboard (swap currently reverts a beat to one clip).
+
+**Shipped (per-segment swap):** the montage filmstrip cells are clickable → a segment-scoped swap
+drawer; `updateBeatSegment` replaces one shot's clip while keeping the rest of the plan (swapping shot
+0 also updates the representative `chosen_candidate_id`), and the change re-invalidates fetch via the
+segments-aware inputsHash. **The montage feature is complete** — contained + semantic + per-moment
+search + per-segment swap.
 
 **Shipped (23e-1) — motion-aware best-window in-point.** The single-segment half, backward-compatible
 and calibration-free. The fetch stage samples per-frame motion (one fast downscaled `ffmpeg scdet`
