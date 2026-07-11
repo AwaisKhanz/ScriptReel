@@ -84,7 +84,10 @@ export const ttsStage: Stage = {
             beat.idx,
           );
           done += 1;
-          report(Math.round((done / beats.length) * 70), `tts beat ${done}/${beats.length}`);
+          report(
+            Math.round((done / beats.length) * 70),
+            JSON.stringify({ op: 'tts', beat: done, of: beats.length }),
+          );
         }),
       ),
     );

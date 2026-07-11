@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { use, useState } from 'react';
+import { PipelineActivity } from '../../../components/PipelineActivity';
 import { type Editable, RerenderPanel } from '../../../components/RerenderPanel';
 import { StageStepper } from '../../../components/StageStepper';
 import { Storyboard } from '../../../components/Storyboard';
@@ -131,6 +132,7 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
             </Button>
           </div>
           <ProgressBar value={overall} tone="progress" />
+          <PipelineActivity projectId={id} runs={runs} />
           <div className="border-t border-border pt-4">
             <StageStepper runs={runs} />
           </div>

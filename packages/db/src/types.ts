@@ -166,6 +166,7 @@ export type Database = {
         Row: {
           author: string | null
           beat_id: string
+          created_at: string
           duration: number | null
           height: number | null
           id: string
@@ -184,6 +185,7 @@ export type Database = {
         Insert: {
           author?: string | null
           beat_id: string
+          created_at?: string
           duration?: number | null
           height?: number | null
           id?: string
@@ -202,6 +204,7 @@ export type Database = {
         Update: {
           author?: string | null
           beat_id?: string
+          created_at?: string
           duration?: number | null
           height?: number | null
           id?: string

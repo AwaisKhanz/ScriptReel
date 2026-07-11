@@ -217,6 +217,16 @@ export const fetchStage: Stage = {
             ctx.signal,
           );
           downloads += 1;
+          // Live activity event (doc 16): asset landed (downloads climb 5% → 18%).
+          report(
+            Math.min(18, 5 + downloads),
+            JSON.stringify({
+              op: 'download',
+              provider: spec.provider,
+              kind: spec.kind,
+              n: downloads,
+            }),
+          );
           if (spec.kind === 'video') {
             const probe = await probeVideo(row.local_path);
             const motionSamples =
@@ -344,7 +354,7 @@ export const fetchStage: Stage = {
           done += 1;
           report(
             20 + Math.round((70 * done) / timeline.beats.length),
-            `normalized ${done}/${timeline.beats.length}`,
+            JSON.stringify({ op: 'normalize', beat: done, of: timeline.beats.length }),
           );
         }),
       ),

@@ -120,7 +120,11 @@ export const scoreStage: Stage = {
       });
       report(
         10 + Math.round((40 * (i + batch.length)) / Math.max(1, uniquePaths.length)),
-        'embedding thumbnails',
+        JSON.stringify({
+          op: 'embed',
+          done: Math.min(i + batch.length, uniquePaths.length),
+          total: uniquePaths.length,
+        }),
       );
     }
 
@@ -277,7 +281,7 @@ export const scoreStage: Stage = {
       });
       report(
         55 + Math.round((40 * (i + 1)) / beats.length),
-        `scored beat ${i + 1}/${beats.length}`,
+        JSON.stringify({ op: 'select', beat: i + 1, of: beats.length }),
       );
     }
 

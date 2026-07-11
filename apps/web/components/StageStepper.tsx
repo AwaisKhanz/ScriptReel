@@ -2,6 +2,7 @@
 
 import { STAGES } from '@scriptreel/core';
 import type { StageRun } from '../hooks/useProject';
+import { detailText } from '../lib/activity';
 import { ProgressBar } from './ui';
 
 const LABELS: Record<string, string> = {
@@ -55,8 +56,10 @@ export function StageStepper({ runs }: { runs: StageRun[] }) {
               {run.status === 'running' && (
                 <>
                   <ProgressBar value={run.progress} tone="progress" className="mt-2 h-1" />
-                  {run.detail && (
-                    <div className="mt-1.5 truncate text-xs text-fg-subtle">{run.detail}</div>
+                  {detailText(run.detail) && (
+                    <div className="mt-1.5 truncate text-xs text-fg-subtle">
+                      {detailText(run.detail)}
+                    </div>
                   )}
                 </>
               )}
