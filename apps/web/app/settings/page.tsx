@@ -15,8 +15,23 @@ interface Health {
   };
 }
 interface Quota {
-  meters: { key: string; unit: string; used: number; budget: number; remaining: number }[];
+  meters: {
+    key: string;
+    unit: string;
+    used: number;
+    budget: number;
+    remaining: number;
+    keys?: number;
+  }[];
 }
+interface KeyRow {
+  id: string;
+  provider: string;
+  label: string | null;
+  active: boolean;
+  masked: string;
+}
+const KEY_PROVIDERS = ['pexels', 'pixabay', 'openverse'] as const;
 
 export default function SettingsPage() {
   const health = useQuery<Health>({
@@ -120,8 +135,11 @@ export default function SettingsPage() {
                     </span>
                   </div>
                   <ProgressBar value={pct} tone={tone} className="h-1.5" />
-                  <p className="text-xs text-fg-subtle">
-                    {m.remaining.toLocaleString()} left this {m.unit}
+                  <p className="flex items-center justify-between text-xs text-fg-subtle">
+                    <span>
+                      {m.remaining.toLocaleString()} left this {m.unit}
+                    </span>
+                    {m.keys && m.keys > 1 && <span className="text-accent">× {m.keys} keys</span>}
                   </p>
                 </Card>
               );
@@ -130,8 +148,153 @@ export default function SettingsPage() {
         )}
       </section>
 
+      <KeysSection />
       <StorageSection />
     </div>
+  );
+}
+
+function KeysSection() {
+  const qc = useQueryClient();
+  const [provider, setProvider] = useState<string>('pexels');
+  const [secret, setSecret] = useState('');
+  const [label, setLabel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const keys = useQuery<{ keys: KeyRow[] }>({
+    queryKey: ['keys'],
+    queryFn: () => fetch('/api/keys').then((r) => r.json()),
+  });
+
+  async function add() {
+    if (secret.trim().length < 6) {
+      setError('Enter a valid key');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider, secret: secret.trim(), label: label.trim() || undefined }),
+    });
+    if (res.ok) {
+      setSecret('');
+      setLabel('');
+      await qc.invalidateQueries({ queryKey: ['keys'] });
+      await qc.invalidateQueries({ queryKey: ['quota'] });
+    } else {
+      setError((await res.json().catch(() => ({}))).error ?? 'Failed to add key');
+    }
+    setBusy(false);
+  }
+
+  async function remove(id: string) {
+    await fetch(`/api/keys/${id}`, { method: 'DELETE' }).catch(() => {});
+    await qc.invalidateQueries({ queryKey: ['keys'] });
+    await qc.invalidateQueries({ queryKey: ['quota'] });
+  }
+
+  async function toggle(k: KeyRow) {
+    await fetch(`/api/keys/${k.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ active: !k.active }),
+    }).catch(() => {});
+    await qc.invalidateQueries({ queryKey: ['keys'] });
+    await qc.invalidateQueries({ queryKey: ['quota'] });
+  }
+
+  const rows = keys.data?.keys ?? [];
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold">API keys &amp; accounts</h2>
+        <p className="mt-0.5 text-sm text-fg-muted">
+          Add multiple keys per provider — the pipeline rotates across them, so combined free-tier
+          quota scales and it keeps running past a single account&apos;s limit.
+        </p>
+      </div>
+
+      <Card className="space-y-4">
+        {/* add form */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <label className="block space-y-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
+              Provider
+            </span>
+            <select
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+              className="h-10 rounded-lg border border-border bg-bg px-3 text-sm capitalize outline-none focus:border-accent/50"
+            >
+              {KEY_PROVIDERS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block flex-1 space-y-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
+              API key / token
+            </span>
+            <input
+              type="password"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder="paste key…"
+              className="h-10 w-full rounded-lg border border-border bg-bg px-3 font-mono text-sm outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
+              Label
+            </span>
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="account 1"
+              className="h-10 w-32 rounded-lg border border-border bg-bg px-3 text-sm outline-none focus:border-accent/50"
+            />
+          </label>
+          <Button variant="primary" disabled={busy} onClick={add}>
+            Add
+          </Button>
+        </div>
+        {error && <p className="text-sm text-danger">{error}</p>}
+
+        {/* key list */}
+        {rows.length === 0 ? (
+          <p className="text-xs text-fg-subtle">
+            No pooled keys yet — the pipeline uses the single key from your <code>.env</code>. Add
+            keys here to scale.
+          </p>
+        ) : (
+          <div className="divide-y divide-border">
+            {rows.map((k) => (
+              <div key={k.id} className="flex items-center justify-between gap-3 py-2.5">
+                <div className="flex items-center gap-3">
+                  <Badge tone="neutral">{k.provider}</Badge>
+                  <span className="font-mono text-sm">{k.masked}</span>
+                  {k.label && <span className="text-xs text-fg-subtle">{k.label}</span>}
+                  {!k.active && <span className="text-xs text-warning">paused</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => toggle(k)}>
+                    {k.active ? 'Pause' : 'Resume'}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => remove(k.id)}>
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </section>
   );
 }
 

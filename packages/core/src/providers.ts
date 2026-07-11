@@ -39,7 +39,9 @@ export interface RawCandidate {
 
 export interface MediaProvider {
   id: ProviderId;
-  search(query: SearchQuery): Promise<RawCandidate[]>; // one HTTP request max
+  // one HTTP request max; apiKey is the key/token the QuotaGuard selected from the
+  // pool (doc 23) — '' for anonymous providers (Openverse without a token).
+  search(query: SearchQuery, apiKey: string): Promise<RawCandidate[]>;
 }
 
 // SearchCache key (doc 08): sha1(provider + kind + orientation + normalize(query)).
@@ -177,6 +179,28 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'pixabay:minute', unit: 'minute', budget: PIXABAY_MINUTE_BUDGET },
   { key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET },
 ];
+
+// Per-KEY budget windows a provider must satisfy to serve one request (doc 23). With
+// multiple pooled keys the combined budget is (per-key budget × active keys).
+export const PROVIDER_WINDOWS: Record<ProviderId, readonly QuotaBudget[]> = {
+  pexels: [
+    { key: 'pexels:hour', unit: 'hour', budget: PEXELS_HOUR_BUDGET },
+    { key: 'pexels:month', unit: 'month', budget: PEXELS_MONTH_BUDGET },
+  ],
+  pixabay: [{ key: 'pixabay:minute', unit: 'minute', budget: PIXABAY_MINUTE_BUDGET }],
+  openverse: [{ key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET }],
+};
+
+// provider_usage key for one key's window, e.g. "pexels:hour#<keyId>" (doc 23).
+export function usageKeyFor(budgetKey: string, keyId: string): string {
+  return `${budgetKey}#${keyId}`;
+}
+
+export const PROVIDER_QUOTA_CODE = {
+  pexels: 'E_QUOTA_PEXELS',
+  pixabay: 'E_QUOTA_PIXABAY',
+  openverse: 'E_QUOTA_OPENVERSE',
+} as const;
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock
 // read) so it stays pure and testable; callers pass `new Date()`.

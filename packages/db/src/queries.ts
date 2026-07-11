@@ -279,6 +279,63 @@ export async function getProviderUsage(provider: string, windowStart: Date): Pro
   return rows[0]?.requests ?? 0;
 }
 
+// Sum usage across all pooled keys for a window prefix, e.g. 'pexels:hour' matches
+// 'pexels:hour' (env fallback) and 'pexels:hour#<id>' (pooled keys) — doc 23.
+export async function getCombinedUsage(budgetKey: string, windowStart: Date): Promise<number> {
+  const rows = await sql<{ total: number }[]>`
+    select coalesce(sum(requests), 0)::int as total from provider_usage
+    where window_start = ${windowStart} and (provider = ${budgetKey} or provider like ${`${budgetKey}#%`})`;
+  return rows[0]?.total ?? 0;
+}
+
+// ---- Provider key pool (doc 23) ------------------------------------------------
+export interface ProviderKeyRow {
+  id: string;
+  provider: string;
+  label: string | null;
+  secret: string;
+  active: boolean;
+  created_at: string;
+}
+
+export async function insertProviderKey(input: {
+  provider: string;
+  secret: string;
+  label?: string;
+}): Promise<ProviderKeyRow> {
+  const rows = await sql<ProviderKeyRow[]>`
+    insert into provider_keys (provider, label, secret)
+    values (${input.provider}, ${input.label ?? null}, ${input.secret})
+    returning *`;
+  const row = rows[0];
+  if (!row) throw new Error('insertProviderKey: no row returned');
+  return row;
+}
+
+export async function listProviderKeys(): Promise<ProviderKeyRow[]> {
+  const rows = await sql<
+    ProviderKeyRow[]
+  >`select * from provider_keys order by provider, created_at`;
+  return [...rows];
+}
+
+// Active keys for a provider (id + secret), for the QuotaGuard pool.
+export async function activeKeysFor(provider: string): Promise<{ id: string; secret: string }[]> {
+  const rows = await sql<{ id: string; secret: string }[]>`
+    select id, secret from provider_keys
+    where provider = ${provider} and active = true order by created_at`;
+  return [...rows];
+}
+
+export async function deleteProviderKey(id: string): Promise<boolean> {
+  const rows = await sql`delete from provider_keys where id = ${id} returning id`;
+  return rows.length > 0;
+}
+
+export async function setProviderKeyActive(id: string, active: boolean): Promise<void> {
+  await sql`update provider_keys set active = ${active} where id = ${id}`;
+}
+
 export type CandidateRow = Database['public']['Tables']['candidates']['Row'];
 
 export interface CandidateInsert {

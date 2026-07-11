@@ -1,4 +1,3 @@
-import { env } from '@scriptreel/config';
 import {
   type MediaProvider,
   PipelineError,
@@ -96,8 +95,8 @@ export function mapPexelsPhotos(json: unknown): RawCandidate[] {
 export class PexelsProvider implements MediaProvider {
   readonly id = 'pexels' as const;
 
-  async search(query: SearchQuery): Promise<RawCandidate[]> {
-    const key = env.PEXELS_API_KEY;
+  async search(query: SearchQuery, apiKey: string): Promise<RawCandidate[]> {
+    const key = apiKey;
     if (!key) throw new PipelineError('E_ENV', 'search', 'PEXELS_API_KEY is not set');
     const base =
       query.kind === 'video'

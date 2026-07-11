@@ -1,4 +1,3 @@
-import { env } from '@scriptreel/config';
 import {
   type MediaProvider,
   PipelineError,
@@ -78,8 +77,8 @@ export function mapPixabayImages(json: unknown): RawCandidate[] {
 export class PixabayProvider implements MediaProvider {
   readonly id = 'pixabay' as const;
 
-  async search(query: SearchQuery): Promise<RawCandidate[]> {
-    const key = env.PIXABAY_API_KEY;
+  async search(query: SearchQuery, apiKey: string): Promise<RawCandidate[]> {
+    const key = apiKey;
     if (!key) throw new PipelineError('E_ENV', 'search', 'PIXABAY_API_KEY is not set');
     const url = new URL(
       query.kind === 'video' ? 'https://pixabay.com/api/videos/' : 'https://pixabay.com/api/',

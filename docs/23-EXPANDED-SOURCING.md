@@ -58,6 +58,14 @@ so every provider and the credits builder agree. Policy is a constant, not per-p
   the existing `QuotaGuard` (add budgets to `QUOTA_BUDGETS`) + 24 h `SearchCache`. No hotlinking —
   archives download to `asset_cache` like everything else (doc 08).
 
+**Key pool (multi-account).** A provider can hold **many keys/tokens** (`provider_keys` table,
+migration 0004; managed in Settings → *API keys & accounts*). `QuotaGuard.reserve(provider)` rotates
+across the pool — the first key with budget in **all** its windows wins, per-key usage is accounted
+under `pexels:hour#<keyId>` — so combined free-tier quota is (per-key budget × active keys) and the
+pipeline keeps running past a single account's cap. No pooled keys → falls back to the single `.env`
+key (Openverse falls back to anonymous). Secrets are stored server-side and never returned to the
+client (masked tail only). `providers[].search(query, apiKey)` receives the selected key.
+
 ## 5. Domain router (accuracy)
 
 `analyze` already emits per-beat `entities` (people/places/objects) + `visualDescription`. Add a

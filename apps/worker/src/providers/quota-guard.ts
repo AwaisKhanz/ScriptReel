@@ -1,70 +1,61 @@
-import { setTimeout as delay } from 'node:timers/promises';
+import { env } from '@scriptreel/config';
 import {
-  OPENVERSE_DAY_BUDGET,
-  PEXELS_HOUR_BUDGET,
-  PEXELS_MONTH_BUDGET,
-  PIXABAY_MINUTE_BUDGET,
   PipelineError,
+  PROVIDER_QUOTA_CODE,
+  PROVIDER_WINDOWS,
   type ProviderId,
   truncateWindow,
+  usageKeyFor,
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import type { Logger } from 'pino';
 
-// Durable token accounting in provider_usage (doc 08 §QuotaGuard). Reserve one
-// request before any real HTTP call; Pexels hour/month → E_QUOTA_PEXELS, Pixabay
-// minute → wait for rollover (≤60 s) then retry.
+// Durable, per-KEY token accounting in provider_usage (doc 08 + doc 23 key pool).
+// Reserves one request across a provider's pool of keys and returns the key/token to
+// use; rotates to the next key when one is at budget. Throws E_QUOTA_* only when
+// every key is exhausted (the SearchClient then degrades that request to empty).
 export class QuotaGuard {
   constructor(private readonly log: Logger) {}
 
-  async reserve(provider: ProviderId): Promise<void> {
+  async reserve(provider: ProviderId): Promise<string> {
+    const keys = await this.keysFor(provider);
+    const windows = PROVIDER_WINDOWS[provider];
     const now = new Date();
-    if (provider === 'openverse') {
-      const day = await db.reserveQuota(
-        'openverse:day',
-        truncateWindow(now, 'day'),
-        OPENVERSE_DAY_BUDGET,
-      );
-      if (day === null) {
-        throw new PipelineError('E_QUOTA_OPENVERSE', 'search', 'Openverse daily budget reached');
+    for (const key of keys) {
+      let ok = true;
+      for (const w of windows) {
+        const r = await db.reserveQuota(
+          usageKeyFor(w.key, key.id),
+          truncateWindow(now, w.unit),
+          w.budget,
+        );
+        if (r === null) {
+          ok = false;
+          break;
+        }
       }
-      return;
+      if (ok) return key.secret;
     }
-    if (provider === 'pexels') {
-      const hour = await db.reserveQuota(
-        'pexels:hour',
-        truncateWindow(now, 'hour'),
-        PEXELS_HOUR_BUDGET,
-      );
-      if (hour === null) {
-        throw new PipelineError('E_QUOTA_PEXELS', 'search', 'Pexels hourly budget reached');
-      }
-      const month = await db.reserveQuota(
-        'pexels:month',
-        truncateWindow(now, 'month'),
-        PEXELS_MONTH_BUDGET,
-      );
-      if (month === null) {
-        throw new PipelineError('E_QUOTA_PEXELS', 'search', 'Pexels monthly budget reached');
-      }
-      return;
-    }
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const minute = await db.reserveQuota(
-        'pixabay:minute',
-        truncateWindow(new Date(), 'minute'),
-        PIXABAY_MINUTE_BUDGET,
-      );
-      if (minute !== null) return;
-      const waitMs = 60_000 - (Date.now() % 60_000) + 500;
-      this.log.warn({ waitMs }, 'pixabay minute budget reached — waiting for rollover');
-      await delay(waitMs);
-    }
+    this.log.warn({ provider, keys: keys.length }, 'all keys at budget — skipping request');
     throw new PipelineError(
-      'E_QUOTA_PIXABAY',
+      PROVIDER_QUOTA_CODE[provider],
       'search',
-      'Pixabay minute budget exhausted after wait',
+      `${provider}: all keys at budget`,
     );
+  }
+
+  // Pooled DB keys first; else the single .env key (backward compatible); else
+  // anonymous for Openverse. No key at all → provider unavailable.
+  private async keysFor(provider: ProviderId): Promise<{ id: string; secret: string }[]> {
+    const pooled = await db.activeKeysFor(provider);
+    if (pooled.length > 0) return pooled;
+    if (provider === 'pexels' && env.PEXELS_API_KEY) {
+      return [{ id: 'env', secret: env.PEXELS_API_KEY }];
+    }
+    if (provider === 'pixabay' && env.PIXABAY_API_KEY) {
+      return [{ id: 'env', secret: env.PIXABAY_API_KEY }];
+    }
+    if (provider === 'openverse') return [{ id: 'anon', secret: '' }]; // anonymous 200/day
+    return [];
   }
 }

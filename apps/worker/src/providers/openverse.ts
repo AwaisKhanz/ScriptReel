@@ -30,7 +30,7 @@ function aspectRatio(orientation: string): string {
 export class OpenverseProvider implements MediaProvider {
   readonly id = 'openverse' as const;
 
-  async search(query: SearchQuery): Promise<RawCandidate[]> {
+  async search(query: SearchQuery, apiKey: string): Promise<RawCandidate[]> {
     if (query.kind === 'video') return []; // Openverse has no video
 
     const url = new URL(OV_BASE);
@@ -41,10 +41,11 @@ export class OpenverseProvider implements MediaProvider {
     url.searchParams.set('page_size', String(query.perPage));
     url.searchParams.set('mature', 'false');
 
-    const res = await fetch(url, {
-      headers: { 'user-agent': 'ScriptReel/1.0 (local script-to-video; free CC media)' },
-      signal: AbortSignal.timeout(12_000),
-    });
+    const headers: Record<string, string> = {
+      'user-agent': 'ScriptReel/1.0 (local script-to-video; free CC media)',
+    };
+    if (apiKey) headers.authorization = `Bearer ${apiKey}`; // token → higher rate limit
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
     if (!res.ok) throw new Error(`openverse /images → HTTP ${res.status}`);
     const parsed = OvResponse.parse(await res.json());
 

@@ -39,8 +39,8 @@ export class SearchClient {
     if (cached) return { candidates: cached, cacheHit: true };
 
     try {
-      await this.guard.reserve(providerId); // durable token; may sleep for rollover
-      const candidates = await this.providers[providerId].search(query);
+      const apiKey = await this.guard.reserve(providerId); // pooled key/token (doc 23)
+      const candidates = await this.providers[providerId].search(query, apiKey);
       await writeSearchCache(providerId, query.kind, query.orientation, query.query, candidates);
       return { candidates, cacheHit: false };
     } catch (err) {
