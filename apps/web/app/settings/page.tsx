@@ -1,7 +1,9 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Badge, Button, Card, Dot, ProgressBar, Skeleton } from '../../components/ui';
+import { fmtBytes } from '../../lib/format';
 
 interface Health {
   ok: boolean;
@@ -127,7 +129,72 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+
+      <StorageSection />
     </div>
+  );
+}
+
+function StorageSection() {
+  const qc = useQueryClient();
+  const [clearing, setClearing] = useState<string | null>(null);
+  const cache = useQuery<{ buckets: { bucket: string; bytes: number }[]; free: number }>({
+    queryKey: ['cache'],
+    queryFn: () => fetch('/api/cache').then((r) => r.json()),
+  });
+
+  async function clear(bucket: string) {
+    setClearing(bucket);
+    await fetch('/api/cache', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bucket }),
+    }).catch(() => {});
+    await qc.invalidateQueries({ queryKey: ['cache'] });
+    setClearing(null);
+  }
+
+  const total = (cache.data?.buckets ?? []).reduce((s, b) => s + b.bytes, 0);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold">Storage &amp; cache</h2>
+        {cache.data && (
+          <span className="text-xs text-fg-subtle">
+            {fmtBytes(cache.data.free)} free · {fmtBytes(total)} cached
+          </span>
+        )}
+      </div>
+      {cache.isLoading ? (
+        <Skeleton className="h-32" />
+      ) : (
+        <Card className="divide-y divide-border">
+          {(cache.data?.buckets ?? []).map((b) => (
+            <div
+              key={b.bucket}
+              className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0"
+            >
+              <div>
+                <span className="text-sm font-medium capitalize">{b.bucket.replace('-', ' ')}</span>
+                <span className="ml-2 font-mono text-xs text-fg-subtle">{fmtBytes(b.bytes)}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={clearing !== null || b.bytes === 0}
+                onClick={() => clear(b.bucket)}
+              >
+                {clearing === b.bucket ? 'Clearing…' : 'Clear'}
+              </Button>
+            </div>
+          ))}
+        </Card>
+      )}
+      <p className="text-xs text-fg-subtle">
+        The worker also evicts least-recently-used cached assets automatically when disk runs low.
+      </p>
+    </section>
   );
 }
 

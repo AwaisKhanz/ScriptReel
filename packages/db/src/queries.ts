@@ -451,6 +451,25 @@ export async function touchCachedAsset(id: string): Promise<void> {
   await sql`update asset_cache set last_used_at = now() where id = ${id}`;
 }
 
+// Least-recently-used cached assets first (doc 14 §cache eviction by last_used_at).
+export async function assetCacheLRU(
+  limit = 200,
+): Promise<{ id: string; local_path: string; bytes: number | null }[]> {
+  const rows = await sql<{ id: string; local_path: string; bytes: number | null }[]>`
+    select id, local_path, bytes from asset_cache order by last_used_at asc nulls first limit ${limit}`;
+  return [...rows];
+}
+
+export async function deleteAssetCacheByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await sql`delete from asset_cache where id = any(${ids})`;
+}
+
+export async function deleteAllAssetCache(): Promise<number> {
+  const rows = await sql`delete from asset_cache returning id`;
+  return rows.length;
+}
+
 export interface ChosenMediaRow {
   beatId: string;
   idx: number;

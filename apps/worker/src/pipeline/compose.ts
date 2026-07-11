@@ -15,6 +15,7 @@ import {
   type Timeline,
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
+import { ensureDiskSpace } from '../cache/disk-guard';
 import { assembleVisual, encodeFinal, makeThumbnail } from '../ffmpeg/assemble';
 import { probeAudio, probeVideo } from '../ffmpeg/probe';
 import { writeRenderAss } from '../subtitles/render-ass';
@@ -118,6 +119,7 @@ export const composeStage: Stage = {
   },
 
   async run(ctx: ProjectCtx, report: Reporter): Promise<StageOutcome> {
+    await ensureDiskSpace('compose', ctx.log); // guard + LRU cache eviction (doc 14)
     const media = await db.getChosenMedia(ctx.projectId);
     invariant(media.length > 0, 'no chosen media — run score/fetch first', 'compose');
     const project = await db.getProject(ctx.projectId);

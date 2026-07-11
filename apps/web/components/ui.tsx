@@ -179,11 +179,22 @@ export function ErrorPanel({
               {detail}
             </pre>
           )}
-          {onRetry && (
-            <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>
-              Try again
-            </Button>
-          )}
+          <div className="mt-3 flex gap-2">
+            {onRetry && (
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                Try again
+              </Button>
+            )}
+            {detail && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigator.clipboard?.writeText(`${title}\n\n${detail}`)}
+              >
+                Copy diagnostics
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </Card>

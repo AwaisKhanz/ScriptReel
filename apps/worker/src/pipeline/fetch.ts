@@ -13,6 +13,7 @@ import {
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import pLimit from 'p-limit';
+import { ensureDiskSpace } from '../cache/disk-guard';
 import { normalizeStill, normalizeVideo } from '../ffmpeg/normalize';
 import { probeAudio, probeVideo } from '../ffmpeg/probe';
 import { downloadToCache } from '../providers/download';
@@ -59,6 +60,7 @@ export const fetchStage: Stage = {
   },
 
   async run(ctx: ProjectCtx, report: Reporter): Promise<StageOutcome> {
+    await ensureDiskSpace('fetch', ctx.log); // guard + LRU cache eviction (doc 14)
     const media = await db.getChosenMedia(ctx.projectId);
     invariant(media.length > 0, 'no chosen media — run score first', 'fetch');
     const project = await db.getProject(ctx.projectId);
