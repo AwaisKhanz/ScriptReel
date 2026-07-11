@@ -83,6 +83,20 @@ describe('planTier1Requests', () => {
     ]);
   });
 
+  it('routes a matching domain to its archive provider (NASA on space)', () => {
+    const space = planTier1Requests(literal, 'mixed', 'space').map(
+      (r) => `${r.provider}:${r.kind}`,
+    );
+    expect(space).toContain('nasa:image');
+    // generic beats never fire the archive
+    const generic = planTier1Requests(literal, 'mixed', 'generic').map((r) => r.provider);
+    expect(generic).not.toContain('nasa');
+    // videos-only never fires image archives either
+    expect(planTier1Requests(literal, 'videos', 'space').map((r) => r.provider)).not.toContain(
+      'nasa',
+    );
+  });
+
   it('falls back to literal[0] when literal[1] is missing, and drops empty queries', () => {
     expect(planTier1Requests(['only'], 'videos')).toEqual([
       { provider: 'pexels', kind: 'video', query: 'only' },
@@ -140,9 +154,21 @@ describe('quota windows', () => {
     expect(truncateWindow(d, 'day').toISOString()).toBe('2026-07-11T00:00:00.000Z');
     expect(truncateWindow(d, 'month').toISOString()).toBe('2026-07-01T00:00:00.000Z');
   });
-  it('exposes one budget per rate window', () => {
+  it('exposes budgets for every provider window', () => {
     const pixabay = QUOTA_BUDGETS.find((b) => b.key === 'pixabay:minute');
     expect(pixabay?.budget).toBe(PIXABAY_MINUTE_BUDGET);
-    expect(QUOTA_BUDGETS.map((b) => b.unit).sort()).toEqual(['day', 'hour', 'minute', 'month']);
+    expect(QUOTA_BUDGETS.map((b) => b.key).sort()).toEqual([
+      'nasa:hour',
+      'openverse:day',
+      'pexels:hour',
+      'pexels:month',
+      'pixabay:minute',
+    ]);
+    expect([...new Set(QUOTA_BUDGETS.map((b) => b.unit))].sort()).toEqual([
+      'day',
+      'hour',
+      'minute',
+      'month',
+    ]);
   });
 });

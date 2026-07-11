@@ -1,9 +1,11 @@
 import {
+  NASA_HOUR_BUDGET,
   OPENVERSE_DAY_BUDGET,
   PEXELS_HOUR_BUDGET,
   PEXELS_MONTH_BUDGET,
   PIXABAY_MINUTE_BUDGET,
 } from './constants';
+import type { Domain } from './domain';
 import { sha1Hex } from './hash';
 import type { SubtitleAspect } from './subtitles/presets';
 
@@ -11,7 +13,7 @@ import type { SubtitleAspect } from './subtitles/presets';
 // (PexelsProvider/PixabayProvider) live in the worker. Every call goes through
 // QuotaGuard then SearchCache — no path may hit a provider directly.
 
-export type ProviderId = 'pexels' | 'pixabay' | 'openverse';
+export type ProviderId = 'pexels' | 'pixabay' | 'openverse' | 'nasa';
 export type MediaKind = 'video' | 'image';
 export type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -135,6 +137,7 @@ export interface PlannedRequest {
 export function planTier1Requests(
   literal: readonly string[],
   mediaPreference: 'videos' | 'mixed' | 'photos',
+  domain: Domain = 'generic',
 ): PlannedRequest[] {
   const l0 = literal[0] ?? '';
   const l1 = literal[1] ?? l0;
@@ -146,6 +149,10 @@ export function planTier1Requests(
     requests.push({ provider: 'pixabay', kind: 'image', query: l0 });
     // Openverse: universal copyright-free CC/PD image reach (doc 23), image-only.
     requests.push({ provider: 'openverse', kind: 'image', query: l0 });
+    // Domain-routed archives (doc 23 §5): e.g. NASA only on space/science/nature.
+    for (const a of ARCHIVE_PROVIDERS) {
+      if (a.domains.includes(domain)) requests.push({ provider: a.id, kind: a.kind, query: l0 });
+    }
   }
   if (mediaPreference === 'photos') {
     requests.push({ provider: 'pexels', kind: 'image', query: l1 });
@@ -178,6 +185,7 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'pexels:month', unit: 'month', budget: PEXELS_MONTH_BUDGET },
   { key: 'pixabay:minute', unit: 'minute', budget: PIXABAY_MINUTE_BUDGET },
   { key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET },
+  { key: 'nasa:hour', unit: 'hour', budget: NASA_HOUR_BUDGET },
 ];
 
 // Per-KEY budget windows a provider must satisfy to serve one request (doc 23). With
@@ -189,6 +197,7 @@ export const PROVIDER_WINDOWS: Record<ProviderId, readonly QuotaBudget[]> = {
   ],
   pixabay: [{ key: 'pixabay:minute', unit: 'minute', budget: PIXABAY_MINUTE_BUDGET }],
   openverse: [{ key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET }],
+  nasa: [{ key: 'nasa:hour', unit: 'hour', budget: NASA_HOUR_BUDGET }],
 };
 
 // provider_usage key for one key's window, e.g. "pexels:hour#<keyId>" (doc 23).
@@ -200,7 +209,17 @@ export const PROVIDER_QUOTA_CODE = {
   pexels: 'E_QUOTA_PEXELS',
   pixabay: 'E_QUOTA_PIXABAY',
   openverse: 'E_QUOTA_OPENVERSE',
+  nasa: 'E_QUOTA_NASA',
 } as const;
+
+// Domain-specific archive providers (doc 23 §5): fired only for beats whose domain
+// they cover, so they add signal without polluting generic beats. Universal
+// providers (pexels/pixabay/openverse) always run.
+export const ARCHIVE_PROVIDERS: {
+  id: ProviderId;
+  kind: MediaKind;
+  domains: readonly Domain[];
+}[] = [{ id: 'nasa', kind: 'image', domains: ['space', 'science', 'nature'] }];
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock
 // read) so it stays pure and testable; callers pass `new Date()`.

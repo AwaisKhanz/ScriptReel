@@ -5,6 +5,7 @@ export * from './compose/constants';
 export * from './compose/plan';
 export * from './compose/verify';
 export * from './constants';
+export * from './domain';
 export * from './emotion';
 export * from './errors';
 export * from './hash';

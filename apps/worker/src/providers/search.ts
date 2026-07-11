@@ -6,6 +6,7 @@ import {
   type SearchQuery,
 } from '@scriptreel/core';
 import type { Logger } from 'pino';
+import { NasaProvider } from './nasa';
 import { OpenverseProvider } from './openverse';
 import { PexelsProvider } from './pexels';
 import { PixabayProvider } from './pixabay';
@@ -31,6 +32,7 @@ export class SearchClient {
       pexels: new PexelsProvider(),
       pixabay: new PixabayProvider(),
       openverse: new OpenverseProvider(),
+      nasa: new NasaProvider(),
     };
   }
 
@@ -49,7 +51,8 @@ export class SearchClient {
         err instanceof PipelineError &&
         (err.code === 'E_QUOTA_PEXELS' ||
           err.code === 'E_QUOTA_PIXABAY' ||
-          err.code === 'E_QUOTA_OPENVERSE')
+          err.code === 'E_QUOTA_OPENVERSE' ||
+          err.code === 'E_QUOTA_NASA')
       ) {
         this.log.warn({ providerId, code: err.code }, 'quota exhausted — skipping request');
         return { candidates: [], cacheHit: false };

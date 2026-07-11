@@ -56,6 +56,7 @@ export class QuotaGuard {
       return [{ id: 'env', secret: env.PIXABAY_API_KEY }];
     }
     if (provider === 'openverse') return [{ id: 'anon', secret: '' }]; // anonymous 200/day
+    if (provider === 'nasa') return [{ id: 'anon', secret: '' }]; // NASA images-api is keyless
     return [];
   }
 }

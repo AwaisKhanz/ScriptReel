@@ -1,4 +1,5 @@
 import {
+  classifyDomain,
   hashObject,
   invariant,
   isLicenseAllowed,
@@ -63,7 +64,11 @@ export const searchStage: Stage = {
       const beat = beats[i];
       if (!beat) continue;
       const queries = beat.queries as { literal?: string[] } | null;
-      const plan = planTier1Requests(queries?.literal ?? [], mediaPreference);
+      // Domain-route archive providers (doc 23 §5) from the beat's analysis fields.
+      const domain = classifyDomain(
+        `${beat.visual_description ?? ''} ${beat.key_phrase ?? ''} ${beat.text}`,
+      );
+      const plan = planTier1Requests(queries?.literal ?? [], mediaPreference, domain);
 
       const groups: RawCandidate[][] = [];
       for (const req of plan) {
