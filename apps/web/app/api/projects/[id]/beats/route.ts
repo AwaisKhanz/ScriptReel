@@ -15,8 +15,34 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // coerce to numbers so the client can do math / toFixed on them.
     const num = (v: unknown): number | null => (v == null ? null : Number(v));
     const storyboard = await db.getStoryboard(id);
+
+    // Resolve montage segment thumbnails (doc 23 §7) so the storyboard shows the
+    // sequence the render will play, in order.
+    const planIds = (raw: unknown): string[] =>
+      Array.isArray(raw)
+        ? raw
+            .filter(
+              (it): it is { candidateId: string } =>
+                !!it && typeof (it as { candidateId?: unknown }).candidateId === 'string',
+            )
+            .map((it) => it.candidateId)
+        : [];
+    const allSegIds = [...new Set(storyboard.flatMap(({ beat }) => planIds(beat.segments)))];
+    const segMedia = allSegIds.length > 0 ? await db.getCandidateMedia(allSegIds) : [];
+    const segById = new Map(segMedia.map((r) => [r.id, r]));
+
     const beats = storyboard.map(({ beat, candidates }) => {
       const chosen = candidates.find((c) => c.id === beat.chosen_candidate_id);
+      const segIds = planIds(beat.segments);
+      const segments =
+        segIds.length > 1
+          ? segIds
+              .map((cid) => {
+                const r = segById.get(cid);
+                return r ? { thumbPath: r.thumbPath, kind: r.kind } : null;
+              })
+              .filter((s): s is { thumbPath: string | null; kind: string } => s !== null)
+          : null;
       return {
         id: beat.id,
         idx: beat.idx,
@@ -27,6 +53,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         forcedTextcard: beat.forced_textcard,
         chosenCandidateId: beat.chosen_candidate_id,
         score: num(chosen?.score),
+        segments,
         candidates: candidates.map((c) => ({
           id: c.id,
           kind: c.kind,

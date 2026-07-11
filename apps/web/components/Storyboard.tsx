@@ -87,6 +87,7 @@ export interface Beat {
   forcedTextcard: boolean;
   chosenCandidateId: string | null;
   score: number | null;
+  segments: { thumbPath: string | null; kind: string }[] | null; // montage sequence (doc 23 §7)
   candidates: Candidate[];
 }
 
@@ -304,6 +305,8 @@ function BeatCard({
   const tone = scoreTone({ score: beat.score, kind });
   const [playing, setPlaying] = useState(false);
   const canPlay = !beat.forcedTextcard && chosen?.kind === 'video' && !!chosen.remoteUrl;
+  const montage =
+    !beat.forcedTextcard && beat.segments && beat.segments.length > 1 ? beat.segments : null;
   return (
     <Card bare className="flex flex-col">
       <div
@@ -339,10 +342,26 @@ function BeatCard({
           #{beat.idx + 1}
         </span>
         <span className="absolute right-2 top-2 flex items-center gap-1">
+          {montage && <Badge tone="accent">montage · {montage.length}</Badge>}
           <Badge tone={tone}>
             {kind === 'textcard' ? 'text' : kind === 'image' ? 'photo' : kind}
           </Badge>
         </span>
+        {montage && !playing && (
+          <div className="absolute inset-x-0 bottom-0 flex items-end gap-0.5 bg-gradient-to-t from-black/70 to-transparent p-1.5">
+            {montage.map((s, i) => (
+              <div
+                key={`${s.thumbPath ?? 'seg'}-${i}`}
+                className="relative h-8 flex-1 overflow-hidden rounded-sm border border-white/40 bg-surface-2"
+                title={`shot ${i + 1} · ${s.kind === 'video' ? 'video' : 'photo'}`}
+              >
+                {s.thumbPath && (
+                  <img src={fileUrl(s.thumbPath)} alt="" className="size-full object-cover" />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex flex-1 flex-col gap-2.5 p-3">
         <p className="line-clamp-2 text-sm leading-snug" title={beat.text}>

@@ -463,7 +463,11 @@ export async function setBeatChosenCandidate(
   beatId: string,
   chosenCandidateId: string | null,
 ): Promise<void> {
-  await sql`update beats set chosen_candidate_id = ${chosenCandidateId} where id = ${beatId}`;
+  // Picking a specific clip opts the beat out of the auto-montage (its plan anchored on
+  // the old chosen); it renders that single clip (doc 23 §7).
+  await sql`
+    update beats set chosen_candidate_id = ${chosenCandidateId}, segments = null
+    where id = ${beatId}`;
 }
 
 // Owning project + its status for a beat — the storyboard PATCH/research routes
@@ -599,6 +603,38 @@ export interface ChosenMediaRow {
   author: string | null;
   pageUrl: string | null;
   license: string | null;
+  segments: unknown; // montage plan [{candidateId, weight}] or null (doc 23 §7)
+}
+
+// One montage segment's plan entry (persisted on beats.segments).
+export interface BeatSegmentPlan {
+  candidateId: string;
+  weight: number;
+}
+
+// Candidate media by id — resolves a beat's montage segment candidates for fetch.
+export interface SegmentMediaRow {
+  id: string;
+  provider: string;
+  providerId: string;
+  kind: string;
+  remoteUrl: string | null;
+  thumbPath: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  author: string | null;
+  pageUrl: string | null;
+  license: string | null;
+}
+
+export async function getCandidateMedia(ids: readonly string[]): Promise<SegmentMediaRow[]> {
+  if (ids.length === 0) return [];
+  const rows = await sql<SegmentMediaRow[]>`
+    select id, provider, provider_id as "providerId", kind, remote_url as "remoteUrl",
+      thumb_path as "thumbPath", width, height, duration, author, page_url as "pageUrl", license
+    from candidates where id = any(${ids as string[]})`;
+  return [...rows];
 }
 
 export type MusicTrackRow = Database['public']['Tables']['music_tracks']['Row'];
@@ -641,6 +677,7 @@ export async function insertRender(r: RenderInsert): Promise<RenderRow> {
 export async function getChosenMedia(projectId: string): Promise<ChosenMediaRow[]> {
   const rows = await sql<ChosenMediaRow[]>`
     select b.id as "beatId", b.idx, b.text, b.narration, b.shot_type as "shotType", b.emotion,
+      b.segments,
       c.provider, c.provider_id as "providerId", c.kind, c.remote_url as "remoteUrl",
       c.thumb_path as "thumbPath", c.width, c.height, c.duration,
       c.author, c.page_url as "pageUrl", c.license
@@ -651,16 +688,21 @@ export async function getChosenMedia(projectId: string): Promise<ChosenMediaRow[
 }
 
 // Persist the score stage's result for one beat (doc 09): each candidate's rank +
-// score, then the chosen asset (null when the ladder must take over — Phase 7).
+// score, the chosen asset (null when the ladder must take over — Phase 7), and the
+// montage plan (doc 23 §7; null ⇒ single visual).
 export async function applyBeatSelection(
   beatId: string,
   ranked: readonly { id: string; score: number; rank: number }[],
   chosenCandidateId: string | null,
+  segments: readonly BeatSegmentPlan[] | null = null,
 ): Promise<void> {
+  const plan = segments && segments.length > 1 ? sql.json(segments as unknown as JsonValue) : null;
   await sql.begin(async (tx) => {
     for (const r of ranked) {
       await tx`update candidates set score = ${r.score}, rank = ${r.rank} where id = ${r.id}`;
     }
-    await tx`update beats set chosen_candidate_id = ${chosenCandidateId} where id = ${beatId}`;
+    await tx`
+      update beats set chosen_candidate_id = ${chosenCandidateId}, segments = ${plan}
+      where id = ${beatId}`;
   });
 }

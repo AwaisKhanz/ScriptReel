@@ -37,6 +37,51 @@ interface ResolvedSource {
   motionSamples?: MotionSample[]; // per-frame motion for best-window in-point (doc 23 §7)
 }
 
+// The candidate fields resolveMedia needs — shared by the chosen row and montage
+// segment candidate rows.
+interface MediaSpec {
+  provider: string;
+  providerId: string;
+  kind: string;
+  remoteUrl: string | null;
+  thumbPath: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  license: string | null;
+  author: string | null;
+  pageUrl: string | null;
+}
+
+// beats.segments (doc 23 §7): ordered [{candidateId, weight}]; anything else ⇒ single.
+function parseSegmentPlan(raw: unknown): { candidateId: string; weight: number }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { candidateId: string; weight: number }[] = [];
+  for (const it of raw) {
+    if (
+      it &&
+      typeof it === 'object' &&
+      typeof (it as { candidateId?: unknown }).candidateId === 'string'
+    ) {
+      const w = Number((it as { weight?: unknown }).weight);
+      out.push({ candidateId: (it as { candidateId: string }).candidateId, weight: w > 0 ? w : 1 });
+    }
+  }
+  return out;
+}
+
+// A resolved visual as build-timeline input media (video carries window signals).
+function toBuildMedia(s: ResolvedSource): BuildBeatInput['media'] {
+  return s.kind === 'video'
+    ? {
+        kind: 'video',
+        path: s.path,
+        ...(s.sourceDurationSec !== undefined ? { sourceDurationSec: s.sourceDurationSec } : {}),
+        ...(s.motionSamples ? { motionSamples: s.motionSamples } : {}),
+      }
+    : { kind: s.kind, path: s.path };
+}
+
 // Normalize one visual (video window or Ken Burns still) to a uniform clip of `lengthSec`.
 async function normalizeOne(
   media: Timeline['beats'][number]['media'],
@@ -123,6 +168,7 @@ export const fetchStage: Stage = {
         m.providerId,
         m.kind,
         (m.narration as { durationSec?: number } | null)?.durationSec ?? 0,
+        JSON.stringify(m.segments ?? null), // montage plan (doc 23 §7)
       ]),
       aspect: ctx.settings.aspect,
       quality: ctx.settings.quality,
@@ -147,63 +193,80 @@ export const fetchStage: Stage = {
     const dlLimit = pLimit(DOWNLOAD_PARALLELISM);
     const warnings: string[] = [];
     let downloads = 0;
-    const sources = await Promise.all(
-      media.map((m) =>
-        dlLimit(async (): Promise<ResolvedSource | null> => {
-          if (ctx.signal.aborted) throw new PipelineError('E_CANCELLED', 'fetch', 'cancelled');
-          try {
-            if (m.kind === 'video' || m.kind === 'image') {
-              const row = await downloadToCache(
-                {
-                  provider: m.provider,
-                  providerId: m.providerId,
-                  kind: m.kind,
-                  remoteUrl: m.remoteUrl ?? '',
-                  ...(m.width != null ? { width: Number(m.width) } : {}),
-                  ...(m.height != null ? { height: Number(m.height) } : {}),
-                  ...(m.duration != null ? { duration: Number(m.duration) } : {}),
-                  ...(m.license != null ? { license: m.license } : {}),
-                  ...(m.author != null ? { author: m.author } : {}),
-                  ...(m.pageUrl != null ? { pageUrl: m.pageUrl } : {}),
-                },
-                ctx.signal,
-              );
-              downloads += 1;
-              if (m.kind === 'video') {
-                const probe = await probeVideo(row.local_path);
-                // Best-window in-point (doc 23 §7). Only worth it when there's slack to
-                // move within; any failure degrades to the geometric fallback (§8).
-                const needsWindow = probe.durationSec > 0;
-                const motionSamples = needsWindow
-                  ? await analyzeMotion(row.local_path, ctx.signal).catch((err) => {
-                      ctx.log.warn(
-                        { err, beat: m.idx },
-                        'motion analysis failed — geometric in-point',
-                      );
-                      return [] as MotionSample[];
-                    })
-                  : [];
-                return {
-                  kind: 'video',
-                  path: row.local_path,
-                  sourceDurationSec: probe.durationSec,
-                  ...(motionSamples.length > 0 ? { motionSamples } : {}),
-                };
-              }
-              return { kind: 'image', path: row.local_path };
-            }
-            // textcard / generated — already local
-            const local = m.thumbPath ?? m.remoteUrl ?? '';
-            return { kind: m.kind === 'generated' ? 'generated' : 'textcard', path: local };
-          } catch (err) {
-            if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
-            warnings.push(
-              `E_DOWNLOAD: beat ${m.idx} (${m.provider}:${m.providerId}) — falling back`,
-            );
-            ctx.log.warn({ err, beat: m.idx }, 'download failed');
-            return null;
+    // Download + probe + (video) motion-sample one media spec; null on failure (degrade).
+    const resolveMedia = async (
+      spec: MediaSpec,
+      beatIdx: number,
+    ): Promise<ResolvedSource | null> => {
+      if (ctx.signal.aborted) throw new PipelineError('E_CANCELLED', 'fetch', 'cancelled');
+      try {
+        if (spec.kind === 'video' || spec.kind === 'image') {
+          const row = await downloadToCache(
+            {
+              provider: spec.provider,
+              providerId: spec.providerId,
+              kind: spec.kind,
+              remoteUrl: spec.remoteUrl ?? '',
+              ...(spec.width != null ? { width: Number(spec.width) } : {}),
+              ...(spec.height != null ? { height: Number(spec.height) } : {}),
+              ...(spec.duration != null ? { duration: Number(spec.duration) } : {}),
+              ...(spec.license != null ? { license: spec.license } : {}),
+              ...(spec.author != null ? { author: spec.author } : {}),
+              ...(spec.pageUrl != null ? { pageUrl: spec.pageUrl } : {}),
+            },
+            ctx.signal,
+          );
+          downloads += 1;
+          if (spec.kind === 'video') {
+            const probe = await probeVideo(row.local_path);
+            const motionSamples =
+              probe.durationSec > 0
+                ? await analyzeMotion(row.local_path, ctx.signal).catch((err) => {
+                    ctx.log.warn(
+                      { err, beat: beatIdx },
+                      'motion analysis failed — geometric in-point',
+                    );
+                    return [] as MotionSample[];
+                  })
+                : [];
+            return {
+              kind: 'video',
+              path: row.local_path,
+              sourceDurationSec: probe.durationSec,
+              ...(motionSamples.length > 0 ? { motionSamples } : {}),
+            };
           }
-        }),
+          return { kind: 'image', path: row.local_path };
+        }
+        const local = spec.thumbPath ?? spec.remoteUrl ?? '';
+        return { kind: spec.kind === 'generated' ? 'generated' : 'textcard', path: local };
+      } catch (err) {
+        if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
+        warnings.push(
+          `E_DOWNLOAD: beat ${beatIdx} (${spec.provider}:${spec.providerId}) — falling back`,
+        );
+        ctx.log.warn({ err, beat: beatIdx }, 'download failed');
+        return null;
+      }
+    };
+
+    // The chosen visual per beat (montage segment 0), plus every extra montage segment
+    // candidate (doc 23 §7). downloadToCache dedupes, so shared assets cost one fetch.
+    const sources = await Promise.all(media.map((m) => dlLimit(() => resolveMedia(m, m.idx))));
+    const extraIds = [
+      ...new Set(
+        media.flatMap((m) =>
+          parseSegmentPlan(m.segments)
+            .slice(1)
+            .map((p) => p.candidateId),
+        ),
+      ),
+    ];
+    const extraRows = extraIds.length > 0 ? await db.getCandidateMedia(extraIds) : [];
+    const extraById = new Map<string, ResolvedSource | null>();
+    await Promise.all(
+      extraRows.map((row) =>
+        dlLimit(async () => extraById.set(row.id, await resolveMedia(row, -1))),
       ),
     );
     invariant(
@@ -222,17 +285,25 @@ export const fetchStage: Stage = {
       if (!m || !src) continue; // a failed download drops the beat from the render
       const narrationDurationSec =
         (m.narration as { durationSec?: number } | null)?.durationSec ?? 0;
-      const beatMedia: BuildBeatInput['media'] =
-        src.kind === 'video'
-          ? {
-              kind: 'video',
-              path: src.path,
-              ...(src.sourceDurationSec !== undefined
-                ? { sourceDurationSec: src.sourceDurationSec }
-                : {}),
-              ...(src.motionSamples ? { motionSamples: src.motionSamples } : {}),
-            }
-          : { kind: src.kind, path: src.path };
+      const beatMedia = toBuildMedia(src);
+
+      // Montage: segment 0 is the chosen (src); the rest resolve from extraById. A
+      // segment whose download failed is dropped; <2 survivors ⇒ single visual.
+      const plan = parseSegmentPlan(m.segments);
+      let segments: NonNullable<BuildBeatInput['segments']> | undefined;
+      if (plan.length > 1) {
+        const first = plan[0];
+        const visuals: NonNullable<BuildBeatInput['segments']> = [
+          { media: beatMedia, weight: first?.weight ?? 1 },
+        ];
+        for (let k = 1; k < plan.length; k += 1) {
+          const p = plan[k];
+          const ex = p ? extraById.get(p.candidateId) : null;
+          if (ex) visuals.push({ media: toBuildMedia(ex), weight: p?.weight ?? 1 });
+        }
+        if (visuals.length > 1) segments = visuals;
+      }
+
       beatsInput.push({
         idx: m.idx,
         text: m.text,
@@ -240,6 +311,7 @@ export const fetchStage: Stage = {
         ...(m.shotType ? { shotType: m.shotType } : {}),
         ...(m.emotion ? { emotion: m.emotion } : {}),
         media: beatMedia,
+        ...(segments ? { segments } : {}),
       });
     }
 

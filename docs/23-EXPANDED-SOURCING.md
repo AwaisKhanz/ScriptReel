@@ -166,9 +166,19 @@ Fetch: `renderBeatClip` normalizes each segment to a sub-clip (video window / Ke
 tail crossfade pads attach to the first/last segment, internal boundaries are exact cuts) and
 `concatClips` joins them into one uniform beat clip — **so the composer/assemble stage is unchanged**.
 Verified end-to-end (video window + Ken Burns still → one 1920×1080@30 clip of the exact summed
-length). **Remaining:** stage 3 — analyze emits the sentence's visual moments and search/score picks a
-clip per moment (short → image, long → video), populating the segment plan; stage 4 — the storyboard
-shows an editable per-segment filmstrip.
+length).
+
+**Shipped (23e-2 stages 3–4):** montages now appear in the output. `planMontage`
+(`packages/core/src/clip.ts`) builds a beat's plan from its scored candidates — anchors on the chosen
+clip, adds the highest-scoring *visually distinct* alternates (thumb cosine ≤ MONTAGE_DIVERSITY_COSINE),
+bounded so each segment holds ≥ MONTAGE_MIN_SEG_SEC. Persisted to `beats.segments` (migration 0005,
+nullable); score writes it, fetch resolves + downloads the segment candidates and hands them to the
+render path, the storyboard shows a per-beat filmstrip + "montage · N" badge. Picking a specific clip
+(swap) clears the plan → that beat renders single. This is the *contained* path (montage from existing
+candidates, so it works on existing projects without re-analysis). **Remaining (23e-2b, semantic):**
+analyze emits the sentence's ordered *visual moments* and search/score fills a clip per moment
+(short → image, long → video) so segments map to sub-phrases (morning → subway → platform), not just
+diverse alternates; plus per-segment swap/re-search in the storyboard.
 
 **Shipped (23e-1) — motion-aware best-window in-point.** The single-segment half, backward-compatible
 and calibration-free. The fetch stage samples per-frame motion (one fast downscaled `ffmpeg scdet`

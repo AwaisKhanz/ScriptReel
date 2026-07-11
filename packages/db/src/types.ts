@@ -103,6 +103,7 @@ export type Database = {
           narration: Json | null
           project_id: string
           queries: Json | null
+          segments: Json | null
           shot_type: string | null
           text: string
           visual_description: string | null
@@ -119,6 +120,7 @@ export type Database = {
           narration?: Json | null
           project_id: string
           queries?: Json | null
+          segments?: Json | null
           shot_type?: string | null
           text: string
           visual_description?: string | null
@@ -135,6 +137,7 @@ export type Database = {
           narration?: Json | null
           project_id?: string
           queries?: Json | null
+          segments?: Json | null
           shot_type?: string | null
           text?: string
           visual_description?: string | null

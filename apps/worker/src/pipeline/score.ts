@@ -7,6 +7,7 @@ import {
   invariant,
   isArchiveProvider,
   PipelineError,
+  planMontage,
   type Rung,
   type ScoreContext,
   type SelectionBeat,
@@ -55,6 +56,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
+      logic: 'montage-1', // bump to re-run score when the selection logic changes (doc 23 §7)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
       forcedTextcard: beats.map((b) => b.forced_textcard),
@@ -163,6 +165,7 @@ export const scoreStage: Stage = {
     const rungCounts: Record<string, number> = {};
     let chosenCount = 0;
     let weakCount = 0;
+    let montageCount = 0;
     for (let i = 0; i < beats.length; i += 1) {
       const beat = beats[i];
       const sel = selections[i];
@@ -215,7 +218,21 @@ export const scoreStage: Stage = {
       }
       rungCounts[rung] = (rungCounts[rung] ?? 0) + 1;
 
-      await db.applyBeatSelection(beat.id, ranked, chosenId);
+      // Montage plan (doc 23 §7): split a long beat into diverse segments from its
+      // scored candidates. Only when the chosen clip is among the scored pool (primary
+      // tier); the ladder's text-card/generated picks aren't montaged.
+      const scoreById = new Map(ranked.map((r) => [r.id, r.score]));
+      const montageCandidates = sc.candidates.map((c) => ({
+        id: c.id,
+        kind: c.features.kind === 'video' ? ('video' as const) : ('image' as const),
+        score: scoreById.get(c.id) ?? 0,
+        thumbEmbedding: c.thumbEmbedding,
+      }));
+      const segments = chosenId
+        ? planMontage(chosenId, montageCandidates, Number(beat.est_seconds ?? 0))
+        : null;
+      if (segments) montageCount += 1;
+      await db.applyBeatSelection(beat.id, ranked, chosenId, segments);
       const top = ranked[0];
       selectionLog.push({
         beatIdx: beat.idx,
@@ -250,6 +267,7 @@ export const scoreStage: Stage = {
         beats: beats.length,
         chosen: chosenCount,
         weak: weakCount,
+        montage: montageCount,
         rungs: rungCounts,
         thumbsEmbedded: thumbEmbeddings.size,
         thumbsFailed: failedThumbs.size,
