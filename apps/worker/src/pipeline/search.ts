@@ -25,6 +25,11 @@ import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
 
 const THUMB_PARALLELISM = 4;
 
+// Ordered visual-moment phrases for a beat (doc 23 §7b); [] for a single-image beat.
+function parseMoments(raw: db.BeatRow['visual_moments']): string[] {
+  return Array.isArray(raw) ? raw.filter((m): m is string => typeof m === 'string') : [];
+}
+
 // search stage (doc 08, tier-1 only): per beat, fire the planned provider requests
 // through cache+quota, apply hygiene, dedupe, cap at 40, download thumbs, persist
 // candidates. Tiers 2–3 belong to the score stage's fallback ladder (doc 09).
@@ -36,6 +41,7 @@ export const searchStage: Stage = {
     return hashObject({
       stage: 'search',
       queries: beats.map((b) => b.queries),
+      moments: beats.map((b) => parseMoments(b.visual_moments)), // per-moment search (doc 23 §7b)
       aspect: ctx.settings.aspect,
       mediaPreference: ctx.settings.mediaPreference,
     });
@@ -69,6 +75,19 @@ export const searchStage: Stage = {
         `${beat.visual_description ?? ''} ${beat.key_phrase ?? ''} ${beat.text}`,
       );
       const plan = planTier1Requests(queries?.literal ?? [], mediaPreference, domain);
+
+      // Per-moment pool enrichment (doc 23 §7b): give a montage beat a purpose-found
+      // clip for each of its visual moments, so score's semantic matcher has one to
+      // assign. Lean (1 video + 1 image per moment, respecting mediaPreference) to keep
+      // quota bounded; the 40-cap + round-robin still balance the pool.
+      for (const moment of parseMoments(beat.visual_moments)) {
+        const q = normalizeSearchQuery(moment);
+        if (!q) continue;
+        if (mediaPreference !== 'photos')
+          plan.push({ provider: 'pexels', kind: 'video', query: q });
+        if (mediaPreference !== 'videos')
+          plan.push({ provider: 'pixabay', kind: 'image', query: q });
+      }
 
       const groups: RawCandidate[][] = [];
       for (const req of plan) {

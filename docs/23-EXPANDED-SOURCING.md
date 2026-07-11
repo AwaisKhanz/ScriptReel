@@ -183,9 +183,13 @@ merged/split since that reshapes the sentence), persisted to `beats.visual_momen
 Score embeds the moment phrases and `planSemanticMontage` assigns each its best-matching,
 visually-distinct clip (weighted by phrase length) — falling back to the diverse `planMontage` when a
 beat has no moments or too few assign. New projects get sub-phrase-mapped montages (morning → subway →
-gate); existing projects keep the diverse montage until re-analyzed. **Remaining:** per-moment *search*
-(so a moment with no good clip in the pool gets its own provider query) and per-segment swap/re-search
-in the storyboard — refinements on top of the working chain.
+gate); existing projects keep the diverse montage until re-analyzed.
+
+**Shipped (per-moment search):** the search stage enriches a montage beat's pool with a lean
+per-moment query (1 video + 1 image per moment, respecting `mediaPreference`), so a purpose-found clip
+for each moment lands in the pool; score's semantic matcher then assigns it by embedding similarity —
+no candidate schema change, and the 40-cap + round-robin keep the pool balanced and quota bounded.
+**Remaining:** per-segment swap/re-search in the storyboard (swap currently reverts a beat to one clip).
 
 **Shipped (23e-1) — motion-aware best-window in-point.** The single-segment half, backward-compatible
 and calibration-free. The fetch stage samples per-frame motion (one fast downscaled `ffmpeg scdet`
