@@ -113,6 +113,27 @@ Applied to the **top-K** candidates only (cheap, cached per asset by checksum):
 
 Archives (variable quality) benefit most; stock B-roll usually passes trivially.
 
+**Shipped (23d) — named-subject cross-check, calibration-first.** `pnpm eval:matching` now
+reports the **raw-sim axis** alongside the base-score τ. That measurement is decisive: on the
+labeled set the good/bad *raw-sim* distributions overlap heavily (good mean ≈ 0.04 with min 0.0,
+bad max ≈ 0.10) — SigLIP2 raw cosine does **not** separate relevant from irrelevant cleanly, so a
+naive raw-sim floor would reject known-good assets. We therefore **do not** gate on an absolute sim
+floor. Instead the cross-check reuses the already-calibrated base-score τ and adds a
+provider/named-subject rule (`acceptTop`, `packages/core/src/matching.ts`):
+
+- A beat "names a subject" when analyze extracted a **person or place** (`entities`).
+- On such a beat, an **archive/aggregator** asset (Openverse/NASA/Wikimedia — `isArchiveProvider`)
+  is **never accepted on the weak τ_lo tier**: a low-confidence stand-in must not pass as the named
+  subject; the beat falls to the ladder instead.
+- Conversely a **confident** archive match (clears τ_hi) is **preferred** over a higher-scoring
+  generic stock stand-in — the actual named subject wins.
+- Generic beats and trusted stock keep the plain two-tier behaviour, so precision@1 is unchanged.
+
+**Deferred to 23e/23f (needs signal we don't have yet):** true per-frame video subject-presence
+voting (23e supplies the sampled frames) and letterbox/watermark pixel heuristics; and a
+**named-subject / archive-labelled eval set** (23f) to calibrate a real subject-presence floor —
+the current 30-pair set is stock-only, so it can't calibrate archive behaviour.
+
 ## 7. Clip & frame intelligence (never boring)
 
 `timeline.json` **already carries `inPointSec`** — the renderer can start a clip anywhere. What's new

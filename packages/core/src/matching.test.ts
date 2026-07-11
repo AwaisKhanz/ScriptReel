@@ -124,6 +124,59 @@ describe('selectBeats thresholds', () => {
   });
 });
 
+describe('named-subject cross-check (doc 23 §6)', () => {
+  const th = { tauHi: 0.28, tauLo: 0.2 };
+  // base ≈ 0.62·sim + 0.28 for the video fixture: sim=-0.05 → weak band, sim≥0 → strong.
+  const WEAK = -0.05;
+  const STRONG = 0.1;
+
+  const named = (candidates: SelectionCandidate[]): SelectionBeat => ({
+    beatIdx: 0,
+    beatDurationSec: BEAT_DUR,
+    candidates,
+    namedSubject: true,
+  });
+
+  it('rejects a weak-tier archive stand-in on a named-subject beat', () => {
+    const sel = selectBeats(
+      [named([candidate('arc', WEAK, [1, 0, 0], { isArchive: true })])],
+      ctx,
+      th,
+    );
+    expect(sel[0]?.chosenId).toBeNull(); // falls through to the ladder, not a stand-in
+  });
+
+  it('still accepts a weak stock candidate on a named beat (only archives are gated)', () => {
+    const sel = selectBeats([named([candidate('stock', WEAK, [1, 0, 0])])], ctx, th);
+    expect(sel[0]?.chosenId).toBe('stock');
+    expect(sel[0]?.weak).toBe(true);
+  });
+
+  it('accepts a weak archive candidate on a generic (unnamed) beat', () => {
+    const generic: SelectionBeat = {
+      beatIdx: 0,
+      beatDurationSec: BEAT_DUR,
+      candidates: [candidate('arc', WEAK, [1, 0, 0], { isArchive: true })],
+    };
+    expect(selectBeats([generic], ctx, th)[0]?.chosenId).toBe('arc');
+  });
+
+  it('prefers a confident archive match over a higher-scoring stock stand-in', () => {
+    const sel = selectBeats(
+      [
+        named([
+          candidate('stock', 0.2, [1, 0, 0]), // higher base score
+          candidate('arc', STRONG, [0, 1, 0], { isArchive: true }), // clears τ_hi
+        ]),
+      ],
+      ctx,
+      th,
+    );
+    expect(sel[0]?.chosenId).toBe('arc'); // the actual named subject wins
+    expect(sel[0]?.weak).toBe(false);
+  });
+});
+
 describe('sequential penalties', () => {
   const th = { tauHi: -10, tauLo: -10 }; // force a choice every beat, isolate ranking
 

@@ -49,16 +49,18 @@ async function loadLabels(): Promise<Label[]> {
     });
 }
 
-// Precision-at-threshold curve: precision(τ) = #good with score≥τ / #all with score≥τ.
+// Precision-at-threshold curve: precision(τ) = #good with value≥τ / #all with value≥τ.
+// `axisOf` picks the axis — base score (τ_hi/τ_lo) or raw sim (cross-check floor, 23d).
 // τ_hi = lowest τ reaching 90% precision, τ_lo = 70% (doc 09 §step 3, doc 21).
 function operatingPoint(
   scored: Scored[],
+  axisOf: (s: Scored) => number,
   targetPrecision: number,
   minSupport: number,
 ): number | null {
-  const thresholds = [...new Set(scored.map((s) => s.score))].sort((a, b) => a - b);
+  const thresholds = [...new Set(scored.map(axisOf))].sort((a, b) => a - b);
   for (const tau of thresholds) {
-    const at = scored.filter((s) => s.score >= tau);
+    const at = scored.filter((s) => axisOf(s) >= tau);
     if (at.length < minSupport) continue;
     const precision = at.filter((s) => s.label === 'good').length / at.length;
     if (precision >= targetPrecision) return tau;
@@ -127,8 +129,12 @@ async function main(): Promise<void> {
 
   const good = scored.filter((s) => s.label === 'good');
   const bad = scored.filter((s) => s.label === 'bad');
-  const tauHi = operatingPoint(scored, 0.9, 3);
-  const tauLo = operatingPoint(scored, 0.7, 3);
+  const tauHi = operatingPoint(scored, (s) => s.score, 0.9, 3);
+  const tauLo = operatingPoint(scored, (s) => s.score, 0.7, 3);
+  // Raw-sim cross-check floor (doc 23 §6): the subject-presence axis, independent of
+  // the quality/orient terms that can lift a wrong-but-pretty asset over the base τ.
+  const simFloorHi = operatingPoint(scored, (s) => s.sim, 0.9, 3);
+  const simFloorLo = operatingPoint(scored, (s) => s.sim, 0.8, 3);
 
   // precision@1 / top-1 acceptance (doc 21): per beat, is rank-1 good? For all-bad
   // beats, a correct decline (top score < τ_lo) also counts as accepted.
@@ -161,11 +167,20 @@ async function main(): Promise<void> {
   console.log(
     `bad  score  mean=${mean(bad.map((s) => s.score)).toFixed(3)}  max=${max(bad.map((s) => s.score)).toFixed(3)}`,
   );
+  console.log(
+    `good sim    mean=${mean(good.map((s) => s.sim)).toFixed(3)}  min=${min(good.map((s) => s.sim)).toFixed(3)}`,
+  );
+  console.log(
+    `bad  sim    mean=${mean(bad.map((s) => s.sim)).toFixed(3)}  max=${max(bad.map((s) => s.sim)).toFixed(3)}`,
+  );
   console.log('\nscore histogram (✓=good ░=bad):');
   console.log(histogram(scored));
   console.log('\noperating points (base-score space):');
   console.log(`  τ_hi @90% precision = ${fmt(tauHi)}`);
   console.log(`  τ_lo @70% precision = ${fmt(tauLo)}`);
+  console.log('\ncross-check sim floor (raw-sim space, doc 23 §6):');
+  console.log(`  sim @90% precision  = ${fmt(simFloorHi)}   ← CROSSCHECK_SIM_FLOOR candidate`);
+  console.log(`  sim @80% precision  = ${fmt(simFloorLo)}`);
   console.log('\nper-beat top-1:');
   console.log(perBeat.join('\n'));
   console.log(

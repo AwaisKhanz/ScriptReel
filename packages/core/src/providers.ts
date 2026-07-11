@@ -217,6 +217,15 @@ export const PROVIDER_QUOTA_CODE = {
   wikimedia: 'E_QUOTA_WIKIMEDIA',
 } as const;
 
+// Copyright-free archive/aggregator sources (doc 23). Curated stock (Pexels/Pixabay)
+// is reliably on-topic; these are broader but variable quality, so the cross-check
+// (doc 23 §6) holds their matches to a stricter bar on named-subject beats. Accepts a
+// raw string so callers can pass a DB column (textcard/generated → not an archive).
+const ARCHIVE_PROVIDER_SET: ReadonlySet<string> = new Set(['openverse', 'nasa', 'wikimedia']);
+export function isArchiveProvider(provider: string): boolean {
+  return ARCHIVE_PROVIDER_SET.has(provider);
+}
+
 // Domain-specific archive providers (doc 23 §5): fired only for beats whose domain
 // they cover, so they add signal without polluting generic beats. Universal
 // providers (pexels/pixabay/openverse) always run.

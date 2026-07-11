@@ -5,6 +5,7 @@ import {
   cosine,
   hashObject,
   invariant,
+  isArchiveProvider,
   PipelineError,
   type Rung,
   type ScoreContext,
@@ -33,6 +34,14 @@ function candidateFingerprint(rows: readonly db.CandidateRow[]): unknown {
   return rows.map((c) => [c.provider, c.provider_id, c.thumb_path, c.width, c.height, c.duration]);
 }
 
+// A beat "names a specific subject" (doc 23 §6.3) when analyze extracted a person or
+// place — the cases where a generic stand-in would be wrong. Objects (e.g. "a bridge")
+// are generic enough to leave to stock, so they don't trigger the stricter cross-check.
+function beatNamesSubject(entities: db.BeatRow['entities']): boolean {
+  const e = entities as { people?: unknown[]; places?: unknown[] } | null;
+  return (e?.people?.length ?? 0) > 0 || (e?.places?.length ?? 0) > 0;
+}
+
 // score stage (doc 09): embed each beat's visualDescription + every candidate thumb
 // (SigLIP 2), score, greedily select with τ thresholds, run the variety pass, persist
 // rank/score + chosen_candidate_id, and write selection.json (the tuning instrument).
@@ -49,6 +58,7 @@ export const scoreStage: Stage = {
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
       forcedTextcard: beats.map((b) => b.forced_textcard),
+      namedSubject: beats.map((b) => beatNamesSubject(b.entities)), // cross-check (doc 23 §6)
       candidates: candidateSets,
       aspect: ctx.settings.aspect,
       mediaPreference: ctx.settings.mediaPreference,
@@ -120,9 +130,15 @@ export const scoreStage: Stage = {
           },
           sim: cosine(descEmbedding, thumbEmbedding),
           thumbEmbedding,
+          isArchive: isArchiveProvider(c.provider), // cross-check (doc 23 §6)
         });
       }
-      return { beatIdx: beat.idx, beatDurationSec: Number(beat.est_seconds ?? 0), candidates };
+      return {
+        beatIdx: beat.idx,
+        beatDurationSec: Number(beat.est_seconds ?? 0),
+        candidates,
+        namedSubject: beatNamesSubject(beat.entities),
+      };
     });
 
     // 3) Greedy selection + global variety pass (doc 09 §3, §5).

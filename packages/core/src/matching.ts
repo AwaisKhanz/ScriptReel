@@ -139,12 +139,18 @@ export interface SelectionCandidate {
   features: CandidateFeatures;
   sim: number; // cosine(beat description, thumb)
   thumbEmbedding: readonly number[];
+  // From a variable-quality archive/aggregator source (doc 23 §6). On a named-subject
+  // beat these are cross-checked stricter — see acceptTop. Absent ⇒ trusted stock.
+  isArchive?: boolean;
 }
 
 export interface SelectionBeat {
   beatIdx: number;
   beatDurationSec: number; // narration estimate (est_seconds); drives durFit
   candidates: readonly SelectionCandidate[];
+  // The beat names a specific person/place (doc 23 §6.3). A weak archive match must
+  // not stand in as the named subject; a confident one is preferred over generic stock.
+  namedSubject?: boolean;
 }
 
 export interface RankedCandidate {
@@ -206,6 +212,39 @@ function rankBeat(
   return scored.map((s, i) => ({ id: s.id, score: s.score, rank: i }));
 }
 
+// Apply τ to a beat's ranked candidates with the named-subject cross-check (doc 23 §6).
+// On a beat that names a specific person/place: (a) a confident archive match — the
+// actual subject — is preferred over a generic stock stand-in, and (b) an archive
+// asset is never accepted on the weak (τ_lo) tier, so a low-confidence stand-in can't
+// pass as the named subject (the beat falls to the ladder instead). Generic beats and
+// trusted stock keep the plain two-tier behaviour.
+function acceptTop(
+  ranked: readonly RankedCandidate[],
+  beat: SelectionBeat,
+  byId: Map<string, SelectionCandidate>,
+  thresholds: SelectionThresholds,
+): { chosenId: string | null; weak: boolean } {
+  const top = ranked[0];
+  if (!top) return { chosenId: null, weak: false };
+
+  if (beat.namedSubject) {
+    const archiveHit = ranked.find((r) => {
+      const c = byId.get(r.id);
+      return c?.isArchive && r.score >= thresholds.tauHi;
+    });
+    if (archiveHit) return { chosenId: archiveHit.id, weak: false };
+  }
+
+  if (top.score >= thresholds.tauHi) return { chosenId: top.id, weak: false };
+  if (top.score >= thresholds.tauLo) {
+    if (beat.namedSubject && byId.get(top.id)?.isArchive) {
+      return { chosenId: null, weak: false }; // no weak archive stand-in for a named subject
+    }
+    return { chosenId: top.id, weak: true };
+  }
+  return { chosenId: null, weak: false };
+}
+
 // Greedy pass over beats in order (doc 09 §step 3). Below τ_lo → no choice here;
 // the fallback ladder (Phase 7) takes over. Returns per-beat selections.
 export function selectBeats(
@@ -220,16 +259,7 @@ export function selectBeats(
   const selections: BeatSelection[] = [];
   for (const beat of beats) {
     const ranked = rankBeat(beat, ctx, state, 1);
-    const top = ranked[0];
-    let chosenId: string | null = null;
-    let weak = false;
-    if (top) {
-      if (top.score >= thresholds.tauHi) chosenId = top.id;
-      else if (top.score >= thresholds.tauLo) {
-        chosenId = top.id;
-        weak = true;
-      }
-    }
+    const { chosenId, weak } = acceptTop(ranked, beat, byId, thresholds);
     if (chosenId) {
       const chosen = byId.get(chosenId);
       if (chosen) {
@@ -294,16 +324,7 @@ export function varietyPass(
     let next = prev;
     if (beat && offending) {
       const ranked = rankBeat(beat, ctx, state, 2);
-      const top = ranked[0];
-      let chosenId: string | null = null;
-      let weak = false;
-      if (top) {
-        if (top.score >= thresholds.tauHi) chosenId = top.id;
-        else if (top.score >= thresholds.tauLo) {
-          chosenId = top.id;
-          weak = true;
-        }
-      }
+      const { chosenId, weak } = acceptTop(ranked, beat, byId, thresholds);
       next = {
         beatIdx: prev.beatIdx,
         chosenId,
