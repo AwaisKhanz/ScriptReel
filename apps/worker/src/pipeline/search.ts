@@ -10,6 +10,7 @@ import {
   PER_PAGE_PHOTO,
   PER_PAGE_VIDEO,
   PipelineError,
+  type PlannedRequest,
   passesHygiene,
   planTier1Requests,
   type RawCandidate,
@@ -23,6 +24,12 @@ import { SearchClient } from '../providers/search';
 import { ensureThumb } from '../providers/thumbs';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
 
+// Bounded concurrency (doc 06): beats overlap and provider requests overlap, but both
+// are capped so the burst stays polite. Total request COUNT is unchanged (QuotaGuard
+// reserves atomically per request), so quota use is identical to the serial path —
+// only wall-clock shrinks.
+const BEAT_PARALLELISM = 3;
+const REQUEST_PARALLELISM = 4;
 const THUMB_PARALLELISM = 4;
 
 // Ordered visual-moment phrases for a beat (doc 23 §7b); [] for a single-image beat.
@@ -57,18 +64,50 @@ export const searchStage: Stage = {
     const client = new SearchClient(new QuotaGuard(ctx.log), ctx.log);
 
     // Cross-beat dedupe: identical (provider,kind,normalizedQuery) fires once (doc 08).
-    const requestCache = new Map<string, RawCandidate[]>();
-    const limit = pLimit(THUMB_PARALLELISM);
+    // Promise-cached so concurrent beats firing the same query share one in-flight
+    // HTTP request instead of double-spending quota.
+    const requestCache = new Map<string, Promise<RawCandidate[]>>();
+    const reqLimit = pLimit(REQUEST_PARALLELISM);
+    const beatLimit = pLimit(BEAT_PARALLELISM);
+    const limit = pLimit(THUMB_PARALLELISM); // thumbs: one global bound across beats
     const warnings: string[] = [];
     let networkCalls = 0;
     let cacheHits = 0;
     let thumbFailures = 0;
     let beatsWithCandidates = 0;
+    let doneBeats = 0;
+    const pctNow = () => Math.round((doneBeats / beats.length) * 100);
 
-    for (let i = 0; i < beats.length; i += 1) {
+    const fetchRequest = (req: PlannedRequest): Promise<RawCandidate[]> => {
+      const key = `${req.provider}|${req.kind}|${orientation}|${normalizeSearchQuery(req.query)}`;
+      let pending = requestCache.get(key);
+      if (!pending) {
+        pending = reqLimit(async () => {
+          const perPage = req.kind === 'video' ? PER_PAGE_VIDEO : PER_PAGE_PHOTO;
+          const query: SearchQuery = { query: req.query, kind: req.kind, orientation, perPage };
+          const result = await client.search(query, req.provider);
+          if (result.cacheHit) cacheHits += 1;
+          else networkCalls += 1;
+          // Live activity event (doc 16): what was just searched and how much it found.
+          report(
+            pctNow(),
+            JSON.stringify({
+              op: 'search',
+              provider: req.provider,
+              kind: req.kind,
+              query: req.query,
+              found: result.candidates.length,
+            }),
+          );
+          return result.candidates;
+        });
+        requestCache.set(key, pending);
+      }
+      return pending;
+    };
+
+    const searchBeat = async (beat: db.BeatRow): Promise<void> => {
       if (ctx.signal.aborted) throw new PipelineError('E_CANCELLED', 'search', 'cancelled');
-      const beat = beats[i];
-      if (!beat) continue;
       const queries = beat.queries as { literal?: string[] } | null;
       // Domain-route archive providers (doc 23 §5) from the beat's analysis fields.
       const domain = classifyDomain(
@@ -89,21 +128,10 @@ export const searchStage: Stage = {
           plan.push({ provider: 'pixabay', kind: 'image', query: q });
       }
 
-      const groups: RawCandidate[][] = [];
-      for (const req of plan) {
-        const perPage = req.kind === 'video' ? PER_PAGE_VIDEO : PER_PAGE_PHOTO;
-        const query: SearchQuery = { query: req.query, kind: req.kind, orientation, perPage };
-        const key = `${req.provider}|${req.kind}|${orientation}|${normalizeSearchQuery(req.query)}`;
-        let candidates = requestCache.get(key);
-        if (!candidates) {
-          const result = await client.search(query, req.provider);
-          candidates = result.candidates;
-          requestCache.set(key, candidates);
-          if (result.cacheHit) cacheHits += 1;
-          else networkCalls += 1;
-        }
-        groups.push(candidates);
-      }
+      // All of this beat's requests in flight together (bounded by reqLimit);
+      // Promise.all preserves plan order, so the round-robin interleave — and thus
+      // per-beat ranking — is byte-identical to the serial path.
+      const groups: RawCandidate[][] = await Promise.all(plan.map(fetchRequest));
 
       // Round-robin interleave across the plan's providers so every source is
       // represented before the MAX_CANDIDATES_PER_BEAT cap (doc 23). Otherwise the
@@ -179,8 +207,13 @@ export const searchStage: Stage = {
       if (rows.length > 0) beatsWithCandidates += 1;
       else warnings.push(`E_NO_CANDIDATES: beat ${beat.idx} has no candidates after hygiene`);
 
-      report(Math.round(((i + 1) / beats.length) * 100), `search beat ${i + 1}/${beats.length}`);
-    }
+      doneBeats += 1;
+      report(pctNow(), JSON.stringify({ op: 'beat', beat: doneBeats, of: beats.length }));
+    };
+
+    // Beats overlap (bounded); per-beat work and persistence stay independent, so
+    // completion order doesn't matter. Cancellation propagates via E_CANCELLED.
+    await Promise.all(beats.map((beat) => beatLimit(() => searchBeat(beat))));
 
     return {
       warnings,
