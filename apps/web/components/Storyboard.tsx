@@ -3,6 +3,7 @@
 import { TAU_HI, TAU_LO } from '@scriptreel/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { fileUrl, fmtDuration } from '../lib/format';
 import { Badge, Button, Card, Dot, Skeleton, Spinner } from './ui';
 
@@ -11,12 +12,70 @@ export interface Candidate {
   kind: 'video' | 'image' | 'generated' | 'textcard';
   provider: string;
   thumbPath: string | null;
+  remoteUrl: string | null; // direct media file — used to preview video in the browser
   duration: number | null;
   author: string | null;
   score: number | null;
   pageUrl: string | null;
   width: number | null;
   height: number | null;
+}
+
+// Render fixed overlays on document.body so they escape any transformed ancestor (the
+// page uses a fade-up animation, which would otherwise make `position: fixed` resolve
+// against the page div instead of the viewport).
+function Portal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted ? createPortal(children, document.body) : null;
+}
+
+// Thumbnail that plays the real clip on demand. Video candidates get a play button;
+// the source is the provider's file URL (nothing is downloaded until render).
+function ThumbMedia({
+  thumbPath,
+  remoteUrl,
+  playing,
+}: {
+  thumbPath: string | null;
+  remoteUrl: string | null;
+  playing: boolean;
+}) {
+  if (playing && remoteUrl) {
+    return (
+      <video
+        src={remoteUrl}
+        controls
+        autoPlay
+        muted
+        playsInline
+        className="size-full bg-black object-contain"
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  }
+  return thumbPath ? (
+    <img src={fileUrl(thumbPath)} alt="" className="size-full object-cover" />
+  ) : (
+    <div className="flex size-full items-center justify-center bg-surface-2 text-xs text-fg-subtle">
+      no preview
+    </div>
+  );
+}
+
+function PlayBadge({ onClick }: { onClick: (e: React.MouseEvent) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Play preview"
+      className="absolute left-1/2 top-1/2 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur transition-transform duration-[var(--dur-fast)] hover:scale-105"
+    >
+      <svg viewBox="0 0 24 24" className="size-5 translate-x-px" fill="currentColor" aria-hidden>
+        <path d="M8 5v14l11-7z" />
+      </svg>
+    </button>
+  );
 }
 export interface Beat {
   id: string;
@@ -182,28 +241,30 @@ export function Storyboard({
         ))}
       </div>
 
-      {/* sticky footer */}
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/85 backdrop-blur-xl lg:left-64">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
-          <div className="flex items-center gap-3 text-sm">
-            {weakCount > 0 ? (
-              <span className="flex items-center gap-2 text-warning">
-                <Dot tone="warning" />
-                {weakCount} {weakCount === 1 ? 'beat is a weak match' : 'beats are weak matches'} —
-                swap or continue
-              </span>
-            ) : (
-              <span className="flex items-center gap-2 text-success">
-                <Dot tone="success" /> All {beats.length} beats matched well
-              </span>
-            )}
-            <span className="hidden text-fg-subtle sm:inline">· {fmtDuration(total)} total</span>
+      {/* sticky footer — portaled so `fixed` pins to the viewport, not the animated page */}
+      <Portal>
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/85 backdrop-blur-xl lg:left-64">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
+            <div className="flex items-center gap-3 text-sm">
+              {weakCount > 0 ? (
+                <span className="flex items-center gap-2 text-warning">
+                  <Dot tone="warning" />
+                  {weakCount} {weakCount === 1 ? 'beat is a weak match' : 'beats are weak matches'}{' '}
+                  — swap or continue
+                </span>
+              ) : (
+                <span className="flex items-center gap-2 text-success">
+                  <Dot tone="success" /> All {beats.length} beats matched well
+                </span>
+              )}
+              <span className="hidden text-fg-subtle sm:inline">· {fmtDuration(total)} total</span>
+            </div>
+            <Button variant="primary" disabled={busy} onClick={onApprove}>
+              {busy ? <Spinner /> : 'Approve & render'}
+            </Button>
           </div>
-          <Button variant="primary" disabled={busy} onClick={onApprove}>
-            {busy ? <Spinner /> : 'Approve & render'}
-          </Button>
         </div>
-      </div>
+      </Portal>
 
       {swapBeat && (
         <SwapDrawer
@@ -241,17 +302,31 @@ function BeatCard({
   const chosen = beat.candidates.find((c) => c.id === beat.chosenCandidateId) ?? beat.candidates[0];
   const kind = beat.forcedTextcard ? 'textcard' : (chosen?.kind ?? 'textcard');
   const tone = scoreTone({ score: beat.score, kind });
+  const [playing, setPlaying] = useState(false);
+  const canPlay = !beat.forcedTextcard && chosen?.kind === 'video' && !!chosen.remoteUrl;
   return (
     <Card bare className="flex flex-col">
       <div
         className={`relative overflow-hidden rounded-t-xl bg-bg ${ASPECT_THUMB[aspect] ?? 'aspect-video'}`}
       >
-        {chosen?.thumbPath && !beat.forcedTextcard ? (
-          <img src={fileUrl(chosen.thumbPath)} alt="" className="size-full object-cover" />
+        {beat.forcedTextcard ? (
+          <div className="flex size-full items-center justify-center bg-surface-2 text-xs text-fg-subtle">
+            text card
+          </div>
+        ) : chosen ? (
+          <ThumbMedia thumbPath={chosen.thumbPath} remoteUrl={chosen.remoteUrl} playing={playing} />
         ) : (
           <div className="flex size-full items-center justify-center bg-surface-2 text-xs text-fg-subtle">
-            {beat.forcedTextcard ? 'text card' : 'no match'}
+            no match
           </div>
+        )}
+        {canPlay && !playing && (
+          <PlayBadge
+            onClick={(e) => {
+              e.stopPropagation();
+              setPlaying(true);
+            }}
+          />
         )}
         {researching && (
           <div className="absolute inset-0 flex items-center justify-center bg-bg/70 backdrop-blur-sm">
@@ -331,6 +406,7 @@ function SwapDrawer({
     cands.findIndex((c) => c.id === beat.chosenCandidateId),
   );
   const [cursor, setCursor] = useState(chosenIdx);
+  const [playingId, setPlayingId] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -349,83 +425,107 @@ function SwapDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end animate-[var(--animate-fade-in)]">
-      <button type="button" aria-label="Close" className="flex-1 bg-black/50" onClick={onClose} />
-      <div
-        ref={ref}
-        role="dialog"
-        aria-label={`Swap clip for beat ${beat.idx + 1}`}
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="flex h-full w-full max-w-md flex-col border-l border-border bg-surface shadow-[var(--shadow-lg)] outline-none animate-[var(--animate-fade-up)]"
-      >
-        <div className="flex items-center justify-between border-b border-border p-4">
-          <div>
-            <h3 className="text-sm font-semibold">Swap clip · beat {beat.idx + 1}</h3>
-            <p className="mt-0.5 text-xs text-fg-subtle">
-              {cands.length} alternates · ←/→ move · Enter choose · Esc close
-            </p>
+    <Portal>
+      <div className="fixed inset-0 z-50 flex justify-end animate-[var(--animate-fade-in)]">
+        <button type="button" aria-label="Close" className="flex-1 bg-black/50" onClick={onClose} />
+        <div
+          ref={ref}
+          role="dialog"
+          aria-label={`Swap clip for beat ${beat.idx + 1}`}
+          tabIndex={-1}
+          onKeyDown={onKeyDown}
+          className="flex h-full w-full max-w-md flex-col border-l border-border bg-surface shadow-[var(--shadow-lg)] outline-none animate-[var(--animate-fade-up)]"
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-border p-4">
+            <div>
+              <h3 className="text-sm font-semibold">Swap clip · beat {beat.idx + 1}</h3>
+              <p className="mt-0.5 text-xs text-fg-subtle">
+                {cands.length} alternates · ▶ preview · ←/→ move · Enter choose · Esc close
+              </p>
+            </div>
+            <Button variant="subtle" size="sm" onClick={onClose}>
+              Close
+            </Button>
           </div>
-          <Button variant="subtle" size="sm" onClick={onClose}>
-            Close
-          </Button>
-        </div>
-        <div className="grid grid-cols-2 gap-3 overflow-y-auto p-4">
-          {cands.map((c, i) => {
-            const active = c.id === beat.chosenCandidateId;
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => onChoose(c.id)}
-                onMouseEnter={() => setCursor(i)}
-                className={`overflow-hidden rounded-xl border text-left transition-all duration-[var(--dur-fast)] ${
-                  active
-                    ? 'border-accent ring-2 ring-accent/40'
-                    : cursor === i
-                      ? 'border-border-strong'
-                      : 'border-border hover:border-border-strong'
-                }`}
-              >
-                <div className="relative aspect-video bg-bg">
-                  {c.thumbPath && (
-                    <img src={fileUrl(c.thumbPath)} alt="" className="size-full object-cover" />
-                  )}
-                  {active && (
-                    <span className="absolute right-1.5 top-1.5 flex size-5 items-center justify-center rounded-full bg-accent text-white">
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="size-3"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        aria-hidden
-                      >
-                        <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-1 p-2">
-                  <div className="flex items-center justify-between">
-                    <Badge tone={scoreTone(c)}>
-                      {c.score != null ? c.score.toFixed(2) : c.kind}
-                    </Badge>
-                    <span className="text-[10px] uppercase tracking-wide text-fg-subtle">
-                      {c.provider}
-                    </span>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="grid grid-cols-2 gap-3">
+              {cands.map((c, i) => {
+                const active = c.id === beat.chosenCandidateId;
+                const isPlaying = playingId === c.id;
+                const canPlay = c.kind === 'video' && !!c.remoteUrl;
+                return (
+                  // biome-ignore lint/a11y/useSemanticElements: nests a play button, so not a <button>
+                  <div
+                    key={c.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onChoose(c.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onChoose(c.id);
+                      }
+                    }}
+                    onMouseEnter={() => setCursor(i)}
+                    className={`cursor-pointer overflow-hidden rounded-xl border text-left transition-all duration-[var(--dur-fast)] ${
+                      active
+                        ? 'border-accent ring-2 ring-accent/40'
+                        : cursor === i
+                          ? 'border-border-strong'
+                          : 'border-border hover:border-border-strong'
+                    }`}
+                  >
+                    <div className="relative aspect-video bg-bg">
+                      <ThumbMedia
+                        thumbPath={c.thumbPath}
+                        remoteUrl={c.remoteUrl}
+                        playing={isPlaying}
+                      />
+                      {active && !isPlaying && (
+                        <span className="absolute right-1.5 top-1.5 flex size-5 items-center justify-center rounded-full bg-accent text-white">
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="size-3"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="3"
+                            aria-hidden
+                          >
+                            <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </span>
+                      )}
+                      {canPlay && !isPlaying && (
+                        <PlayBadge
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPlayingId(c.id);
+                          }}
+                        />
+                      )}
+                    </div>
+                    <div className="space-y-1 p-2">
+                      <div className="flex items-center justify-between">
+                        <Badge tone={scoreTone(c)}>
+                          {c.score != null ? c.score.toFixed(2) : c.kind}
+                        </Badge>
+                        <span className="text-[10px] uppercase tracking-wide text-fg-subtle">
+                          {c.provider}
+                        </span>
+                      </div>
+                      <div className="truncate text-xs text-fg-subtle">
+                        {c.duration != null ? `${c.duration.toFixed(1)}s · ` : ''}
+                        {c.author ?? '—'}
+                      </div>
+                    </div>
                   </div>
-                  <div className="truncate text-xs text-fg-subtle">
-                    {c.duration != null ? `${c.duration.toFixed(1)}s · ` : ''}
-                    {c.author ?? '—'}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+    </Portal>
   );
 }
 
@@ -471,51 +571,53 @@ function ReSearchDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-[var(--animate-fade-in)]">
-      <Card className="w-full max-w-md space-y-4 animate-[var(--animate-scale-in)]">
-        <div>
-          <h3 className="text-sm font-semibold">Re-search beat {beat.idx + 1}</h3>
-          <p className="mt-1 line-clamp-2 text-xs text-fg-subtle">{beat.text}</p>
-        </div>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-            Visual description{' '}
-            <span className="font-normal normal-case text-fg-subtle">· English</span>
-          </span>
-          <textarea
-            value={desc}
-            onChange={(e) => setDesc(e.target.value)}
-            rows={2}
-            className="w-full resize-y rounded-lg border border-border bg-bg p-2.5 text-sm outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-            Extra query <span className="font-normal normal-case text-fg-subtle">· optional</span>
-          </span>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="e.g. lunar module descent"
-            className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
-          />
-        </label>
-        <div className="flex items-center justify-between text-xs">
-          <span className={low ? 'text-warning' : 'text-fg-subtle'}>
-            {pexels != null ? `${pexels} Pexels requests left this hour` : 'checking quota…'}
-          </span>
-          {low && <span className="text-warning">low — costs ≤ 4</span>}
-        </div>
-        {error && <p className="text-sm text-danger">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button variant="subtle" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
-            {busy ? <Spinner /> : 'Re-search'}
-          </Button>
-        </div>
-      </Card>
-    </div>
+    <Portal>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-[var(--animate-fade-in)]">
+        <Card className="w-full max-w-md space-y-4 animate-[var(--animate-scale-in)]">
+          <div>
+            <h3 className="text-sm font-semibold">Re-search beat {beat.idx + 1}</h3>
+            <p className="mt-1 line-clamp-2 text-xs text-fg-subtle">{beat.text}</p>
+          </div>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
+              Visual description{' '}
+              <span className="font-normal normal-case text-fg-subtle">· English</span>
+            </span>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              rows={2}
+              className="w-full resize-y rounded-lg border border-border bg-bg p-2.5 text-sm outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
+              Extra query <span className="font-normal normal-case text-fg-subtle">· optional</span>
+            </span>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="e.g. lunar module descent"
+              className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
+            />
+          </label>
+          <div className="flex items-center justify-between text-xs">
+            <span className={low ? 'text-warning' : 'text-fg-subtle'}>
+              {pexels != null ? `${pexels} Pexels requests left this hour` : 'checking quota…'}
+            </span>
+            {low && <span className="text-warning">low — costs ≤ 4</span>}
+          </div>
+          {error && <p className="text-sm text-danger">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="subtle" size="sm" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
+              {busy ? <Spinner /> : 'Re-search'}
+            </Button>
+          </div>
+        </Card>
+      </div>
+    </Portal>
   );
 }

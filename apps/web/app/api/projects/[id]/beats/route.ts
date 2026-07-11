@@ -32,6 +32,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           kind: c.kind,
           provider: c.provider,
           thumbPath: c.thumb_path,
+          remoteUrl: c.remote_url, // direct media file — lets the storyboard preview video
           duration: num(c.duration),
           author: c.author,
           score: num(c.score),
