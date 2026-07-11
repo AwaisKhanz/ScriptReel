@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type MotionSample, pickBestWindow, splitSegmentFrames } from './clip';
+import {
+  type MontageCandidate,
+  type MotionSample,
+  pickBestWindow,
+  planMontage,
+  splitSegmentFrames,
+} from './clip';
 
 // Build 1 sample/sec with the given per-second motion values.
 function samples(motions: number[]): MotionSample[] {
@@ -84,5 +90,53 @@ describe('splitSegmentFrames', () => {
 
   it('single segment returns the whole span', () => {
     expect(splitSegmentFrames(150, [1])).toEqual([150]);
+  });
+});
+
+describe('planMontage', () => {
+  const cand = (
+    id: string,
+    score: number,
+    e: number[],
+    kind: 'video' | 'image' = 'video',
+  ): MontageCandidate => ({ id, kind, score, thumbEmbedding: e });
+
+  it('montages a long beat into diverse segments, chosen first', () => {
+    const cands = [
+      cand('a', 0.9, [1, 0, 0]),
+      cand('b', 0.85, [0, 1, 0]),
+      cand('c', 0.8, [0, 0, 1]),
+    ];
+    const plan = planMontage('a', cands, 9);
+    expect(plan).not.toBeNull();
+    expect(plan?.[0]?.candidateId).toBe('a'); // chosen leads
+    expect((plan ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('returns null for a beat too short to hold two segments', () => {
+    expect(planMontage('a', [cand('a', 0.9, [1, 0, 0]), cand('b', 0.8, [0, 1, 0])], 3)).toBeNull();
+  });
+
+  it('returns null when every alternate is a near-duplicate of the chosen', () => {
+    const cands = [
+      cand('a', 0.9, [1, 0, 0]),
+      cand('b', 0.85, [1, 0, 0]),
+      cand('c', 0.8, [0.99, 0.01, 0]),
+    ];
+    expect(planMontage('a', cands, 9)).toBeNull();
+  });
+
+  it('caps segment count at MONTAGE_MAX_SEGMENTS', () => {
+    const cands = [
+      cand('a', 0.9, [1, 0, 0]),
+      cand('b', 0.85, [0, 1, 0]),
+      cand('c', 0.8, [0, 0, 1]),
+      cand('d', 0.75, [0.7, 0, 0.7]),
+    ];
+    expect((planMontage('a', cands, 30) ?? []).length).toBeLessThanOrEqual(3);
+  });
+
+  it('returns null when the chosen candidate is not in the pool', () => {
+    expect(planMontage('x', [cand('a', 0.9, [1, 0, 0])], 9)).toBeNull();
   });
 });

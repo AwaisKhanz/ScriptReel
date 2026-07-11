@@ -1,3 +1,11 @@
+import {
+  MONTAGE_DIVERSITY_COSINE,
+  MONTAGE_MAX_SEGMENTS,
+  MONTAGE_MIN_SEG_SEC,
+  MONTAGE_TARGET_SEG_SEC,
+} from './constants';
+import { cosine } from './matching';
+
 // Clip intelligence (doc 23 §7) — pure window selection. The worker samples per-frame
 // motion (mean absolute frame difference) from a source video; this picks the most
 // dynamic window to start on, so a clip doesn't open on a static intro or dead hold.
@@ -82,4 +90,51 @@ export function splitSegmentFrames(totalFrames: number, weights: readonly number
     }
   }
   return frames;
+}
+
+export interface MontageCandidate {
+  id: string;
+  kind: 'video' | 'image';
+  score: number;
+  thumbEmbedding: readonly number[];
+}
+
+export interface SegmentPlanItem {
+  candidateId: string;
+  weight: number;
+}
+
+// Plan a beat's visual montage (doc 23 §7) from its scored candidates. Anchors on the
+// chosen clip, then adds the highest-scoring alternates that are visually DISTINCT from
+// what's already picked (thumb cosine ≤ MONTAGE_DIVERSITY_COSINE), so the sequence looks
+// varied rather than three near-identical shots. Segment count is bounded so each holds
+// ≥ MONTAGE_MIN_SEG_SEC. Returns null (⇒ single visual, unchanged) when the beat is too
+// short or its candidates are all near-duplicates of the chosen one. Equal weights.
+export function planMontage(
+  chosenId: string,
+  candidates: readonly MontageCandidate[],
+  beatDurationSec: number,
+): SegmentPlanItem[] | null {
+  const maxBySec = Math.floor(beatDurationSec / MONTAGE_MIN_SEG_SEC);
+  const target = Math.min(
+    MONTAGE_MAX_SEGMENTS,
+    Math.max(1, Math.round(beatDurationSec / MONTAGE_TARGET_SEG_SEC)),
+    maxBySec,
+  );
+  if (target < 2) return null;
+
+  const chosen = candidates.find((c) => c.id === chosenId);
+  if (!chosen) return null;
+
+  const picked: MontageCandidate[] = [chosen];
+  const rest = candidates.filter((c) => c.id !== chosenId).sort((a, b) => b.score - a.score);
+  for (const c of rest) {
+    if (picked.length >= target) break;
+    const distinct = picked.every(
+      (p) => cosine(c.thumbEmbedding, p.thumbEmbedding) <= MONTAGE_DIVERSITY_COSINE,
+    );
+    if (distinct) picked.push(c);
+  }
+  if (picked.length < 2) return null;
+  return picked.map((c) => ({ candidateId: c.id, weight: 1 }));
 }

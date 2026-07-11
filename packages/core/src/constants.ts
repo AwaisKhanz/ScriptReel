@@ -69,6 +69,14 @@ export const DUP_PENALTY = 0.1; // near-duplicate of the adjacent beat
 export const MONOTONY_PENALTY = 0.04; // same author as the previous chosen beat
 export const DUP_COSINE = 0.92; // thumb cosine above this = visual near-duplicate
 
+// Montage planning (doc 23 §7). A beat long enough to hold several visuals is split
+// into a mini-sequence of diverse clips instead of one static hold — the anti-boring
+// lever. [CALIBRATE 23e]
+export const MONTAGE_TARGET_SEG_SEC = 3.0; // aim for ~3 s per montage segment
+export const MONTAGE_MAX_SEGMENTS = 3; // never fragment a beat past this
+export const MONTAGE_MIN_SEG_SEC = 1.8; // a segment shorter than this feels like a flash
+export const MONTAGE_DIVERSITY_COSINE = 0.85; // segments must differ (thumb cosine ≤ this)
+
 // Greedy selection thresholds in base-score space. SigLIP cosine ranges are
 // model-specific — these were CALIBRATED in Phase 6 from 30 labeled pairs (G1–G3)
 // with siglip2-base-patch16-224: τ_hi = 90%-precision point, τ_lo = 70%-precision
