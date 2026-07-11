@@ -4,6 +4,7 @@ import {
   type ProjectSettings,
   type ProviderCredentials,
   parseSettings,
+  STORYBOARD_CANDIDATES,
   settingsHash,
 } from '@scriptreel/core';
 import { sql } from './client';
@@ -486,8 +487,8 @@ export async function candidateBelongsToBeat(
   return rows.length > 0;
 }
 
-// Beats + their top-8 candidates by rank, for the storyboard (doc 16). One query
-// for all candidates, grouped in memory (avoids N+1 across beats).
+// Beats + their top-N candidates by rank (STORYBOARD_CANDIDATES), for the storyboard
+// (doc 16). One query for all candidates, grouped in memory (avoids N+1 across beats).
 export async function getStoryboard(
   projectId: string,
 ): Promise<{ beat: BeatRow; candidates: CandidateRow[] }[]> {
@@ -502,7 +503,10 @@ export async function getStoryboard(
     if (arr) arr.push(c);
     else byBeat.set(c.beat_id, [c]);
   }
-  return beats.map((beat) => ({ beat, candidates: (byBeat.get(beat.id) ?? []).slice(0, 8) }));
+  return beats.map((beat) => ({
+    beat,
+    candidates: (byBeat.get(beat.id) ?? []).slice(0, STORYBOARD_CANDIDATES),
+  }));
 }
 
 export type AssetCacheRow = Database['public']['Tables']['asset_cache']['Row'];

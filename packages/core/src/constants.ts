@@ -50,6 +50,7 @@ export const SEARCH_CACHE_TTL_H = 24; // Pixabay requires ≥24 h caching
 export const PER_PAGE_VIDEO = 20;
 export const PER_PAGE_PHOTO = 15;
 export const MAX_CANDIDATES_PER_BEAT = 40;
+export const STORYBOARD_CANDIDATES = 5; // swap alternates shown per beat (keep it scannable)
 export const THUMB_MAX_SIDE = 384; // SigLIP input efficiency
 
 // Matching / scoring weights (doc 09 §step 2). Fixed formula terms.
