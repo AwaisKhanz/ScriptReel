@@ -2,7 +2,8 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Badge, Button, Card, Dot, ProgressBar, Skeleton } from '../../components/ui';
+import { Pills } from '../../components/controls';
+import { Badge, Button, Card, Dot, ProgressBar, Skeleton, Spinner } from '../../components/ui';
 import { fmtBytes } from '../../lib/format';
 
 interface Health {
@@ -32,6 +33,16 @@ interface KeyRow {
   masked: string;
 }
 const KEY_PROVIDERS = ['pexels', 'pixabay', 'openverse'] as const;
+const PROVIDER_OPTIONS = [
+  { value: 'pexels', label: 'Pexels' },
+  { value: 'pixabay', label: 'Pixabay' },
+  { value: 'openverse', label: 'Openverse' },
+];
+const PROVIDER_HELP: Record<string, string> = {
+  pexels: 'https://www.pexels.com/api/',
+  pixabay: 'https://pixabay.com/api/docs/',
+  openverse: 'https://api.openverse.org/',
+};
 
 export default function SettingsPage() {
   const health = useQuery<Health>({
@@ -217,80 +228,110 @@ function KeysSection() {
         </p>
       </div>
 
-      <Card className="space-y-4">
-        {/* add form */}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <label className="block space-y-1">
+      <Card className="space-y-5">
+        {/* Add-key form (inset) */}
+        <div className="rounded-xl border border-border bg-surface-2 p-4">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-              Provider
+              Add a key
             </span>
-            <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              className="h-10 rounded-lg border border-border bg-bg px-3 text-sm capitalize outline-none focus:border-accent/50"
+            <a
+              href={PROVIDER_HELP[provider]}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
             >
-              {KEY_PROVIDERS.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block flex-1 space-y-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-              API key / token
-            </span>
+              get a {provider} key
+              <svg
+                viewBox="0 0 24 24"
+                className="size-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                aria-hidden
+              >
+                <path d="M7 17 17 7M9 7h8v8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </a>
+          </div>
+          <div className="mt-3">
+            <Pills value={provider} options={PROVIDER_OPTIONS} onChange={setProvider} />
+          </div>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
               type="password"
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
-              placeholder="paste key…"
-              className="h-10 w-full rounded-lg border border-border bg-bg px-3 font-mono text-sm outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
+              onKeyDown={(e) => e.key === 'Enter' && add()}
+              placeholder={
+                provider === 'openverse' ? 'token (optional — anonymous works)' : 'paste API key…'
+              }
+              className="h-10 flex-1 rounded-lg border border-border bg-bg px-3 font-mono text-sm outline-none transition-colors focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
             />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-              Label
-            </span>
             <input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="account 1"
-              className="h-10 w-32 rounded-lg border border-border bg-bg px-3 text-sm outline-none focus:border-accent/50"
+              onKeyDown={(e) => e.key === 'Enter' && add()}
+              placeholder="label (optional)"
+              className="h-10 rounded-lg border border-border bg-bg px-3 text-sm outline-none transition-colors focus:border-accent/50 sm:w-44"
             />
-          </label>
-          <Button variant="primary" disabled={busy} onClick={add}>
-            Add
-          </Button>
+            <Button variant="primary" disabled={busy} onClick={add}>
+              {busy ? <Spinner /> : 'Add key'}
+            </Button>
+          </div>
+          {error && <p className="mt-2 text-sm text-danger">{error}</p>}
         </div>
-        {error && <p className="text-sm text-danger">{error}</p>}
 
-        {/* key list */}
-        {rows.length === 0 ? (
-          <p className="text-xs text-fg-subtle">
-            No pooled keys yet — the pipeline uses the single key from your <code>.env</code>. Add
-            keys here to scale.
+        {/* Pool, grouped by provider */}
+        {keys.isLoading ? (
+          <Skeleton className="h-16" />
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-fg-subtle">
+            No pooled keys yet — the pipeline uses the single key from your{' '}
+            <code className="rounded bg-surface-2 px-1 font-mono text-xs">.env</code>. Add keys
+            above to scale combined quota.
           </p>
         ) : (
-          <div className="divide-y divide-border">
-            {rows.map((k) => (
-              <div key={k.id} className="flex items-center justify-between gap-3 py-2.5">
-                <div className="flex items-center gap-3">
-                  <Badge tone="neutral">{k.provider}</Badge>
-                  <span className="font-mono text-sm">{k.masked}</span>
-                  {k.label && <span className="text-xs text-fg-subtle">{k.label}</span>}
-                  {!k.active && <span className="text-xs text-warning">paused</span>}
+          <div className="space-y-4">
+            {KEY_PROVIDERS.map((p) => {
+              const provKeys = rows.filter((k) => k.provider === p);
+              if (provKeys.length === 0) return null;
+              return (
+                <div key={p}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="text-sm font-semibold capitalize">{p}</span>
+                    <span className="text-xs text-fg-subtle">
+                      {provKeys.length} {provKeys.length === 1 ? 'key' : 'keys'} pooled
+                    </span>
+                  </div>
+                  <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+                    {provKeys.map((k) => (
+                      <div
+                        key={k.id}
+                        className="flex items-center justify-between gap-3 px-3.5 py-2.5"
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Dot tone={k.active ? 'success' : 'neutral'} />
+                          <span className="font-mono text-sm">{k.masked}</span>
+                          {k.label && (
+                            <span className="truncate text-xs text-fg-subtle">{k.label}</span>
+                          )}
+                          {!k.active && <Badge tone="warning">paused</Badge>}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => toggle(k)}>
+                            {k.active ? 'Pause' : 'Resume'}
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => remove(k.id)}>
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => toggle(k)}>
-                    {k.active ? 'Pause' : 'Resume'}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => remove(k.id)}>
-                    Delete
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
