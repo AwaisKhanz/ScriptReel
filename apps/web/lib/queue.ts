@@ -17,6 +17,7 @@ async function getBoss(): Promise<PgBoss> {
     const boss = new PgBoss({
       connectionString: env.DATABASE_URL,
       ssl: { rejectUnauthorized: false },
+      max: 2, // send-only; session pooler budget (see packages/db/client.ts)
     });
     boss.on('error', () => {});
     bossPromise = boss.start().then(() => boss);
