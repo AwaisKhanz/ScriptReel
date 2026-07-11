@@ -87,7 +87,8 @@ export interface Beat {
   forcedTextcard: boolean;
   chosenCandidateId: string | null;
   score: number | null;
-  segments: { thumbPath: string | null; kind: string }[] | null; // montage sequence (doc 23 §7)
+  // montage sequence (doc 23 §7); each shot references its candidate for per-segment swap
+  segments: { candidateId: string; thumbPath: string | null; kind: string }[] | null;
   candidates: Candidate[];
 }
 
@@ -123,6 +124,7 @@ export function Storyboard({
 }) {
   const qc = useQueryClient();
   const [swapBeat, setSwapBeat] = useState<Beat | null>(null);
+  const [swapSeg, setSwapSeg] = useState<{ beatId: string; index: number } | null>(null);
   const [researchBeat, setResearchBeat] = useState<Beat | null>(null);
   const [researching, setResearching] = useState<Record<string, number>>({}); // beatId → prior candidate count
 
@@ -166,6 +168,30 @@ export function Storyboard({
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chosenCandidateId: candidateId }),
+    }).catch(() => null);
+    if (!res?.ok) refetch();
+  }
+
+  // Swap one shot within a montage (doc 23 §7b): update segment `index`, keep the rest.
+  async function chooseSegment(beatId: string, index: number, candidateId: string) {
+    const cand = beats.find((b) => b.id === beatId)?.candidates.find((c) => c.id === candidateId);
+    qc.setQueryData<{ beats: Beat[] }>(['beats', projectId], (prev) =>
+      prev
+        ? {
+            beats: prev.beats.map((b) => {
+              if (b.id !== beatId || !b.segments || !cand) return b;
+              const segments = b.segments.map((s, i) =>
+                i === index ? { candidateId, thumbPath: cand.thumbPath, kind: cand.kind } : s,
+              );
+              return { ...b, segments, ...(index === 0 ? { chosenCandidateId: candidateId } : {}) };
+            }),
+          }
+        : prev,
+    );
+    const res = await fetch(`/api/beats/${beatId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ segmentSwap: { index, candidateId } }),
     }).catch(() => null);
     if (!res?.ok) refetch();
   }
@@ -236,6 +262,7 @@ export function Storyboard({
             aspect={aspect}
             researching={beat.id in researching}
             onSwap={() => setSwapBeat(beat)}
+            onSegmentSwap={(index) => setSwapSeg({ beatId: beat.id, index })}
             onResearch={() => setResearchBeat(beat)}
             onTextcard={() => toggleTextcard(beat)}
           />
@@ -274,6 +301,23 @@ export function Storyboard({
           onClose={() => setSwapBeat(null)}
         />
       )}
+      {swapSeg &&
+        (() => {
+          const b = beats.find((x) => x.id === swapSeg.beatId);
+          if (!b) return null;
+          return (
+            <SwapDrawer
+              beat={b}
+              title={`Swap shot ${swapSeg.index + 1} · beat ${b.idx + 1}`}
+              highlightId={b.segments?.[swapSeg.index]?.candidateId}
+              onChoose={(cid) => {
+                void chooseSegment(swapSeg.beatId, swapSeg.index, cid);
+                setSwapSeg(null);
+              }}
+              onClose={() => setSwapSeg(null)}
+            />
+          );
+        })()}
       {researchBeat && (
         <ReSearchDialog
           beat={researchBeat}
@@ -291,12 +335,14 @@ function BeatCard({
   researching,
   onSwap,
   onResearch,
+  onSegmentSwap,
   onTextcard,
 }: {
   beat: Beat;
   aspect: string;
   researching: boolean;
   onSwap: () => void;
+  onSegmentSwap: (index: number) => void;
   onResearch: () => void;
   onTextcard: () => void;
 }) {
@@ -350,15 +396,20 @@ function BeatCard({
         {montage && !playing && (
           <div className="absolute inset-x-0 bottom-0 flex items-end gap-0.5 bg-gradient-to-t from-black/70 to-transparent p-1.5">
             {montage.map((s, i) => (
-              <div
-                key={`${s.thumbPath ?? 'seg'}-${i}`}
-                className="relative h-8 flex-1 overflow-hidden rounded-sm border border-white/40 bg-surface-2"
-                title={`shot ${i + 1} · ${s.kind === 'video' ? 'video' : 'photo'}`}
+              <button
+                type="button"
+                key={`${s.candidateId}-${i}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSegmentSwap(i);
+                }}
+                title={`shot ${i + 1} · ${s.kind === 'video' ? 'video' : 'photo'} — click to swap`}
+                className="relative h-8 flex-1 overflow-hidden rounded-sm border border-white/40 bg-surface-2 transition-transform hover:scale-105 hover:border-white"
               >
                 {s.thumbPath && (
                   <img src={fileUrl(s.thumbPath)} alt="" className="size-full object-cover" />
                 )}
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -414,15 +465,20 @@ function SwapDrawer({
   beat,
   onChoose,
   onClose,
+  highlightId,
+  title,
 }: {
   beat: Beat;
   onChoose: (candidateId: string) => void;
   onClose: () => void;
+  highlightId?: string | undefined; // which candidate reads as "active" (defaults to chosen)
+  title?: string | undefined;
 }) {
   const cands = beat.candidates;
+  const activeId = highlightId ?? beat.chosenCandidateId;
   const chosenIdx = Math.max(
     0,
-    cands.findIndex((c) => c.id === beat.chosenCandidateId),
+    cands.findIndex((c) => c.id === activeId),
   );
   const [cursor, setCursor] = useState(chosenIdx);
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -457,7 +513,9 @@ function SwapDrawer({
         >
           <div className="flex shrink-0 items-center justify-between border-b border-border p-4">
             <div>
-              <h3 className="text-sm font-semibold">Swap clip · beat {beat.idx + 1}</h3>
+              <h3 className="text-sm font-semibold">
+                {title ?? `Swap clip · beat ${beat.idx + 1}`}
+              </h3>
               <p className="mt-0.5 text-xs text-fg-subtle">
                 {cands.length} alternates · ▶ preview · ←/→ move · Enter choose · Esc close
               </p>
@@ -469,7 +527,7 @@ function SwapDrawer({
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             <div className="grid grid-cols-2 gap-3">
               {cands.map((c, i) => {
-                const active = c.id === beat.chosenCandidateId;
+                const active = c.id === activeId;
                 const isPlaying = playingId === c.id;
                 const canPlay = c.kind === 'video' && !!c.remoteUrl;
                 return (

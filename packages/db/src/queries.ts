@@ -472,6 +472,27 @@ export async function setBeatChosenCandidate(
     where id = ${beatId}`;
 }
 
+// Swap one montage segment's clip (doc 23 §7b), keeping the rest of the plan. Segment 0
+// is the beat's representative, so swapping it also updates chosen_candidate_id.
+export async function updateBeatSegment(
+  beatId: string,
+  index: number,
+  candidateId: string,
+): Promise<boolean> {
+  const rows = await sql<{ segments: unknown }[]>`select segments from beats where id = ${beatId}`;
+  const plan = Array.isArray(rows[0]?.segments) ? [...(rows[0].segments as BeatSegmentPlan[])] : [];
+  const current = plan[index];
+  if (!current || typeof current !== 'object') return false;
+  plan[index] = { candidateId, weight: current.weight ?? 1 };
+  await sql.begin(async (tx) => {
+    await tx`update beats set segments = ${sql.json(plan as unknown as JsonValue)} where id = ${beatId}`;
+    if (index === 0) {
+      await tx`update beats set chosen_candidate_id = ${candidateId} where id = ${beatId}`;
+    }
+  });
+  return true;
+}
+
 // Owning project + its status for a beat — the storyboard PATCH/research routes
 // gate on `awaiting_review` (doc 15).
 export async function getBeatOwner(

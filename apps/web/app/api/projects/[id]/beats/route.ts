@@ -39,9 +39,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           ? segIds
               .map((cid) => {
                 const r = segById.get(cid);
-                return r ? { thumbPath: r.thumbPath, kind: r.kind } : null;
+                return r ? { candidateId: cid, thumbPath: r.thumbPath, kind: r.kind } : null;
               })
-              .filter((s): s is { thumbPath: string | null; kind: string } => s !== null)
+              .filter(
+                (s): s is { candidateId: string; thumbPath: string | null; kind: string } =>
+                  s !== null,
+              )
           : null;
       return {
         id: beat.id,
