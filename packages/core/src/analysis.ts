@@ -45,6 +45,9 @@ export const BeatSchema = z.object({
     conceptual: z.string(), // tier 2 — the idea
     mood: z.string(), // tier 3 — atmosphere
   }),
+  // Ordered visual moments (doc 23 §7b) when the beat spans several distinct images;
+  // empty for a single-image beat. Each is an English, filmable phrase.
+  visualMoments: z.string().array().max(4).default([]),
 });
 export type Beat = z.infer<typeof BeatSchema>;
 
@@ -108,6 +111,12 @@ RULES — VISUAL DESIGN
    for a bold on-screen card.
 9. Detect \`language\` of the script (en-US, en-GB, es, fr, hi, it, pt-BR, ja, zh) and
    an overall \`musicMood\`.
+10. \`visualMoments\`: when a beat's sentence moves through SEVERAL distinct images
+   ("a chilly morning in New York, inside a crowded subway, a man sat by the gate"),
+   emit 2–4 ordered ENGLISH, filmable phrases — one per image, in the order they occur
+   (["quiet city street at dawn", "crowded subway platform", "man sitting by ticket
+   gate"]). For a beat that is ONE image, emit an empty array []. Same rules as
+   \`visualDescription\`: no real names/brands, no on-screen text.
 
 For Japanese/Chinese target 18–30 characters (fast), 25–45 (normal), 40–65 (slow) per beat.
 
@@ -127,6 +136,7 @@ export interface ProcessedBeat {
   shotType: ShotType;
   entities: Beat['entities'];
   queries: { literal: string[]; conceptual: string; mood: string };
+  visualMoments: string[]; // ordered sub-phrases for a montage beat (doc 23 §7b); [] = single
   estSeconds: number;
 }
 
@@ -306,6 +316,7 @@ export function mergeShortBeats(
     const merged: ProcessedBeat = {
       ...longer,
       text,
+      visualMoments: [], // merged sentence no longer matches either beat's moments
       estSeconds: estimateSeconds(text, language, speed),
     };
     list.splice(lo, 2, merged);
@@ -361,11 +372,13 @@ export function splitLongBeats(
       next.push({
         ...beat,
         text: split[0],
+        visualMoments: [], // split reshapes the sentence — moments no longer align
         estSeconds: estimateSeconds(split[0], language, speed),
       });
       next.push({
         ...beat,
         text: split[1],
+        visualMoments: [],
         estSeconds: estimateSeconds(split[1], language, speed),
         queries: { ...beat.queries, literal: [beat.queries.conceptual, beat.queries.mood] },
       });
@@ -431,6 +444,7 @@ export function postProcessAnalysis(input: PostProcessInput): PostProcessOutput 
       conceptual: beat.queries.conceptual,
       mood: beat.queries.mood,
     },
+    visualMoments: [...(beat.visualMoments ?? [])],
     estSeconds: estimateSeconds(beat.text, input.language, input.speed),
   }));
 

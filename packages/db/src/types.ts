@@ -107,6 +107,7 @@ export type Database = {
           shot_type: string | null
           text: string
           visual_description: string | null
+          visual_moments: Json | null
         }
         Insert: {
           chosen_candidate_id?: string | null
@@ -124,6 +125,7 @@ export type Database = {
           shot_type?: string | null
           text: string
           visual_description?: string | null
+          visual_moments?: Json | null
         }
         Update: {
           chosen_candidate_id?: string | null
@@ -141,6 +143,7 @@ export type Database = {
           shot_type?: string | null
           text?: string
           visual_description?: string | null
+          visual_moments?: Json | null
         }
         Relationships: [
           {

@@ -8,6 +8,7 @@ import {
   isArchiveProvider,
   PipelineError,
   planMontage,
+  planSemanticMontage,
   type Rung,
   type ScoreContext,
   type SelectionBeat,
@@ -43,6 +44,11 @@ function beatNamesSubject(entities: db.BeatRow['entities']): boolean {
   return (e?.people?.length ?? 0) > 0 || (e?.places?.length ?? 0) > 0;
 }
 
+// Ordered visual-moment phrases for a beat (doc 23 §7b); [] for a single-image beat.
+function parseMoments(raw: db.BeatRow['visual_moments']): string[] {
+  return Array.isArray(raw) ? raw.filter((m): m is string => typeof m === 'string') : [];
+}
+
 // score stage (doc 09): embed each beat's visualDescription + every candidate thumb
 // (SigLIP 2), score, greedily select with τ thresholds, run the variety pass, persist
 // rank/score + chosen_candidate_id, and write selection.json (the tuning instrument).
@@ -56,8 +62,9 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'montage-1', // bump to re-run score when the selection logic changes (doc 23 §7)
+      logic: 'montage-2', // bump to re-run score when the selection logic changes (doc 23 §7)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
+      moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
       forcedTextcard: beats.map((b) => b.forced_textcard),
       namedSubject: beats.map((b) => beatNamesSubject(b.entities)), // cross-check (doc 23 §6)
@@ -85,6 +92,15 @@ export const scoreStage: Stage = {
     report(10, 'embedding beat descriptions');
     const descriptions = beats.map((b) => b.visual_description ?? b.text);
     const descRes = await embedText(descriptions, ctx.signal);
+
+    // Embed montage moment phrases (doc 23 §7b), deduped across beats, so each moment
+    // can be matched to its best clip.
+    const momentPhrases = [...new Set(beats.flatMap((b) => parseMoments(b.visual_moments)))];
+    const momentRes =
+      momentPhrases.length > 0
+        ? await embedText(momentPhrases, ctx.signal)
+        : { vectors: [] as number[][], dim: descRes.dim };
+    const momentEmbByPhrase = new Map(momentPhrases.map((p, i) => [p, momentRes.vectors[i] ?? []]));
 
     const uniquePaths = [
       ...new Set(candidatesByBeat.flat().flatMap((c) => (c.thumb_path ? [c.thumb_path] : []))),
@@ -228,9 +244,23 @@ export const scoreStage: Stage = {
         score: scoreById.get(c.id) ?? 0,
         thumbEmbedding: c.thumbEmbedding,
       }));
-      const segments = chosenId
-        ? planMontage(chosenId, montageCandidates, Number(beat.est_seconds ?? 0))
-        : null;
+      // Semantic montage first (each moment → its best clip); fall back to the diverse
+      // planner when analyze gave no moments or too few assign (doc 23 §7b).
+      const moments = parseMoments(beat.visual_moments);
+      const diverse = () =>
+        planMontage(chosenId ?? '', montageCandidates, Number(beat.est_seconds ?? 0));
+      let segments: ReturnType<typeof planMontage> = null;
+      if (chosenId) {
+        if (moments.length >= 2) {
+          const momentInputs = moments.map((p) => ({
+            embedding: momentEmbByPhrase.get(p) ?? [],
+            weight: p.split(/\s+/).filter(Boolean).length || 1,
+          }));
+          segments = planSemanticMontage(momentInputs, montageCandidates) ?? diverse();
+        } else {
+          segments = diverse();
+        }
+      }
       if (segments) montageCount += 1;
       await db.applyBeatSelection(beat.id, ranked, chosenId, segments);
       const top = ranked[0];

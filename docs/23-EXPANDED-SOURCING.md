@@ -175,10 +175,17 @@ bounded so each segment holds ≥ MONTAGE_MIN_SEG_SEC. Persisted to `beats.segme
 nullable); score writes it, fetch resolves + downloads the segment candidates and hands them to the
 render path, the storyboard shows a per-beat filmstrip + "montage · N" badge. Picking a specific clip
 (swap) clears the plan → that beat renders single. This is the *contained* path (montage from existing
-candidates, so it works on existing projects without re-analysis). **Remaining (23e-2b, semantic):**
-analyze emits the sentence's ordered *visual moments* and search/score fills a clip per moment
-(short → image, long → video) so segments map to sub-phrases (morning → subway → platform), not just
-diverse alternates; plus per-segment swap/re-search in the storyboard.
+candidates, so it works on existing projects without re-analysis).
+
+**Shipped (23e-2b, semantic):** segments now map to sentence sub-phrases. Analyze emits an ordered
+`visualMoments[]` per beat (prompt rule 10; empty for single-image beats; dropped when a beat is
+merged/split since that reshapes the sentence), persisted to `beats.visual_moments` (migration 0006).
+Score embeds the moment phrases and `planSemanticMontage` assigns each its best-matching,
+visually-distinct clip (weighted by phrase length) — falling back to the diverse `planMontage` when a
+beat has no moments or too few assign. New projects get sub-phrase-mapped montages (morning → subway →
+gate); existing projects keep the diverse montage until re-analyzed. **Remaining:** per-moment *search*
+(so a moment with no good clip in the pool gets its own provider query) and per-segment swap/re-search
+in the storyboard — refinements on top of the working chain.
 
 **Shipped (23e-1) — motion-aware best-window in-point.** The single-segment half, backward-compatible
 and calibration-free. The fetch stage samples per-frame motion (one fast downscaled `ffmpeg scdet`
