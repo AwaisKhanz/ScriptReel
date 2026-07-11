@@ -49,3 +49,37 @@ export function pickBestWindow(
   }
   return Math.min(Math.max(best.start, 0), maxStart);
 }
+
+// Split a beat's frame count across N montage segments by weight (doc 23 §7). Each
+// segment gets ≥ 1 frame and Σ === totalFrames exactly, so the concatenated sub-clips
+// fill the beat's narration span to the frame. Weights ≤ 0 fall back to equal share.
+// Requires totalFrames ≥ weights.length (the caller only montages beats long enough).
+export function splitSegmentFrames(totalFrames: number, weights: readonly number[]): number[] {
+  const n = weights.length;
+  if (n <= 1) return [Math.max(1, Math.round(totalFrames))];
+  const total = Math.max(n, Math.round(totalFrames));
+  const clean = weights.map((w) => (w > 0 ? w : 0));
+  const wsum = clean.reduce((a, b) => a + b, 0);
+  const frames = clean.map((w) =>
+    Math.max(1, Math.round((total * (wsum > 0 ? w : 1 / n)) / (wsum > 0 ? wsum : 1))),
+  );
+  // Reconcile rounding to hit `total` exactly, always keeping every segment ≥ 1.
+  let diff = total - frames.reduce((a, b) => a + b, 0);
+  while (diff !== 0) {
+    let idx = 0;
+    if (diff > 0) {
+      for (let i = 1; i < n; i += 1) if ((frames[i] ?? 0) > (frames[idx] ?? 0)) idx = i;
+      frames[idx] = (frames[idx] ?? 0) + 1;
+      diff -= 1;
+    } else {
+      idx = -1;
+      for (let i = 0; i < n; i += 1) {
+        if ((frames[i] ?? 0) > 1 && (idx < 0 || (frames[i] ?? 0) > (frames[idx] ?? 0))) idx = i;
+      }
+      if (idx < 0) break; // everything is at 1 — cannot shrink further
+      frames[idx] = (frames[idx] ?? 0) - 1;
+      diff += 1;
+    }
+  }
+  return frames;
+}

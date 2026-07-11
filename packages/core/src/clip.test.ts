@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type MotionSample, pickBestWindow } from './clip';
+import { type MotionSample, pickBestWindow, splitSegmentFrames } from './clip';
 
 // Build 1 sample/sec with the given per-second motion values.
 function samples(motions: number[]): MotionSample[] {
@@ -46,5 +46,43 @@ describe('pickBestWindow', () => {
     ];
     const start = pickBestWindow(m, 10, 3);
     expect(start).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('splitSegmentFrames', () => {
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+  it('splits equally and sums exactly', () => {
+    const f = splitSegmentFrames(240, [1, 1, 1]); // 8s @30 → 3 segments
+    expect(sum(f)).toBe(240);
+    expect(f).toEqual([80, 80, 80]);
+  });
+
+  it('respects weights and still sums exactly', () => {
+    const f = splitSegmentFrames(200, [1, 3]); // 1:3 → ~50 / ~150
+    expect(sum(f)).toBe(200);
+    expect(f[1]).toBeGreaterThan(f[0] ?? 0);
+  });
+
+  it('absorbs rounding remainder without dropping frames', () => {
+    const f = splitSegmentFrames(100, [1, 1, 1]); // 100/3 doesn't divide
+    expect(sum(f)).toBe(100);
+    expect(f.every((x) => x >= 1)).toBe(true);
+  });
+
+  it('every segment gets at least one frame', () => {
+    const f = splitSegmentFrames(4, [1, 1, 1, 1]);
+    expect(f).toEqual([1, 1, 1, 1]);
+    expect(sum(f)).toBe(4);
+  });
+
+  it('zero/negative weights fall back to equal share', () => {
+    const f = splitSegmentFrames(90, [0, 0, 0]);
+    expect(sum(f)).toBe(90);
+    expect(f).toEqual([30, 30, 30]);
+  });
+
+  it('single segment returns the whole span', () => {
+    expect(splitSegmentFrames(150, [1])).toEqual([150]);
   });
 });

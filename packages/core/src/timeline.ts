@@ -34,12 +34,21 @@ const StillMediaSchema = z.object({
 
 const MediaSchema = z.discriminatedUnion('kind', [VideoMediaSchema, StillMediaSchema]);
 
+// A montage sub-segment within a beat (doc 23 §7). The beat's audio is one utterance;
+// its visual can be a timed sequence of clips/stills. Σ segment durations === beat
+// durationSec. Absent ⇒ the beat is a single visual (`media`), unchanged from before.
+const TimelineSegmentSchema = z.object({
+  media: MediaSchema,
+  durationSec: z.number().positive(),
+});
+
 const TimelineBeatSchema = z.object({
   idx: z.number().int().nonnegative(),
   text: z.string(),
   startSec: z.number().nonnegative(),
   durationSec: z.number().positive(),
-  media: MediaSchema,
+  media: MediaSchema, // representative visual (segments[0].media when a montage)
+  segments: z.array(TimelineSegmentSchema).min(2).optional(),
 });
 
 export const TimelineSchema = z.object({
@@ -111,6 +120,20 @@ export function assertTimelineInvariants(timeline: Timeline): void {
     const frames = beat.durationSec / FRAME_SEC;
     if (Math.abs(frames - Math.round(frames)) > 1e-6) {
       fail(`beat ${i} durationSec is not frame-quantized`);
+    }
+    // montage (doc 23 §7): each segment frame-quantized, Σ === beat durationSec
+    if (beat.segments) {
+      let segSum = 0;
+      for (const [j, seg] of beat.segments.entries()) {
+        const sf = seg.durationSec / FRAME_SEC;
+        if (Math.abs(sf - Math.round(sf)) > 1e-6) {
+          fail(`beat ${i} segment ${j} durationSec is not frame-quantized`);
+        }
+        segSum += seg.durationSec;
+      }
+      if (Math.abs(segSum - beat.durationSec) > EPS) {
+        fail(`beat ${i} Σ segment durations (${segSum}) != beat durationSec (${beat.durationSec})`);
+      }
     }
     // invariant 1: contiguity
     if (i > 0) {
