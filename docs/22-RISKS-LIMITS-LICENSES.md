@@ -31,7 +31,7 @@ Consequences to accept: **~3 cold 3-minute videos per hour** on Pexels' free tie
 |---|---|---|---|
 | Pexels media | Pexels License | Attribution appreciated, not required; API terms require showing the photographer + a link where results are displayed, and caching rather than hammering | Candidate drawer chips; `credits.txt`; SearchCache |
 | Pixabay media | Content License | Show source when displaying results; **do not hotlink**; cache API responses 24 h; no redistribution of assets as-is | Drawer chips; assets downloaded to `cache/assets`; SearchCache |
-| Bundled music | CC0 (FreePD) | None. We credit anyway | `credits.txt`, `music_tracks.credit` |
+| Bundled music | CC BY 4.0 (Kevin MacLeod / incompetech.com) | Attribution required — surfaced automatically | `credits.txt`, `music_tracks.credit`, `assets/music/CREDITS.md` |
 | Kokoro-82M | Apache-2.0 | Notice retained | `THIRD_PARTY_NOTICES.md` |
 | SigLIP 2 | Apache-2.0 | Notice | same |
 | Whisper / MLX ports | MIT | Notice | same |

@@ -52,7 +52,7 @@ Presets are fully defined (fonts, colors, ASS params) in doc 17 §Subtitle prese
 | Control | Options | Default |
 |---|---|---|
 | Mood | None · Uplifting · Calm · Corporate · Emotional · Energetic · Tense · Auto (LLM picks from script emotion) | Auto |
-| Track | Auto-pick from bundled CC0 library by mood, or manual pick from library list, or **user upload** (mp3/wav ≤ 20 MB) | Auto |
+| Track | Auto-pick from the bundled CC BY 4.0 library (Kevin MacLeod) by mood, or manual pick from library list, or **user upload** (mp3/wav ≤ 20 MB) | Auto |
 | Music level | −24 to −10 dB relative to voice | −16 dB |
 | Ducking | Fixed sidechain (doc 13); on whenever music present | On |
 

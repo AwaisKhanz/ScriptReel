@@ -69,14 +69,14 @@ Wordmark: "ScriptReel" in Inter SemiBold with a 2px accent underline on "Reel" (
 
 ## Subtitle presets (canonical — doc 11 renders these, doc 16 previews them)
 
-ASS `PlayResX=1920, PlayResY=1080` always; libass scales to the render geometry. Colors are ASS `&HAABBGGRR` (AA=00 opaque). Fonts bundled in `assets/fonts/` and passed via `-vf subtitles=…:fontsdir=`.
+ASS `PlayRes` **matches the render aspect** (`16:9`→1920×1080, `9:16`→1080×1920, `1:1`→1080×1080) so libass scales uniformly and captions never distort or overflow — a fixed 1920×1080 `PlayRes` on a 1080×1920 frame was the portrait-overflow bug (fixed 2026-07-11). Font size, MarginV, and the per-line char cap are therefore per-aspect. Colors are ASS `&HAABBGGRR` (AA=00 opaque). Fonts bundled in `assets/fonts/` and passed via `-vf subtitles=…:fontsdir=`.
 
-| Preset | Font | Size (16:9 / 9:16 / 1:1) | Primary / Secondary | Outline · Shadow | Align · MarginV | Notes |
+| Preset | Font | Size (16:9 / 9:16 / 1:1) | Primary / Secondary | Outline · Shadow | Align · MarginV (16:9 / 9:16 / 1:1) | Max chars/line (16:9 / 9:16 / 1:1) |
 |---|---|---|---|---|---|---|
-| `clean` | Inter SemiBold | 54 / 62 / 58 | `&H00E8EBF0` / — | 2.5 `&HC0000000` · 0 | 2 (bottom-center) · 90 | Default 16:9. Max 2 lines, 42 chars |
-| `pop` | Inter ExtraBold | 76 / 92 / 84 | `&H00FF5C7C` (accent BGR) / `&H00FFFFFF` | 4 `&HFF0A0C10` · 2 | 5 (middle-center) · 0 | Word karaoke (`\k`), 1–3 words per event, `\fscx105\fscy105` on active |
-| `lowerthird` | Inter Medium | 46 / 54 / 50 | `&H00E8EBF0` / — | 0 · 0, `BorderStyle=3`, `BackColour=&HB30A0C10` | 1 (bottom-left) · 70, MarginL 96 | Boxed band, documentary interview feel |
-| `documentary` | Source Serif 4 SemiBold | 50 / 58 / 54 | `&H00F0EDE6` / — | 2 `&HD0000000` · 1 | 2 · 100 | Warm off-white, calmer pacing |
+| `clean` | Inter SemiBold | 54 / 50 / 50 | `&H00E8EBF0` / — | 2.5 `&HC0000000` · 0 | 2 (bottom-center) · 90 / 220 / 110 | 42 / 26 / 28 |
+| `pop` | Inter ExtraBold | 76 / 80 / 78 | `&H00FF5C7C` (accent BGR) / `&H00FFFFFF` | 4 `&HFF0A0C10` · 2 | 5 (middle-center) · 0 | Word karaoke (`\k`), 1–3 words/event, `\fscx105\fscy105` on active |
+| `lowerthird` | Inter Medium | 46 / 44 / 44 | `&H00E8EBF0` / — | 0 · 0, `BorderStyle=3`, `BackColour=&HB30A0C10` | 1 (bottom-left) · 70 / 180 / 90, MarginL 96 | 38 / 24 / 26 |
+| `documentary` | Source Serif 4 SemiBold | 50 / 46 / 48 | `&H00F0EDE6` / — | 2 `&HD0000000` · 1 | 2 · 100 / 230 / 120 | 46 / 28 / 30 |
 | `none` | — | — | — | — | — | Composer skips the subtitles filter entirely |
 
 Karaoke color logic (doc 11): libass sweeps `SecondaryColour → PrimaryColour`, so for `pop`, Primary is the accent (sung/active) and Secondary is white (upcoming). Verify visually at Phase 4, don't reason about it twice.

@@ -1,11 +1,15 @@
 import type { AlignedWord } from './align';
-import { fontForLanguage, PRESETS, type SubtitleAspect, type SubtitlePreset } from './presets';
+import {
+  fontForLanguage,
+  PLAY_RES,
+  PRESETS,
+  type SubtitleAspect,
+  type SubtitlePreset,
+} from './presets';
 
 // buildAss(words, preset, aspect, language) → ASS string (doc 11 §ASS generation).
 // Pure: the composer writes this to render.ass and burns it with libass.
 
-const PLAY_RES_X = 1920;
-const PLAY_RES_Y = 1080;
 const LEAD_IN = 0.08;
 const TAIL = 0.12;
 
@@ -58,15 +62,15 @@ function styleLine(preset: SubtitlePreset, aspect: SubtitleAspect, language: str
   const p = PRESETS[preset];
   const font = fontForLanguage(language, p.latinFont);
   const size = p.sizes[aspect];
-  return `Style: Default,${font},${size},${p.primary},${p.secondary},${p.outline},${p.back},${p.bold},0,0,0,100,100,${p.spacing},0,${p.borderStyle},${p.outlineWidth},${p.shadow},${p.alignment},${p.marginL},${p.marginR},${p.marginV},1`;
+  return `Style: Default,${font},${size},${p.primary},${p.secondary},${p.outline},${p.back},${p.bold},0,0,0,100,100,${p.spacing},0,${p.borderStyle},${p.outlineWidth},${p.shadow},${p.alignment},${p.marginL},${p.marginR},${p.marginV[aspect]},1`;
 }
 
 function header(preset: SubtitlePreset, aspect: SubtitleAspect, language: string): string {
   return [
     '[Script Info]',
     'ScriptType: v4.00+',
-    `PlayResX: ${PLAY_RES_X}`,
-    `PlayResY: ${PLAY_RES_Y}`,
+    `PlayResX: ${PLAY_RES[aspect].x}`,
+    `PlayResY: ${PLAY_RES[aspect].y}`,
     'WrapStyle: 2',
     'ScaledBorderAndShadow: yes',
     '',
@@ -83,11 +87,12 @@ function header(preset: SubtitlePreset, aspect: SubtitleAspect, language: string
 function captionEvents(
   words: readonly AlignedWord[],
   preset: SubtitlePreset,
+  aspect: SubtitleAspect,
   language: string,
 ): AssEvent[] {
   const cjk = isCjk(language);
   const sep = cjk ? '' : ' ';
-  const maxChars = Math.round(PRESETS[preset].maxCharsPerLine * (cjk ? 0.6 : 1));
+  const maxChars = Math.round(PRESETS[preset].maxChars[aspect] * (cjk ? 0.6 : 1));
   const events: AssEvent[] = [];
 
   for (const beatWords of groupByBeat(words)) {
@@ -166,6 +171,8 @@ export interface BuildAssInput {
 export function buildAss(input: BuildAssInput): string {
   const { words, preset, aspect, language } = input;
   const events =
-    preset === 'pop' ? karaokeEvents(words, language) : captionEvents(words, preset, language);
+    preset === 'pop'
+      ? karaokeEvents(words, language)
+      : captionEvents(words, preset, aspect, language);
   return `${header(preset, aspect, language)}\n${clampAndFormat(events).join('\n')}\n`;
 }

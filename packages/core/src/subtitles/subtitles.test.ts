@@ -72,4 +72,34 @@ describe('buildAss', () => {
     const ass = buildAss({ words, preset: 'clean', aspect: '16:9', language: 'hi' });
     expect(ass).toContain('Noto Sans Devanagari');
   });
+
+  it('9:16 uses a portrait play resolution + smaller font (fixes caption overflow)', () => {
+    const ass = buildAss({ words, preset: 'clean', aspect: '9:16', language: 'en-US' });
+    expect(ass).toContain('PlayResX: 1080');
+    expect(ass).toContain('PlayResY: 1920');
+    expect(ass).toContain('Style: Default,Inter,50'); // not the old 62
+  });
+
+  it('wraps caption lines tighter on portrait than landscape', () => {
+    const longBeat: AlignBeat[] = [
+      {
+        idx: 0,
+        text: 'the empty streets slowly fill with quiet morning commuters and soft light',
+        startSec: 0,
+        durationSec: 6,
+        language: 'en-US',
+      },
+    ];
+    const w = proportionalAlign(longBeat);
+    const lineLengths = (aspect: '16:9' | '9:16'): number[] =>
+      buildAss({ words: w, preset: 'clean', aspect, language: 'en-US' })
+        .split('\n')
+        .filter((l) => l.startsWith('Dialogue:'))
+        .flatMap((l) => l.slice(l.indexOf(',Default,') + ',Default,'.length).split('\\N'))
+        .map((s) => s.length);
+    const portrait = lineLengths('9:16');
+    const landscape = lineLengths('16:9');
+    expect(Math.max(...portrait)).toBeLessThanOrEqual(26); // maxChars['9:16'] for clean
+    expect(Math.max(...portrait)).toBeLessThan(Math.max(...landscape)); // portrait wraps shorter
+  });
 });
