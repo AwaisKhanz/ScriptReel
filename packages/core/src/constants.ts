@@ -134,3 +134,15 @@ export const IDENTITY_DINO_TAU = 0.55; // [CALIBRATE] doc 25 §6 (owned by Step 
 export const IDENTITY_MISMATCH_PENALTY = 0.15; // [CALIBRATE] doc 25 §6 (owned by Step 6) — score docked for a landmark/artwork identity mismatch (subtracted un-multiplied)
 export const IDENTITY_FACE_CATEGORIES: readonly string[] = ['person']; // [CALIBRATE] doc 25 §6 (owned by Step 6) — categories routed to InsightFace
 export const IDENTITY_DINO_CATEGORIES: readonly string[] = ['landmark', 'building', 'artwork']; // [CALIBRATE] doc 25 §6 (owned by Step 6) — categories routed to DINOv2
+
+// VLM checklist gate (doc 25 §5-D, cascade D). After OCR + identity, Qwen2.5-VL judges
+// each beat's SigLIP top-K on a strict-JSON checklist (subject present? shot framing?
+// era? contradicting text?): a missing subject or contradicting text VETOES; an era or
+// shot-framing miss PENALIZES. The VLM is skipped entirely for a beat with NO named
+// entity AND a strong SigLIP margin (a clear generic win needs no VLM call). All numbers
+// [CALIBRATE] doc 25 §5-D (owned by Step 7) — tune once the VLM runs on real footage.
+export const VLM_TOP_K = 3; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — candidates per beat sent to the VLM
+export const VLM_SKIP_MARGIN = 0.05; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — a no-entity beat with top1−top2 sim ≥ this skips the VLM
+export const VLM_ERA_PENALTY = 0.12; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — score docked when the era doesn't match (subtracted un-multiplied)
+export const VLM_SHOT_PENALTY = 0.06; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — score docked for poor shot framing (subtracted un-multiplied)
+export const VLM_MAX_PENALTY = 0.2; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — cap on the combined VLM penalty

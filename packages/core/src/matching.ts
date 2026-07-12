@@ -149,6 +149,11 @@ export interface SelectionCandidate {
   // a landmark/artwork that doesn't match the entity's reference image. Subtracted
   // un-multiplied — an intrinsic wrong-subject defect, not a diversity preference.
   identityPenalty?: number;
+  // VLM checklist penalty from the VLM gate (doc 25 §5-D, cascade D); an era or shot-
+  // framing miss Qwen2.5-VL flagged. Subtracted un-multiplied — an intrinsic fit defect,
+  // not a diversity preference (a no-subject / contradicting-text candidate is vetoed
+  // upstream, never penalized here).
+  vlmPenalty?: number;
 }
 
 export interface SelectionBeat {
@@ -219,6 +224,9 @@ function rankBeat(
     // Identity gate (doc 25 §6): an intrinsic wrong-subject defect (landmark/artwork
     // mismatch), likewise subtracted un-multiplied and independent of selection order.
     score -= c.identityPenalty ?? 0;
+    // VLM gate (doc 25 §5-D): an intrinsic fit defect (era / shot-framing miss), likewise
+    // subtracted un-multiplied and independent of selection order.
+    score -= c.vlmPenalty ?? 0;
     return { id: c.id, score };
   });
   scored.sort((a, b) => b.score - a.score);

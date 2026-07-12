@@ -188,6 +188,37 @@ export function dinoEmbed(paths: string[], signal?: AbortSignal): Promise<EmbedI
   return postSidecar('/dino/embed', { paths }, EmbedImageResponseSchema, signal, 90_000);
 }
 
+// VLM checklist gate (doc 25 §5-D, cascade D). Qwen2.5-VL judges each item's image
+// against the beat's description + era, returning four bools per readable image; images
+// it couldn't read / parse land in `failed`. The model is ~2.2 GB and loaded on demand,
+// so the timeout is a generous 5 min (weights load + inference). A missing model throws
+// E_VLM_UNAVAILABLE (or E_SIDECAR_DOWN / timeout) — the VLM pass catches that, skips the
+// whole gate, and leaves selection unchanged (invariant 7).
+const VlmChecklistSchema = z.object({
+  path: z.string(),
+  subjectPresent: z.boolean(),
+  shotTypeMatches: z.boolean(),
+  eraMatches: z.boolean(),
+  contradictingText: z.boolean(),
+});
+export type VlmChecklistItem = z.infer<typeof VlmChecklistSchema>;
+
+const VlmResponseSchema = z.object({
+  results: z.array(VlmChecklistSchema),
+  failed: z.array(z.string()),
+});
+export type VlmResponse = z.infer<typeof VlmResponseSchema>;
+
+export interface VlmItem {
+  path: string;
+  description: string;
+  era: string;
+}
+
+export function vlm(items: VlmItem[], signal?: AbortSignal): Promise<VlmResponse> {
+  return postSidecar('/vlm', { items }, VlmResponseSchema, signal, 300_000);
+}
+
 // OCR gate (doc 25 §5): Tesseract reads burned-in text/coverage for a beat's SigLIP
 // shortlist. Tesseract may be absent — this call throws E_OCR_UNAVAILABLE (or times
 // out / E_SIDECAR_DOWN) and the score stage catches it to skip the gate (invariant 7).

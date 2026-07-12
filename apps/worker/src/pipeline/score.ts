@@ -35,6 +35,7 @@ import { embedImage, embedText, ocr } from '../sidecar/client';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
 import { applyIdentityGate } from './identity';
 import { type LadderBeat, runLadder } from './ladder';
+import { applyVlmGate } from './vlm';
 
 const EMBED_IMAGE_BATCH = 64; // sidecar accepts ≤64 paths/call (doc 14)
 
@@ -93,7 +94,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'identity-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4/§5/§6)
+      logic: 'vlm-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4/§5/§6/§5-D)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
@@ -314,6 +315,30 @@ export const scoreStage: Stage = {
     const identityVetoed = identityResult.vetoed;
     const identitySkipped = identityResult.skipped;
 
+    // 2d) VLM checklist gate (doc 25 §5-D, cascade D). Run Qwen2.5-VL on each beat's top-3
+    // by sim and ask a strict four-bool checklist — subject present? shot framing? era?
+    // contradicting on-screen text? — vetoing no-subject / contradicting-text candidates
+    // and penalizing era / shot-framing misses, so the survivor is VLM-confirmed. Adaptive
+    // skip: a beat with NO named entity AND a strong SigLIP margin skips the VLM entirely.
+    //
+    // DEGRADE, NEVER DIE (invariant 7): the VLM model + mlx-vlm are optional and NOT
+    // installed by default. This is ONE batched /vlm call; if it throws (model absent,
+    // sidecar down, timeout) the gate skips entirely — no vetoes, no penalties, selection
+    // unchanged — and one warning is logged.
+    const vlmResult = await applyVlmGate({
+      selectionBeats,
+      beats,
+      thumbByCandidate,
+      cacheDir: paths.cacheDir,
+      log: ctx.log,
+      signal: ctx.signal,
+    });
+    selectionBeats = vlmResult.selectionBeats;
+    const vlmReasonById = vlmResult.reasons;
+    const vlmPenalized = vlmResult.penalized;
+    const vlmVetoed = vlmResult.vetoed;
+    const vlmSkipped = vlmResult.skipped;
+
     // 3) Greedy selection + global variety pass (doc 09 §3, §5).
     report(55, 'selecting best asset per beat');
     const firstPass = selectBeats(selectionBeats, scoreCtx);
@@ -454,12 +479,20 @@ export const scoreStage: Stage = {
         topScore: top ? Number(top.score.toFixed(4)) : null,
         candidateCount: ranked.length,
         scores: ranked.slice(0, 8).map((r) => {
-          const base: { id: string; score: number; rank: number; ocr?: string; identity?: string } =
-            { id: r.id, score: Number(r.score.toFixed(4)), rank: r.rank };
+          const base: {
+            id: string;
+            score: number;
+            rank: number;
+            ocr?: string;
+            identity?: string;
+            vlm?: string;
+          } = { id: r.id, score: Number(r.score.toFixed(4)), rank: r.rank };
           const ocrReason = ocrReasonById.get(r.id); // OCR watermark/coverage note (doc 25 §5)
           if (ocrReason) base.ocr = ocrReason;
           const identityReason = identityReasonById.get(r.id); // identity veto/penalty note (doc 25 §6)
           if (identityReason) base.identity = identityReason;
+          const vlmReason = vlmReasonById.get(r.id); // VLM checklist veto/penalty note (doc 25 §5-D)
+          if (vlmReason) base.vlm = vlmReason;
           return base;
         }),
       });
@@ -535,6 +568,9 @@ export const scoreStage: Stage = {
         identityPenalized, // candidates docked for a landmark/artwork reference mismatch (doc 25 §6)
         identityVetoed, // candidates dropped as a lookalike person (doc 25 §6)
         identitySkipped, // true ⇒ identity models unavailable, gate skipped (degrade path)
+        vlmPenalized, // candidates docked for a VLM era / shot-framing miss (doc 25 §5-D)
+        vlmVetoed, // candidates dropped for no subject / contradicting text (doc 25 §5-D)
+        vlmSkipped, // true ⇒ VLM model unavailable, gate skipped (degrade path)
         dim: descRes.dim,
       },
     };

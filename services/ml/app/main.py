@@ -18,7 +18,7 @@ from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from app import align, dino, embed, face, models, ocr, textcard, tts  # noqa: E402
+from app import align, dino, embed, face, models, ocr, textcard, tts, vlm  # noqa: E402
 
 app = FastAPI(title="ScriptReel ML Sidecar", version="0.1.0")
 
@@ -55,6 +55,11 @@ async def _face_error_handler(_request: Request, exc: face.FaceError) -> JSONRes
 
 @app.exception_handler(dino.DinoError)
 async def _dino_error_handler(_request: Request, exc: dino.DinoError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
+
+
+@app.exception_handler(vlm.VlmError)
+async def _vlm_error_handler(_request: Request, exc: vlm.VlmError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
 
 
@@ -101,6 +106,7 @@ def health() -> HealthResponse:
             "ocr": "ready" if ocr.available() else "cold",
             "insightface": "ready" if face.available() else "cold",
             "dinov2": "ready" if dino.available() else "cold",
+            "vlm": "ready" if vlm.available() else "cold",
         },
         versions={"python": platform.python_version(), "hf_home": os.environ.get("HF_HOME", "")},
     )
@@ -241,3 +247,36 @@ async def face_embed_endpoint(req: FaceEmbedRequest) -> EmbedVectorsResponse:
 async def dino_embed_endpoint(req: DinoEmbedRequest) -> EmbedVectorsResponse:
     vectors, dim, failed = await dino.embed_images(req.paths)
     return EmbedVectorsResponse(vectors=vectors, dim=dim, failed=failed)
+
+
+# VLM checklist cascade (doc 25 §5-D). Qwen2.5-VL judges each item's image against the
+# beat's description + era, returning four bools per readable image; unreadable / unparsed
+# images land in `failed`. A missing model raises E_VLM (500) → the worker skips the whole
+# VLM pass and selection is unchanged (invariant 7).
+class VlmItem(BaseModel):
+    path: str
+    description: str
+    era: str
+
+
+class VlmRequest(BaseModel):
+    items: list[VlmItem]
+
+
+class VlmResultItem(BaseModel):
+    path: str
+    subjectPresent: bool
+    shotTypeMatches: bool
+    eraMatches: bool
+    contradictingText: bool
+
+
+class VlmResponse(BaseModel):
+    results: list[VlmResultItem]
+    failed: list[str]
+
+
+@app.post("/vlm", response_model=VlmResponse)
+async def vlm_endpoint(req: VlmRequest) -> VlmResponse:
+    results, failed = await vlm.run_vlm([item.model_dump() for item in req.items])
+    return VlmResponse(results=[VlmResultItem(**r) for r in results], failed=failed)

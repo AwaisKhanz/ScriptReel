@@ -26,4 +26,5 @@ export * from './subtitles/align';
 export * from './subtitles/buildAss';
 export * from './subtitles/presets';
 export * from './timeline';
+export * from './vlm-gate';
 export * from './voices';
