@@ -15,12 +15,41 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 _log = logging.getLogger("scriptreel.ocr")
 
 _OCR_MIN_CONF = 45  # mirrors OCR_MIN_CONF (packages/core/src/constants.ts, doc 25 §5)
 _OCR_MAX_SIDE = 2048  # cap huge playground uploads before tesseract (pipeline thumbs are ~384)
 _available: bool | None = None  # one-time availability probe cache
+_errors_patched = False
+
+
+def _unmask_tesseract_errors() -> None:
+    """pytesseract's ``get_errors`` strict-decodes tesseract's stderr as UTF-8 and CRASHES
+    with a ``UnicodeDecodeError`` when it isn't valid UTF-8 — masking the REAL tesseract
+    failure behind a confusing decode error. Patch it once to replace-decode, so the actual
+    error surfaces in the logs instead of a masking crash. Best-effort + idempotent."""
+    global _errors_patched
+    if _errors_patched:
+        return
+    _errors_patched = True
+    try:
+        import pytesseract.pytesseract as pt
+
+        original = pt.get_errors
+
+        def safe_get_errors(error_string: object) -> list[str]:
+            try:
+                return original(error_string)
+            except Exception:  # noqa: BLE001 — a bad decode must never hide the real error
+                if isinstance(error_string, (bytes, bytearray)):
+                    return bytes(error_string).decode("utf-8", "replace").splitlines()
+                return [str(error_string)]
+
+        pt.get_errors = safe_get_errors
+    except Exception:  # noqa: BLE001 — patching is best-effort
+        pass
 
 
 class OcrError(Exception):
@@ -59,17 +88,29 @@ def _run_ocr_sync(paths: list[str]) -> tuple[list[dict], list[str]]:
     from PIL import Image
     from pytesseract import Output
 
+    from app.models import resize_to_max_side
+
+    _unmask_tesseract_errors()
     results: list[dict] = []
     failed: list[str] = []
     for path in paths:
-        # Wrap the WHOLE per-image body: an unreadable image OR a tesseract failure (the
-        # subprocess can fail to spawn under memory pressure in a long-running, model-loaded
-        # sidecar) drops just this image to `failed` — never an unhandled 500 for the batch.
+        # Hand tesseract a FILE PATH, not a PIL image: given a PIL image pytesseract re-encodes
+        # it to its own temp PNG (an extra failure surface — the likely source of the masked
+        # decode errors). Only oversized uploads are rewritten, to a temp JPEG we control;
+        # normal images (incl. pipeline thumbnails) go straight through by path. Any failure
+        # drops just this image to `failed` — never an unhandled 500 for the batch.
+        tmp_path: str | None = None
         try:
-            from app.models import resize_to_max_side
-
-            img = resize_to_max_side(Image.open(path).convert("RGB"), _OCR_MAX_SIDE)
-            data = pytesseract.image_to_data(img, output_type=Output.DICT)
+            with Image.open(path) as raw:
+                width, height = raw.size
+                if max(width, height) > _OCR_MAX_SIDE:
+                    small = resize_to_max_side(raw.convert("RGB"), _OCR_MAX_SIDE)
+                    tmp_path = f"{path}.ocr.jpg"
+                    small.save(tmp_path, "JPEG", quality=92)
+                    ocr_path, ocr_w, ocr_h = tmp_path, small.width, small.height
+                else:
+                    ocr_path, ocr_w, ocr_h = path, width, height
+            data = pytesseract.image_to_data(ocr_path, output_type=Output.DICT)
             words: list[str] = []
             boxes: list[tuple[int, int]] = []
             for i in range(len(data["text"])):
@@ -86,13 +127,19 @@ def _run_ocr_sync(paths: list[str]) -> tuple[list[dict], list[str]]:
                 {
                     "path": path,
                     "text": " ".join(words),
-                    "coverage": _coverage(boxes, img.width, img.height),
+                    "coverage": _coverage(boxes, ocr_w, ocr_h),
                     "wordCount": len(words),
                 }
             )
         except Exception:  # noqa: BLE001 — never let one image sink the whole /ocr call
             _log.warning("OCR failed for %s", path, exc_info=True)
             failed.append(path)
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
     return results, failed
 
 
