@@ -19,6 +19,7 @@ import logging
 _log = logging.getLogger("scriptreel.ocr")
 
 _OCR_MIN_CONF = 45  # mirrors OCR_MIN_CONF (packages/core/src/constants.ts, doc 25 §5)
+_OCR_MAX_SIDE = 2048  # cap huge playground uploads before tesseract (pipeline thumbs are ~384)
 _available: bool | None = None  # one-time availability probe cache
 
 
@@ -65,7 +66,9 @@ def _run_ocr_sync(paths: list[str]) -> tuple[list[dict], list[str]]:
         # subprocess can fail to spawn under memory pressure in a long-running, model-loaded
         # sidecar) drops just this image to `failed` — never an unhandled 500 for the batch.
         try:
-            img = Image.open(path).convert("RGB")
+            from app.models import resize_to_max_side
+
+            img = resize_to_max_side(Image.open(path).convert("RGB"), _OCR_MAX_SIDE)
             data = pytesseract.image_to_data(img, output_type=Output.DICT)
             words: list[str] = []
             boxes: list[tuple[int, int]] = []

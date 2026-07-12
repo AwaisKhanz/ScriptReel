@@ -35,6 +35,9 @@ _log = logging.getLogger("scriptreel.vlm")
 
 MODEL_ID = os.environ.get("QWEN_VL_MODEL", "mlx-community/Qwen2.5-VL-3B-Instruct-4bit")
 _MAX_TOKENS = 128  # a yes/no checklist needs very few tokens; cap so a runaway can't stall
+_MAX_SIDE = 1024  # cap resolution before generate: Qwen2.5-VL runs at native res, so a full-
+#                   size image (e.g. a screenshot) explodes the vision tensor to multiple GB
+#                   and trips a Metal OOM. Pipeline thumbnails (~384 px) pass through untouched.
 
 _model: object | None = None
 _processor: object | None = None
@@ -192,6 +195,9 @@ def _run_vlm_sync(items: list[dict]) -> tuple[list[dict], list[str]]:
     but a failure to LOAD propagates (the worker catches it and skips the gate)."""
     from mlx_vlm import generate
     from mlx_vlm.prompt_utils import apply_chat_template
+    from PIL import Image
+
+    from app.models import resize_to_max_side
 
     results: list[dict] = []
     failed: list[str] = []
@@ -201,13 +207,30 @@ def _run_vlm_sync(items: list[dict]) -> tuple[list[dict], list[str]]:
         assert _model is not None and _processor is not None and _config is not None
         for item in items:
             path = str(item.get("path", ""))
+            tmp_path: str | None = None
             try:
+                # Downscale big images before generate (see _MAX_SIDE). A resized copy goes to
+                # a temp file so we hand generate a path; small images use the original file.
+                with Image.open(path) as raw:
+                    rgb = raw.convert("RGB")
+                capped = resize_to_max_side(rgb, _MAX_SIDE)
+                gen_path = path
+                if capped is not rgb:
+                    tmp_path = f"{path}.vlm{_MAX_SIDE}.jpg"
+                    capped.save(tmp_path, "JPEG", quality=90)
+                    gen_path = tmp_path
+
                 question = _checklist_prompt(
                     str(item.get("description", "")), str(item.get("era", "timeless"))
                 )
                 prompt = apply_chat_template(_processor, _config, question, num_images=1)
                 out = generate(
-                    _model, _processor, prompt, image=path, max_tokens=_MAX_TOKENS, verbose=False
+                    _model,
+                    _processor,
+                    prompt,
+                    image=gen_path,
+                    max_tokens=_MAX_TOKENS,
+                    verbose=False,
                 )
                 # mlx-vlm 0.1.x returns (text, metadata); older/newer returns bare text.
                 text = out[0] if isinstance(out, tuple) else out
@@ -218,7 +241,7 @@ def _run_vlm_sync(items: list[dict]) -> tuple[list[dict], list[str]]:
                     continue
                 results.append(
                     {
-                        "path": path,
+                        "path": path,  # always the ORIGINAL path the worker sent, never the temp
                         "subjectPresent": parsed["subject_present"],
                         "shotTypeMatches": parsed["shot_type_matches"],
                         "eraMatches": parsed["era_matches"],
@@ -230,6 +253,12 @@ def _run_vlm_sync(items: list[dict]) -> tuple[list[dict], list[str]]:
                 # gate silently no-ops, so it must be diagnosable in the sidecar logs.
                 _log.warning("VLM checklist failed for %s", path, exc_info=True)
                 failed.append(path)
+            finally:
+                if tmp_path is not None:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
     finally:
         _evict()  # always free the ~2.2 GB, even if load / a later item threw
     return results, failed

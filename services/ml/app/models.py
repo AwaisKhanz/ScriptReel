@@ -8,6 +8,24 @@ behind the worker-side TtsEngine / Embedder / Aligner interfaces (doc 03, doc 14
 from __future__ import annotations
 
 import importlib.util
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PIL.Image import Image as PilImage
+
+
+def resize_to_max_side(image: PilImage, max_side: int) -> PilImage:
+    """Downscale a PIL image so its longer side is <= max_side (no-op, same object, when it
+    already fits). Large diagnostic-playground uploads otherwise explode Qwen2.5-VL's native
+    resolution into a multi-GB vision tensor (Metal OOM) and stress tesseract; the pipeline's
+    <=384 px thumbnails are untouched. Returns the input unchanged when it's small enough so
+    callers can tell whether a resize happened (identity check)."""
+    width, height = image.size
+    longest = max(width, height)
+    if longest <= max_side:
+        return image
+    scale = max_side / longest
+    return image.resize((max(1, round(width * scale)), max(1, round(height * scale))))
 
 
 def device() -> str:
