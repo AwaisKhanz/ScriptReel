@@ -94,6 +94,58 @@ export const PROVIDER_PROBE: Record<ProviderId, ProbeSpec> = {
     resetKind: null,
     window: null,
   },
+  // Keyless archive (doc 25 §2): no per-key limit; a cheap observations call confirms
+  // reachability. Not shown in the key manager (no credential fields).
+  inaturalist: {
+    url: 'https://api.inaturalist.org/v1/observations?q=nature&photos=true&per_page=1',
+    method: 'GET',
+    limitSource: 'none',
+    resetKind: null,
+    window: null,
+  },
+  // Keyless archive (doc 25 §2): no per-key limit; a cheap catalog call confirms
+  // reachability. Not shown in the key manager (no credential fields).
+  usgs: {
+    url: 'https://www.sciencebase.gov/catalog/items?q=nature&format=json&max=1',
+    method: 'GET',
+    limitSource: 'none',
+    resetKind: null,
+    window: null,
+  },
+  // Keyless archive (doc 25 §2): no per-key limit; a cheap photos call confirms
+  // reachability. Not shown in the key manager (no credential fields).
+  'library-of-congress': {
+    url: 'https://www.loc.gov/photos/?q=nature&fo=json&c=1',
+    method: 'GET',
+    limitSource: 'none',
+    resetKind: null,
+    window: null,
+  },
+  // Keyed archive (doc 25 §2): a cheap search call validates the api_key; reads
+  // x-ratelimit-* if present, same shape as the stock providers.
+  flickr: {
+    url: 'https://www.flickr.com/services/rest/?method=flickr.photos.search&text=nature&per_page=1&format=json&nojsoncallback=1',
+    method: 'GET',
+    limitSource: 'xratelimit-headers',
+    resetKind: 'epoch',
+    window: 'hour',
+  },
+  // Keyed archive (doc 25 §2): a cheap search call validates the wskey.
+  europeana: {
+    url: 'https://api.europeana.eu/record/v2/search.json?query=nature&rows=1',
+    method: 'GET',
+    limitSource: 'xratelimit-headers',
+    resetKind: 'epoch',
+    window: 'hour',
+  },
+  // Keyed archive (doc 25 §2): a cheap search call validates the api.data.gov api_key.
+  smithsonian: {
+    url: 'https://api.si.edu/openaccess/api/v1.0/search?q=nature&rows=1',
+    method: 'GET',
+    limitSource: 'xratelimit-headers',
+    resetKind: 'epoch',
+    window: 'hour',
+  },
 };
 
 function toInt(raw: string | null): number | null {

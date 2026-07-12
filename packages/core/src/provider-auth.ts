@@ -46,6 +46,42 @@ export const PROVIDER_CREDENTIALS: Record<ProviderId, CredentialField[]> = {
   // Keyless: the Internet Archive advancedsearch/metadata APIs take no key (doc 25 §2).
   // Empty ⇒ never shown in the key manager, never addable.
   'internet-archive': [],
+  // Keyless: the iNaturalist observations API takes no key (doc 25 §2). Empty ⇒ never
+  // shown in the key manager, never addable.
+  inaturalist: [],
+  // Keyless: the USGS ScienceBase catalog takes no key (doc 25 §2). Empty ⇒ never shown
+  // in the key manager, never addable.
+  usgs: [],
+  // Keyless: the Library of Congress JSON API takes no key (doc 25 §2). Empty ⇒ never
+  // shown in the key manager, never addable.
+  'library-of-congress': [],
+  // Keyed: Flickr photo search takes a query api_key (doc 25 §2).
+  flickr: [
+    {
+      name: 'apiKey',
+      label: 'API key',
+      secret: true,
+      hint: 'Free instant key at flickr.com/services/apps/create/apply — paste the Key (no secret needed for search).',
+    },
+  ],
+  // Keyed: Europeana search takes a query wskey (doc 25 §2).
+  europeana: [
+    {
+      name: 'apiKey',
+      label: 'API key',
+      secret: true,
+      hint: 'Free key (wskey) from pro.europeana.eu/pages/get-api-keys — emailed.',
+    },
+  ],
+  // Keyed: Smithsonian Open Access takes an api.data.gov api_key (doc 25 §2).
+  smithsonian: [
+    {
+      name: 'apiKey',
+      label: 'API key',
+      secret: true,
+      hint: 'Free instant api.data.gov key (api.data.gov/signup) — one key covers Smithsonian Open Access.',
+    },
+  ],
 };
 
 // Providers that accept pooled credentials (i.e. declare ≥1 field) — the single source

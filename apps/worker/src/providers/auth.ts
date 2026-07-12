@@ -38,6 +38,21 @@ export async function resolveAuth(
       const token = await oauthToken(provider, creds.clientId, creds.clientSecret);
       return { kind: 'header', name: 'Authorization', value: `Bearer ${token}` };
     }
+    case 'flickr':
+      // Flickr photos.search takes the key as an `api_key` query param (doc 25 §2).
+      return creds.apiKey
+        ? { kind: 'query', name: 'api_key', value: creds.apiKey }
+        : { kind: 'none' };
+    case 'europeana':
+      // Europeana search takes the key as a `wskey` query param (doc 25 §2).
+      return creds.apiKey
+        ? { kind: 'query', name: 'wskey', value: creds.apiKey }
+        : { kind: 'none' };
+    case 'smithsonian':
+      // Smithsonian Open Access takes the api.data.gov key as an `api_key` query param.
+      return creds.apiKey
+        ? { kind: 'query', name: 'api_key', value: creds.apiKey }
+        : { kind: 'none' };
     default:
       return { kind: 'none' };
   }

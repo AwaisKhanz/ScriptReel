@@ -7,7 +7,11 @@ import {
 } from '@scriptreel/core';
 import type { Logger } from 'pino';
 import { resolveAuth } from './auth';
+import { EuropeanaProvider } from './europeana';
+import { FlickrProvider } from './flickr';
+import { INaturalistProvider } from './inaturalist';
 import { InternetArchiveProvider } from './internet-archive';
+import { LibraryOfCongressProvider } from './library-of-congress';
 import { MetProvider } from './met';
 import { NasaProvider } from './nasa';
 import { OpenverseProvider } from './openverse';
@@ -15,6 +19,8 @@ import { PexelsProvider } from './pexels';
 import { PixabayProvider } from './pixabay';
 import type { QuotaGuard } from './quota-guard';
 import { readSearchCache, writeSearchCache } from './search-cache';
+import { SmithsonianProvider } from './smithsonian';
+import { UsgsProvider } from './usgs';
 import { WikidataCommonsProvider } from './wikidata-commons';
 import { WikimediaProvider } from './wikimedia';
 
@@ -42,6 +48,12 @@ export class SearchClient {
       'wikidata-commons': new WikidataCommonsProvider(),
       met: new MetProvider(),
       'internet-archive': new InternetArchiveProvider(),
+      inaturalist: new INaturalistProvider(),
+      usgs: new UsgsProvider(),
+      'library-of-congress': new LibraryOfCongressProvider(),
+      flickr: new FlickrProvider(),
+      europeana: new EuropeanaProvider(),
+      smithsonian: new SmithsonianProvider(),
     };
   }
 
@@ -82,7 +94,13 @@ export class SearchClient {
           err.code === 'E_QUOTA_WIKIMEDIA' ||
           err.code === 'E_QUOTA_WIKIDATA' ||
           err.code === 'E_QUOTA_MET' ||
-          err.code === 'E_QUOTA_INTERNET_ARCHIVE')
+          err.code === 'E_QUOTA_INTERNET_ARCHIVE' ||
+          err.code === 'E_QUOTA_INATURALIST' ||
+          err.code === 'E_QUOTA_USGS' ||
+          err.code === 'E_QUOTA_LIBRARY_OF_CONGRESS' ||
+          err.code === 'E_QUOTA_FLICKR' ||
+          err.code === 'E_QUOTA_EUROPEANA' ||
+          err.code === 'E_QUOTA_SMITHSONIAN')
       ) {
         this.log.warn({ providerId, code: err.code }, 'quota exhausted — skipping request');
         return { candidates: [], cacheHit: false };

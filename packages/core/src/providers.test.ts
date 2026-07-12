@@ -131,6 +131,22 @@ describe('planTier1Requests', () => {
     );
   });
 
+  it('routes the doc-25 group-B image archives by domain (doc 25)', () => {
+    expect(planTier1Requests(['x'], 'mixed', 'nature').map((r) => r.provider)).toContain(
+      'inaturalist',
+    );
+    expect(planTier1Requests(['x'], 'mixed', 'science').map((r) => r.provider)).toContain('usgs');
+    const history = planTier1Requests(['x'], 'mixed', 'history').map((r) => r.provider);
+    expect(history).toContain('library-of-congress');
+    expect(history).toContain('europeana');
+    expect(history).toContain('smithsonian');
+    expect(planTier1Requests(['x'], 'mixed', 'people').map((r) => r.provider)).toContain('flickr');
+    // Negative: europeana covers only history/art, never urban.
+    expect(planTier1Requests(['x'], 'mixed', 'urban').map((r) => r.provider)).not.toContain(
+      'europeana',
+    );
+  });
+
   it('falls back to literal[0] when literal[1] is missing, and drops empty queries', () => {
     expect(planTier1Requests(['only'], 'videos')).toEqual([
       { provider: 'pexels', kind: 'video', query: 'only' },
@@ -192,13 +208,19 @@ describe('quota windows', () => {
     const pixabay = QUOTA_BUDGETS.find((b) => b.key === 'pixabay:minute');
     expect(pixabay?.budget).toBe(PIXABAY_MINUTE_BUDGET);
     expect(QUOTA_BUDGETS.map((b) => b.key).sort()).toEqual([
+      'europeana:hour',
+      'flickr:hour',
+      'inaturalist:hour',
       'internet-archive:hour',
+      'library-of-congress:hour',
       'met:hour',
       'nasa:hour',
       'openverse:day',
       'pexels:hour',
       'pexels:month',
       'pixabay:minute',
+      'smithsonian:hour',
+      'usgs:hour',
       'wikidata-commons:hour',
       'wikimedia:hour',
     ]);

@@ -1,12 +1,18 @@
 import type { EntityCategory, ShotWant } from './analysis';
 import {
+  EUROPEANA_HOUR_BUDGET,
+  FLICKR_HOUR_BUDGET,
+  INATURALIST_HOUR_BUDGET,
   INTERNET_ARCHIVE_HOUR_BUDGET,
+  LIBRARY_OF_CONGRESS_HOUR_BUDGET,
   MET_HOUR_BUDGET,
   NASA_HOUR_BUDGET,
   OPENVERSE_DAY_BUDGET,
   PEXELS_HOUR_BUDGET,
   PEXELS_MONTH_BUDGET,
   PIXABAY_MINUTE_BUDGET,
+  SMITHSONIAN_HOUR_BUDGET,
+  USGS_HOUR_BUDGET,
   WIKIDATA_HOUR_BUDGET,
   WIKIMEDIA_HOUR_BUDGET,
 } from './constants';
@@ -27,7 +33,13 @@ export type ProviderId =
   | 'wikimedia'
   | 'wikidata-commons'
   | 'met'
-  | 'internet-archive';
+  | 'internet-archive'
+  | 'inaturalist'
+  | 'usgs'
+  | 'library-of-congress'
+  | 'flickr'
+  | 'europeana'
+  | 'smithsonian';
 export type MediaKind = 'video' | 'image';
 export type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -223,6 +235,12 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'wikidata-commons:hour', unit: 'hour', budget: WIKIDATA_HOUR_BUDGET },
   { key: 'met:hour', unit: 'hour', budget: MET_HOUR_BUDGET },
   { key: 'internet-archive:hour', unit: 'hour', budget: INTERNET_ARCHIVE_HOUR_BUDGET },
+  { key: 'inaturalist:hour', unit: 'hour', budget: INATURALIST_HOUR_BUDGET },
+  { key: 'usgs:hour', unit: 'hour', budget: USGS_HOUR_BUDGET },
+  { key: 'library-of-congress:hour', unit: 'hour', budget: LIBRARY_OF_CONGRESS_HOUR_BUDGET },
+  { key: 'flickr:hour', unit: 'hour', budget: FLICKR_HOUR_BUDGET },
+  { key: 'europeana:hour', unit: 'hour', budget: EUROPEANA_HOUR_BUDGET },
+  { key: 'smithsonian:hour', unit: 'hour', budget: SMITHSONIAN_HOUR_BUDGET },
 ];
 
 // Per-KEY budget windows a provider must satisfy to serve one request (doc 23). With
@@ -243,6 +261,14 @@ export const PROVIDER_WINDOWS: Record<ProviderId, readonly QuotaBudget[]> = {
   'internet-archive': [
     { key: 'internet-archive:hour', unit: 'hour', budget: INTERNET_ARCHIVE_HOUR_BUDGET },
   ],
+  inaturalist: [{ key: 'inaturalist:hour', unit: 'hour', budget: INATURALIST_HOUR_BUDGET }],
+  usgs: [{ key: 'usgs:hour', unit: 'hour', budget: USGS_HOUR_BUDGET }],
+  'library-of-congress': [
+    { key: 'library-of-congress:hour', unit: 'hour', budget: LIBRARY_OF_CONGRESS_HOUR_BUDGET },
+  ],
+  flickr: [{ key: 'flickr:hour', unit: 'hour', budget: FLICKR_HOUR_BUDGET }],
+  europeana: [{ key: 'europeana:hour', unit: 'hour', budget: EUROPEANA_HOUR_BUDGET }],
+  smithsonian: [{ key: 'smithsonian:hour', unit: 'hour', budget: SMITHSONIAN_HOUR_BUDGET }],
 };
 
 // provider_usage key for one key's window, e.g. "pexels:hour#<keyId>" (doc 23).
@@ -259,6 +285,12 @@ export const PROVIDER_QUOTA_CODE = {
   'wikidata-commons': 'E_QUOTA_WIKIDATA',
   met: 'E_QUOTA_MET',
   'internet-archive': 'E_QUOTA_INTERNET_ARCHIVE',
+  inaturalist: 'E_QUOTA_INATURALIST',
+  usgs: 'E_QUOTA_USGS',
+  'library-of-congress': 'E_QUOTA_LIBRARY_OF_CONGRESS',
+  flickr: 'E_QUOTA_FLICKR',
+  europeana: 'E_QUOTA_EUROPEANA',
+  smithsonian: 'E_QUOTA_SMITHSONIAN',
 } as const;
 
 // Copyright-free archive/aggregator sources (doc 23). Curated stock (Pexels/Pixabay)
@@ -272,6 +304,12 @@ const ARCHIVE_PROVIDER_SET: ReadonlySet<string> = new Set([
   'wikidata-commons',
   'met',
   'internet-archive',
+  'inaturalist',
+  'usgs',
+  'library-of-congress',
+  'flickr',
+  'europeana',
+  'smithsonian',
 ]);
 export function isArchiveProvider(provider: string): boolean {
   return ARCHIVE_PROVIDER_SET.has(provider);
@@ -300,6 +338,22 @@ export const ARCHIVE_PROVIDERS: {
   // Internet Archive (doc 25 §2): keyless PD/CC archival VIDEO footage — the first video
   // archive. Routed to the domains where historical/archival motion is the real subject.
   { id: 'internet-archive', kind: 'video', domains: ['history', 'science', 'people', 'art'] },
+  // iNaturalist (doc 25 §2): keyless CC0/CC-BY nature observation photos — species,
+  // habitats, wildlife.
+  { id: 'inaturalist', kind: 'image', domains: ['nature'] },
+  // USGS ScienceBase (doc 25 §2): keyless public-domain federal science imagery — geology,
+  // hydrology, terrain.
+  { id: 'usgs', kind: 'image', domains: ['science', 'nature'] },
+  // Library of Congress (doc 25 §2): keyless "no known restrictions" historical photos,
+  // portraits, cityscapes, and prints.
+  { id: 'library-of-congress', kind: 'image', domains: ['history', 'people', 'urban', 'art'] },
+  // Flickr (doc 25 §2): keyed CC0/CC-BY/PD community photography — people, streets, nature.
+  { id: 'flickr', kind: 'image', domains: ['people', 'urban', 'nature'] },
+  // Europeana (doc 25 §2): keyed open cultural-heritage images — European history and art.
+  { id: 'europeana', kind: 'image', domains: ['history', 'art'] },
+  // Smithsonian Open Access (doc 25 §2): keyed CC0 museum collections spanning history,
+  // art, science, and natural history.
+  { id: 'smithsonian', kind: 'image', domains: ['history', 'art', 'science', 'nature'] },
 ];
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock
