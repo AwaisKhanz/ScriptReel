@@ -76,6 +76,15 @@ export const PROVIDER_PROBE: Record<ProviderId, ProbeSpec> = {
     resetKind: null,
     window: null,
   },
+  // Keyless archive (doc 25 §2): no per-key limit; a cheap search call confirms
+  // reachability. Not shown in the key manager (no credential fields).
+  met: {
+    url: 'https://collectionapi.metmuseum.org/public/collection/v1/search?q=art&hasImages=true',
+    method: 'GET',
+    limitSource: 'none',
+    resetKind: null,
+    window: null,
+  },
 };
 
 function toInt(raw: string | null): number | null {

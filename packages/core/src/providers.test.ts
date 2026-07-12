@@ -111,6 +111,11 @@ describe('planTier1Requests', () => {
     );
   });
 
+  it('routes art/history to the Met archive, but not unrelated domains (doc 25)', () => {
+    expect(planTier1Requests(['x'], 'mixed', 'art').map((r) => r.provider)).toContain('met');
+    expect(planTier1Requests(['x'], 'mixed', 'urban').map((r) => r.provider)).not.toContain('met');
+  });
+
   it('falls back to literal[0] when literal[1] is missing, and drops empty queries', () => {
     expect(planTier1Requests(['only'], 'videos')).toEqual([
       { provider: 'pexels', kind: 'video', query: 'only' },
@@ -172,6 +177,7 @@ describe('quota windows', () => {
     const pixabay = QUOTA_BUDGETS.find((b) => b.key === 'pixabay:minute');
     expect(pixabay?.budget).toBe(PIXABAY_MINUTE_BUDGET);
     expect(QUOTA_BUDGETS.map((b) => b.key).sort()).toEqual([
+      'met:hour',
       'nasa:hour',
       'openverse:day',
       'pexels:hour',

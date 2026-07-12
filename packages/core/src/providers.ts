@@ -1,5 +1,6 @@
 import type { EntityCategory, ShotWant } from './analysis';
 import {
+  MET_HOUR_BUDGET,
   NASA_HOUR_BUDGET,
   OPENVERSE_DAY_BUDGET,
   PEXELS_HOUR_BUDGET,
@@ -23,7 +24,8 @@ export type ProviderId =
   | 'openverse'
   | 'nasa'
   | 'wikimedia'
-  | 'wikidata-commons';
+  | 'wikidata-commons'
+  | 'met';
 export type MediaKind = 'video' | 'image';
 export type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -213,6 +215,7 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'nasa:hour', unit: 'hour', budget: NASA_HOUR_BUDGET },
   { key: 'wikimedia:hour', unit: 'hour', budget: WIKIMEDIA_HOUR_BUDGET },
   { key: 'wikidata-commons:hour', unit: 'hour', budget: WIKIDATA_HOUR_BUDGET },
+  { key: 'met:hour', unit: 'hour', budget: MET_HOUR_BUDGET },
 ];
 
 // Per-KEY budget windows a provider must satisfy to serve one request (doc 23). With
@@ -229,6 +232,7 @@ export const PROVIDER_WINDOWS: Record<ProviderId, readonly QuotaBudget[]> = {
   'wikidata-commons': [
     { key: 'wikidata-commons:hour', unit: 'hour', budget: WIKIDATA_HOUR_BUDGET },
   ],
+  met: [{ key: 'met:hour', unit: 'hour', budget: MET_HOUR_BUDGET }],
 };
 
 // provider_usage key for one key's window, e.g. "pexels:hour#<keyId>" (doc 23).
@@ -243,6 +247,7 @@ export const PROVIDER_QUOTA_CODE = {
   nasa: 'E_QUOTA_NASA',
   wikimedia: 'E_QUOTA_WIKIMEDIA',
   'wikidata-commons': 'E_QUOTA_WIKIDATA',
+  met: 'E_QUOTA_MET',
 } as const;
 
 // Copyright-free archive/aggregator sources (doc 23). Curated stock (Pexels/Pixabay)
@@ -254,6 +259,7 @@ const ARCHIVE_PROVIDER_SET: ReadonlySet<string> = new Set([
   'nasa',
   'wikimedia',
   'wikidata-commons',
+  'met',
 ]);
 export function isArchiveProvider(provider: string): boolean {
   return ARCHIVE_PROVIDER_SET.has(provider);
@@ -276,6 +282,9 @@ export const ARCHIVE_PROVIDERS: {
     kind: 'image',
     domains: ['space', 'nature', 'science', 'history', 'art', 'people', 'tech'],
   },
+  // The Met Open Access (doc 25 §2): CC0 artworks/artifacts — route to the domains
+  // where museum objects are the real subject (paintings, sculpture, historical relics).
+  { id: 'met', kind: 'image', domains: ['art', 'history'] },
 ];
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock

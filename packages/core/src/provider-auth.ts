@@ -40,6 +40,9 @@ export const PROVIDER_CREDENTIALS: Record<ProviderId, CredentialField[]> = {
   // Keyless: Wikidata + Commons resolution needs only a descriptive User-Agent (doc 24
   // §4). Empty ⇒ never shown in the key manager, never addable.
   'wikidata-commons': [],
+  // Keyless: the Met Collection API takes no key (doc 25 §2). Empty ⇒ never shown in the
+  // key manager, never addable.
+  met: [],
 };
 
 // Providers that accept pooled credentials (i.e. declare ≥1 field) — the single source
