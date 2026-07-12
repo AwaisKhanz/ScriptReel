@@ -15,6 +15,7 @@ export * from './invalidation';
 export * from './jobs';
 export * from './license';
 export * from './matching';
+export * from './ocr-gate';
 export * from './progress';
 export * from './provider-auth';
 export * from './provider-probe';

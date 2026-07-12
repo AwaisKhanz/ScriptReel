@@ -3,11 +3,15 @@ import { join } from 'node:path';
 import { paths } from '@scriptreel/config';
 import {
   cosine,
+  type Era,
   hashObject,
   invariant,
   isArchiveProvider,
   MONTAGE_DIVERSITY_RELAXED,
   namesSubject,
+  OCR_TOP_K,
+  type OcrResult,
+  ocrGate,
   PipelineError,
   parseEntities,
   planMontage,
@@ -27,7 +31,7 @@ import * as db from '@scriptreel/db';
 import { type FitItem, verifyMediaFit } from '../analysis/media-verifier';
 import { QuotaGuard } from '../providers/quota-guard';
 import { SearchClient } from '../providers/search';
-import { embedImage, embedText } from '../sidecar/client';
+import { embedImage, embedText, ocr } from '../sidecar/client';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
 import { type LadderBeat, runLadder } from './ladder';
 
@@ -69,6 +73,12 @@ export function framesOf(c: { meta: unknown; thumb_path: string | null }): strin
   return c.thumb_path ? [c.thumb_path] : [];
 }
 
+// A beat's era as the OCR gate's contradiction check expects it (doc 25 §5). BeatRow.era
+// is a nullable string from the DB; coerce anything unrecognised to 'timeless' (no veto).
+function beatEra(raw: string | null): Era {
+  return raw === 'modern' || raw === 'historical' ? raw : 'timeless';
+}
+
 // score stage (doc 09): embed each beat's visualDescription + every candidate thumb
 // (SigLIP 2), score, greedily select with τ thresholds, run the variety pass, persist
 // rank/score + chosen_candidate_id, and write selection.json (the tuning instrument).
@@ -82,12 +92,13 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'multiframe-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4)
+      logic: 'ocr-gate-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4/§5)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
       forcedTextcard: beats.map((b) => b.forced_textcard),
       namedSubject: beats.map((b) => beatNamesSubject(b.entities)), // cross-check (doc 23 §6)
+      era: beats.map((b) => b.era), // OCR era-contradiction veto (doc 25 §5)
       candidates: candidateSets,
       aspect: ctx.settings.aspect,
       mediaPreference: ctx.settings.mediaPreference,
@@ -150,7 +161,7 @@ export const scoreStage: Stage = {
     // 2) Build selection beats: sim = MAX over the candidate's frames of
     // cosine(descEmbedding, frameEmbedding); the best frame's embedding becomes the
     // candidate's representative for dup-detection + montage diversity (doc 25 §4).
-    const selectionBeats: SelectionBeat[] = beats.map((beat, i) => {
+    let selectionBeats: SelectionBeat[] = beats.map((beat, i) => {
       const descEmbedding = descRes.vectors[i] ?? [];
       const rows = candidatesByBeat[i] ?? [];
       const candidates: SelectionCandidate[] = [];
@@ -192,6 +203,92 @@ export const scoreStage: Stage = {
       };
     });
 
+    // 2b) OCR gate (doc 25 §5, cascade A). OCR each beat's SigLIP top-5 shortlist
+    // (highest-sim candidates) to (a) penalize watermarked / text-heavy candidates so a
+    // clean alternative wins, and (b) veto ones whose burned-in text is an egregious
+    // full-image overlay or contradicts a historical beat's era. A video's watermark
+    // persists across frames, so we OCR its representative thumb_path, not every frame.
+    //
+    // DEGRADE, NEVER DIE (invariant 7): Tesseract is optional. If ocr() throws for ANY
+    // reason (binary missing, sidecar down, timeout), we skip the ENTIRE gate — no
+    // penalties, no vetoes — log one warning, and select exactly as before.
+    const warnings: string[] = [];
+    const ocrReasonById = new Map<string, string>();
+    let ocrSkipped = false;
+    let ocrPenalized = 0;
+    let ocrVetoed = 0;
+
+    const thumbByCandidate = new Map<string, string>();
+    for (const rows of candidatesByBeat) {
+      for (const c of rows) if (c.thumb_path) thumbByCandidate.set(c.id, c.thumb_path);
+    }
+    // Per beat: ids of the top-K candidates by sim that actually have a thumb to OCR.
+    const shortlistIdsByBeat = selectionBeats.map((sb) =>
+      [...sb.candidates]
+        .sort((a, b) => b.sim - a.sim)
+        .slice(0, OCR_TOP_K)
+        .map((c) => c.id)
+        .filter((id) => thumbByCandidate.has(id)),
+    );
+    const shortlistPaths = [
+      ...new Set(
+        shortlistIdsByBeat.flat().flatMap((id) => {
+          const thumb = thumbByCandidate.get(id);
+          return thumb ? [thumb] : [];
+        }),
+      ),
+    ];
+
+    if (shortlistPaths.length > 0) {
+      report(52, JSON.stringify({ op: 'ocr', total: shortlistPaths.length }));
+      try {
+        const res = await ocr(shortlistPaths, ctx.signal);
+        const ocrByPath = new Map<string, OcrResult>(
+          res.results.map((r) => [
+            r.path,
+            { text: r.text, coverage: r.coverage, wordCount: r.wordCount },
+          ]),
+        );
+        // Rebuild selectionBeats immutably: drop vetoed candidates, attach ocrPenalty to
+        // the rest. Non-shortlisted candidates and thumbs OCR couldn't read pass untouched.
+        selectionBeats = selectionBeats.map((sb, i) => {
+          const era = beatEra(beats[i]?.era ?? null);
+          const shortlist = new Set(shortlistIdsByBeat[i] ?? []);
+          const next: SelectionCandidate[] = [];
+          for (const c of sb.candidates) {
+            const thumb = shortlist.has(c.id) ? thumbByCandidate.get(c.id) : undefined;
+            const result = thumb ? ocrByPath.get(thumb) : undefined;
+            if (!result) {
+              next.push(c);
+              continue;
+            }
+            const verdict = ocrGate(result, { era });
+            if (verdict.reason) ocrReasonById.set(c.id, verdict.reason);
+            if (verdict.veto) {
+              ocrVetoed += 1;
+              continue; // removed from the pool selectBeats sees
+            }
+            if (verdict.penalty > 0) {
+              ocrPenalized += 1;
+              next.push({ ...c, ocrPenalty: verdict.penalty });
+            } else {
+              next.push(c);
+            }
+          }
+          return { ...sb, candidates: next };
+        });
+      } catch (err) {
+        // The degrade path: leave selectionBeats untouched, apply nothing, warn once.
+        ocrSkipped = true;
+        ocrPenalized = 0;
+        ocrVetoed = 0;
+        ocrReasonById.clear();
+        const message = err instanceof Error ? err.message : String(err);
+        warnings.push(`OCR gate skipped — ${message}`);
+        ctx.log.warn({ err }, 'OCR gate skipped — continuing without watermark/era filtering');
+      }
+    }
+
     // 3) Greedy selection + global variety pass (doc 09 §3, §5).
     report(55, 'selecting best asset per beat');
     const firstPass = selectBeats(selectionBeats, scoreCtx);
@@ -210,7 +307,6 @@ export const scoreStage: Stage = {
     }
 
     const selectionLog: unknown[] = [];
-    const warnings: string[] = [];
     const rungCounts: Record<string, number> = {};
     let chosenCount = 0;
     let weakCount = 0;
@@ -332,9 +428,11 @@ export const scoreStage: Stage = {
         weak,
         topScore: top ? Number(top.score.toFixed(4)) : null,
         candidateCount: ranked.length,
-        scores: ranked
-          .slice(0, 8)
-          .map((r) => ({ id: r.id, score: Number(r.score.toFixed(4)), rank: r.rank })),
+        scores: ranked.slice(0, 8).map((r) => {
+          const base = { id: r.id, score: Number(r.score.toFixed(4)), rank: r.rank };
+          const reason = ocrReasonById.get(r.id); // OCR watermark/coverage note (doc 25 §5)
+          return reason ? { ...base, ocr: reason } : base;
+        }),
       });
       report(
         55 + Math.round((40 * (i + 1)) / beats.length),
@@ -402,6 +500,9 @@ export const scoreStage: Stage = {
         rungs: rungCounts,
         thumbsEmbedded: thumbEmbeddings.size,
         thumbsFailed: failedThumbs.size,
+        ocrPenalized, // candidates docked for a watermark / text overlay (doc 25 §5)
+        ocrVetoed, // candidates dropped for era contradiction / full overlay (doc 25 §5)
+        ocrSkipped, // true ⇒ Tesseract unavailable, gate skipped (degrade path)
         dim: descRes.dim,
       },
     };

@@ -175,6 +175,27 @@ export function embedImage(paths: string[], signal?: AbortSignal): Promise<Embed
   return postSidecar('/embed/image', { paths }, EmbedImageResponseSchema, signal, 90_000);
 }
 
+// OCR gate (doc 25 §5): Tesseract reads burned-in text/coverage for a beat's SigLIP
+// shortlist. Tesseract may be absent — this call throws E_OCR_UNAVAILABLE (or times
+// out / E_SIDECAR_DOWN) and the score stage catches it to skip the gate (invariant 7).
+const OcrItemSchema = z.object({
+  path: z.string(),
+  text: z.string(),
+  coverage: z.number(),
+  wordCount: z.number(),
+});
+export type OcrItem = z.infer<typeof OcrItemSchema>;
+
+const OcrResponseSchema = z.object({
+  results: z.array(OcrItemSchema),
+  failed: z.array(z.string()),
+});
+export type OcrResponse = z.infer<typeof OcrResponseSchema>;
+
+export function ocr(paths: string[], signal?: AbortSignal): Promise<OcrResponse> {
+  return postSidecar('/ocr', { paths }, OcrResponseSchema, signal, 60_000);
+}
+
 const TextcardResponseSchema = z.object({ path: z.string() });
 export type TextcardResult = z.infer<typeof TextcardResponseSchema>;
 

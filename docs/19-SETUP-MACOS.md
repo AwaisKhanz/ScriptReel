@@ -93,6 +93,8 @@ uv run --directory services/ml python -m scripts.fetch_models
 
 Repo ids drift; if a download 404s, search Hugging Face for the current id and update `fetch_models.py` + doc 04 rather than pinning a fork. Extra language data: `make setup-ja` (unidic, ~1 GB) and `uv add "misaki[zh]"` only if you'll narrate Japanese/Chinese.
 
+**OCR (doc 25 §5, optional):** `brew install tesseract` installs the OCR engine + English data (~50 MB) — a system binary, not an HF model. It powers the score stage's watermark / burned-in-text gate (penalise stock logos, veto era-contradicting on-screen dates). Until it's installed the gate is **skipped** (no candidate is penalised or vetoed) and the pipeline runs exactly as before — degrade, never die (invariant 7).
+
 Fonts (`assets/fonts/`, OFL, committed): Inter, JetBrains Mono, Source Serif 4, Noto Sans (Devanagari, JP, SC). Music (`assets/music/`, CC BY 4.0 from incompetech.com — large, **not committed**): run `python scripts/fetch_music.py` to download the 14 tracks listed in `manifest.json` (attribution in `CREDITS.md`).
 
 ## 6. Run

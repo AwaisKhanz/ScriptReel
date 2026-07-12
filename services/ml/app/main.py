@@ -18,7 +18,7 @@ from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from app import align, embed, models, textcard, tts  # noqa: E402
+from app import align, embed, models, ocr, textcard, tts  # noqa: E402
 
 app = FastAPI(title="ScriptReel ML Sidecar", version="0.1.0")
 
@@ -40,6 +40,11 @@ async def _embed_error_handler(_request: Request, exc: embed.EmbedError) -> JSON
 
 @app.exception_handler(textcard.TextcardError)
 async def _textcard_error_handler(_request: Request, exc: textcard.TextcardError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
+
+
+@app.exception_handler(ocr.OcrError)
+async def _ocr_error_handler(_request: Request, exc: ocr.OcrError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
 
 
@@ -83,6 +88,7 @@ def health() -> HealthResponse:
         models={
             "kokoro": "loaded" if loaded else "cold",
             "siglip": "loaded" if embed.is_loaded() else "cold",
+            "ocr": "ready" if ocr.available() else "cold",
         },
         versions={"python": platform.python_version(), "hf_home": os.environ.get("HF_HOME", "")},
     )
@@ -170,3 +176,25 @@ class TextcardResponse(BaseModel):
 def textcard_endpoint(req: TextcardRequest) -> TextcardResponse:
     path = textcard.render(req.phrase, req.emotion, req.aspect, req.theme, req.outPath)
     return TextcardResponse(path=path)
+
+
+class OcrRequest(BaseModel):
+    paths: list[str]
+
+
+class OcrItem(BaseModel):
+    path: str
+    text: str
+    coverage: float
+    wordCount: int
+
+
+class OcrResponse(BaseModel):
+    results: list[OcrItem]
+    failed: list[str]
+
+
+@app.post("/ocr", response_model=OcrResponse)
+async def ocr_endpoint(req: OcrRequest) -> OcrResponse:
+    results, failed = await ocr.run_ocr(req.paths)
+    return OcrResponse(results=[OcrItem(**r) for r in results], failed=failed)

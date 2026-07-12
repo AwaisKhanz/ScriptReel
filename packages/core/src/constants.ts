@@ -108,3 +108,17 @@ export const MONTAGE_SAME_SOURCE_FACTOR = 1.25;
 export const TAU_HI = 0.322; // [CALIBRATE Phase 6] choose outright
 export const TAU_LO = 0.314; // [CALIBRATE Phase 6] choose but flag 'weak'
 export const TAU_MOOD = 0.28; // [CALIBRATE Phase 7] mood-tier accept < τ_lo
+
+// OCR gate (doc 25 §5, cascade A). Tesseract reads each beat's SigLIP top-K shortlist;
+// a watermark / heavy text overlay lowers the score (penalty), and an egregious full
+// overlay or era-contradicting burned-in date drops the candidate (veto). All numbers
+// [CALIBRATE] doc 25 §5 (owned by Step 5) — tune once OCR runs on real footage.
+export const OCR_TOP_K = 5; // [CALIBRATE] doc 25 §5 (owned by Step 5) — shortlist size the gate OCRs
+export const OCR_MIN_CONF = 45; // [CALIBRATE] doc 25 §5 (owned by Step 5) — tesseract per-word conf floor (mirrored sidecar-side in ocr.py)
+export const OCR_COVERAGE_FLOOR = 0.03; // [CALIBRATE] doc 25 §5 (owned by Step 5) — below this, text is incidental → no coverage penalty
+export const OCR_COVERAGE_CEIL = 0.22; // [CALIBRATE] doc 25 §5 (owned by Step 5) — at/above this, coverage penalty is full
+export const OCR_COVERAGE_VETO = 0.35; // [CALIBRATE] doc 25 §5 (owned by Step 5) — mostly-text image → veto (drop)
+export const OCR_WATERMARK_PENALTY = 0.12; // [CALIBRATE] doc 25 §5 (owned by Step 5) — a stock-site/copyright token is present
+export const OCR_COVERAGE_PENALTY = 0.15; // [CALIBRATE] doc 25 §5 (owned by Step 5) — max coverage-driven penalty (scaled floor→ceil)
+export const OCR_MAX_PENALTY = 0.25; // [CALIBRATE] doc 25 §5 (owned by Step 5) — cap on the combined OCR penalty
+export const OCR_ERA_MODERN_YEAR = 1975; // [CALIBRATE] doc 25 §5 (owned by Step 5) — a burned-in year ≥ this contradicts a historical beat

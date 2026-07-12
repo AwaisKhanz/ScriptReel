@@ -142,6 +142,9 @@ export interface SelectionCandidate {
   // From a variable-quality archive/aggregator source (doc 23 §6). On a named-subject
   // beat these are cross-checked stricter — see acceptTop. Absent ⇒ trusted stock.
   isArchive?: boolean;
+  // Watermark / text-overlay penalty from the OCR gate (doc 25 §5); subtracted
+  // un-multiplied — an intrinsic defect, not a diversity preference.
+  ocrPenalty?: number;
 }
 
 export interface SelectionBeat {
@@ -206,6 +209,9 @@ function rankBeat(
     if (c.author && state.prevAuthor && c.author === state.prevAuthor) {
       score -= MONOTONY_PENALTY * penaltyMult;
     }
+    // OCR gate (doc 25 §5): an intrinsic watermark / text-overlay defect, subtracted
+    // un-multiplied and independent of selection order (unlike the penalties above).
+    score -= c.ocrPenalty ?? 0;
     return { id: c.id, score };
   });
   scored.sort((a, b) => b.score - a.score);
