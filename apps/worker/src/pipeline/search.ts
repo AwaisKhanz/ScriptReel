@@ -24,6 +24,7 @@ import {
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import pLimit from 'p-limit';
+import { type EntityKnowledge, expandEntity } from '../analysis/knowledge';
 import { QuotaGuard } from '../providers/quota-guard';
 import { SearchClient } from '../providers/search';
 import { ensureThumb } from '../providers/thumbs';
@@ -47,7 +48,7 @@ export const searchStage: Stage = {
     const beats = await db.getBeats(ctx.projectId);
     return hashObject({
       stage: 'search',
-      logic: 'entity-2', // bump when request planning changes (doc 24 §5) — v2: NASA keyless + Wikimedia reachable-host fix
+      logic: 'entity-3', // bump when request planning changes — v3: knowledge-expansion query terms (doc 25 §2a)
       queries: beats.map((b) => b.queries),
       shots: beats.map((b) => parseShots(b.shots)), // entity shot plan drives routing (doc 24)
       entities: beats.map((b) => parseEntities(b.entities)),
@@ -116,6 +117,11 @@ export const searchStage: Stage = {
       return pending;
     };
 
+    // Knowledge expansion (doc 25 §2a): expand each unique visualizable entity ONCE
+    // (bounded, memoized) so its aliases + related + Wikipedia terms broaden the search.
+    // Populated just before the per-beat pass; a failure leaves an entity with LLM terms only.
+    const knowledge = new Map<string, EntityKnowledge>();
+
     const searchBeat = async (beat: db.BeatRow): Promise<void> => {
       if (ctx.signal.aborted) throw new PipelineError('E_CANCELLED', 'search', 'cancelled');
       const queries = beat.queries as { literal?: string[] } | null;
@@ -160,6 +166,15 @@ export const searchStage: Stage = {
               });
             } else if (source === 'nasa') {
               plan.push({ provider: 'nasa', kind: 'image', query: entity.canonical });
+            }
+          }
+          // Knowledge-expansion terms (doc 25 §2a): an alias + a Wikipedia term broaden the
+          // stock pool for this entity. requestCache dedupes repeats across shots/beats.
+          const k = knowledge.get(entity.canonical.toLowerCase());
+          if (k && mediaPreference !== 'videos') {
+            for (const term of [k.aliases[0], k.extraTerms[0]]) {
+              const kq = term ? normalizeSearchQuery(term) : '';
+              if (kq) plan.push({ provider: 'pixabay', kind: 'image', query: kq });
             }
           }
         }
@@ -255,6 +270,29 @@ export const searchStage: Stage = {
       doneBeats += 1;
       report(pctNow(), JSON.stringify({ op: 'beat', beat: doneBeats, of: beats.length }));
     };
+
+    // Populate the knowledge map (doc 25 §2a) before the per-beat search.
+    const uniqueEntities = new Map<string, { canonical: string; instanceOf: string }>();
+    for (const b of beats) {
+      for (const e of parseEntities(b.entities)) {
+        if (e.visualizable && e.canonical) {
+          uniqueEntities.set(e.canonical.toLowerCase(), {
+            canonical: e.canonical,
+            instanceOf: e.instanceOf,
+          });
+        }
+      }
+    }
+    await Promise.all(
+      [...uniqueEntities.values()].map((e) =>
+        reqLimit(async () =>
+          knowledge.set(
+            e.canonical.toLowerCase(),
+            await expandEntity(e.canonical, e.instanceOf, ctx.log),
+          ),
+        ),
+      ),
+    );
 
     // Beats overlap (bounded); per-beat work and persistence stay independent, so
     // completion order doesn't matter. Cancellation propagates via E_CANCELLED.

@@ -46,7 +46,7 @@ async function getJson(url: URL, retries = 1): Promise<unknown> {
 const WbSearch = z.object({
   search: z.array(z.object({ id: z.string() })).nullish(),
 });
-async function searchEntities(name: string): Promise<string[]> {
+export async function searchEntities(name: string): Promise<string[]> {
   const url = new URL(WIKIDATA_API);
   url.search = new URLSearchParams({
     action: 'wbsearchentities',
@@ -66,7 +66,7 @@ async function searchEntities(name: string): Promise<string[]> {
 type Claim = { mainsnak?: { datavalue?: { value?: unknown } }; rank?: string };
 export type Claims = Record<string, Claim[]>;
 const WbClaims = z.object({ claims: z.record(z.string(), z.array(z.any())).nullish() });
-async function getClaims(qid: string): Promise<Claims> {
+export async function getClaims(qid: string): Promise<Claims> {
   const url = new URL(WIKIDATA_API);
   url.search = new URLSearchParams({
     action: 'wbgetclaims',
