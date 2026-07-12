@@ -1,0 +1,20 @@
+[project]
+name = "scriptreel-gen"
+version = "0.0.0"
+description = "ScriptReel generative fallback — isolated FLUX.1-schnell (mflux) image generation (doc 25 §5-E)."
+# Own venv, deliberately separate from services/ml: mflux needs numpy>=2 + torch>=2.7 +
+# transformers>=5, which conflicts with the sidecar's pinned numpy<2 (mlx-whisper's numba).
+# The worker never imports this — it shells out `uv run` here, exactly like ffmpeg (doc 25 §5-E).
+requires-python = "==3.12.*"
+dependencies = [
+  "mflux",
+  "pillow",
+  "numpy>=2",
+  # mflux needs torch>=2.7.1; cap the upper bound so the resolver can't over-pick a
+  # version with no macOS arm64 wheel (doc 25 §9, Step 8).
+  "torch>=2.7,<2.9",
+  "huggingface-hub>=0.27",
+]
+
+[tool.uv]
+package = false

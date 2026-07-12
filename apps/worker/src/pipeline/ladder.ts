@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { paths } from '@scriptreel/config';
 import {
   baseScore,
@@ -23,6 +24,7 @@ import {
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import pLimit from 'p-limit';
+import { generateImage } from '../generate/flux';
 import type { SearchClient } from '../providers/search';
 import { ensureThumb } from '../providers/thumbs';
 import { embedImage, embedText, renderTextcard } from '../sidecar/client';
@@ -35,6 +37,14 @@ const TARGET_DIMS: Record<string, [number, number]> = {
   '16:9': [1920, 1080],
   '9:16': [1080, 1920],
   '1:1': [1080, 1080],
+};
+
+// Generation canvas per aspect (doc 25 §5-E, Rung 4). Smaller than the final render dims —
+// FLUX is slow and the still is upscaled/normalized at fetch anyway; all are multiples of 16.
+const GEN_DIMS: Record<string, [number, number]> = {
+  '16:9': [1024, 576],
+  '9:16': [576, 1024],
+  '1:1': [768, 768],
 };
 
 export interface LadderBeat {
@@ -50,6 +60,13 @@ export interface LadderBeat {
   beatDurationSec: number;
   existing: readonly SelectionCandidate[]; // tier-1 candidates, already scored vs the description
   forcedTextcard: boolean;
+  // Rung 4 generative fallback (doc 25 §5-E): true ⇒ an abstract beat with NO visualizable
+  // named entity, so a generated image can't fabricate a real subject. Entity beats are
+  // false and skip generation entirely, dropping straight to the text card.
+  nonEntity: boolean;
+  // The beat's rich visual description — used verbatim as the generation prompt (falls back
+  // to conceptual / keyPhrase when empty).
+  visualDescription: string;
 }
 
 export interface LadderDeps {
@@ -225,8 +242,67 @@ async function makeTextcard(beat: LadderBeat, ctx: ProjectCtx): Promise<Selectio
   };
 }
 
-// Run the fallback ladder for one unresolved beat (doc 09 §4). Rungs 1–3 fire more
-// searches; rung 5 (text card) always succeeds. Rung 4 (generated) is Phase 13.
+// Rung 4 — generative fallback (doc 25 §5-E). Generate an image with FLUX.1-schnell (via the
+// isolated services/gen venv) for an abstract/non-entity beat and persist it as a candidate.
+// Returns null when the generator is unavailable / fails (→ the ladder drops to the text
+// card) — a missing generator NEVER fails a render (invariant 7). The caller guarantees
+// beat.nonEntity, so this never fabricates a real named subject.
+async function makeGenerated(
+  beat: LadderBeat,
+  ctx: ProjectCtx,
+): Promise<SelectionCandidate | null> {
+  const prompt = beat.visualDescription || beat.conceptual || beat.keyPhrase;
+  if (!prompt.trim()) return null; // nothing to describe → let the text card handle it
+  const [w, h] = GEN_DIMS[beat.aspect] ?? GEN_DIMS['16:9'] ?? [1024, 576];
+  const outPath = join(paths.projectDir(ctx.projectId), 'media', 'generated', `${beat.idx}.png`);
+  await mkdir(dirname(outPath), { recursive: true });
+
+  const generated = await generateImage({
+    prompt,
+    width: w,
+    height: h,
+    outPath,
+    signal: ctx.signal,
+    log: ctx.log,
+  });
+  if (!generated) return null; // unavailable / errored / timed out → degrade to the text card
+
+  const [row] = await db.appendCandidatesForBeat(beat.id, [
+    {
+      beatId: beat.id,
+      provider: 'generated',
+      providerId: `generated-${beat.idx}`,
+      kind: 'generated',
+      width: w,
+      height: h,
+      thumbPath: outPath,
+      remoteUrl: outPath,
+      author: 'ScriptReel',
+      license: 'Generated',
+      meta: { prompt },
+    },
+  ]);
+  if (!row) return null; // insert conflicted (nothing returned) → fall through to the card
+  return {
+    id: row.id,
+    assetKey: `generated:${beat.idx}`,
+    author: 'ScriptReel',
+    features: {
+      kind: 'image',
+      isIllustration: false,
+      width: w,
+      height: h,
+      durationSec: null,
+      fps: null,
+    },
+    sim: 1, // the generated image is the deliberate choice — score it above τ_hi (like the card)
+    thumbEmbedding: [],
+  };
+}
+
+// Run the fallback ladder for one unresolved beat (doc 09 §4, doc 25 §5-E). Rungs 1–3 fire
+// more searches; Rung 4 generates an image for an abstract (non-entity) beat, degrading to
+// the card when the generator is absent; Rung 5 (text card) always succeeds.
 export async function runLadder(beat: LadderBeat, deps: LadderDeps): Promise<LadderResult> {
   const { scoreCtx } = deps;
   const pool: SelectionCandidate[] = [...beat.existing];
@@ -300,6 +376,16 @@ export async function runLadder(beat: LadderBeat, deps: LadderDeps): Promise<Lad
       pool.push(...added);
       const best = bestAbove(added, TAU_MOOD); // only the mood-scored additions qualify here
       if (best) return finish('mood', best);
+    }
+  }
+
+  // Rung 4 — generative fallback (doc 25 §5-E). Non-entity/abstract beats ONLY: never
+  // fabricate a real named subject. Degrades to the text card when the generator is absent.
+  if (!beat.forcedTextcard && beat.nonEntity) {
+    const gen = await makeGenerated(beat, deps.ctx);
+    if (gen) {
+      pool.push(gen);
+      return finish('generated', gen);
     }
   }
 

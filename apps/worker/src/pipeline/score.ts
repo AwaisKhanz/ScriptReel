@@ -94,7 +94,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'vlm-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4/§5/§6/§5-D)
+      logic: 'gen-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4/§5/§6/§5-D/§5-E)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
@@ -404,6 +404,10 @@ export const scoreStage: Stage = {
           beatDurationSec: Number(beat.est_seconds ?? 0),
           existing: sc.candidates,
           forcedTextcard: beat.forced_textcard,
+          // Rung 4 generative fallback (doc 25 §5-E): eligible only when the beat has NO
+          // visualizable named entity — so generation never fabricates a real subject.
+          nonEntity: !parseEntities(beat.entities).some((e) => e.visualizable),
+          visualDescription: beat.visual_description ?? beat.text,
         };
         const result = await runLadder(ladderBeat, { ctx, scoreCtx, client, chosenAssetKeys });
         chosenId = result.chosenId;

@@ -178,6 +178,7 @@ export type Rung =
   | 'broaden'
   | 'conceptual'
   | 'mood'
+  | 'generated'
   | 'textcard'
   | 'forced_textcard'
   | 'none';
