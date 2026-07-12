@@ -116,6 +116,21 @@ describe('planTier1Requests', () => {
     expect(planTier1Requests(['x'], 'mixed', 'urban').map((r) => r.provider)).not.toContain('met');
   });
 
+  it('routes covered domains to the Internet Archive video archive on mixed, not photos (doc 25)', () => {
+    // Video archive: fires for a covered domain when videos are wanted (mixed).
+    expect(planTier1Requests(['x'], 'mixed', 'history').map((r) => r.provider)).toContain(
+      'internet-archive',
+    );
+    // Photos-only never fires a video archive.
+    expect(planTier1Requests(['x'], 'photos', 'history').map((r) => r.provider)).not.toContain(
+      'internet-archive',
+    );
+    // Domain miss: never fires on an uncovered domain.
+    expect(planTier1Requests(['x'], 'mixed', 'urban').map((r) => r.provider)).not.toContain(
+      'internet-archive',
+    );
+  });
+
   it('falls back to literal[0] when literal[1] is missing, and drops empty queries', () => {
     expect(planTier1Requests(['only'], 'videos')).toEqual([
       { provider: 'pexels', kind: 'video', query: 'only' },
@@ -177,6 +192,7 @@ describe('quota windows', () => {
     const pixabay = QUOTA_BUDGETS.find((b) => b.key === 'pixabay:minute');
     expect(pixabay?.budget).toBe(PIXABAY_MINUTE_BUDGET);
     expect(QUOTA_BUDGETS.map((b) => b.key).sort()).toEqual([
+      'internet-archive:hour',
       'met:hour',
       'nasa:hour',
       'openverse:day',

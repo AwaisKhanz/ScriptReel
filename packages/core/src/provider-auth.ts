@@ -43,6 +43,9 @@ export const PROVIDER_CREDENTIALS: Record<ProviderId, CredentialField[]> = {
   // Keyless: the Met Collection API takes no key (doc 25 §2). Empty ⇒ never shown in the
   // key manager, never addable.
   met: [],
+  // Keyless: the Internet Archive advancedsearch/metadata APIs take no key (doc 25 §2).
+  // Empty ⇒ never shown in the key manager, never addable.
+  'internet-archive': [],
 };
 
 // Providers that accept pooled credentials (i.e. declare ≥1 field) — the single source

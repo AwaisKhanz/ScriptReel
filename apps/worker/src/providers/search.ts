@@ -7,6 +7,7 @@ import {
 } from '@scriptreel/core';
 import type { Logger } from 'pino';
 import { resolveAuth } from './auth';
+import { InternetArchiveProvider } from './internet-archive';
 import { MetProvider } from './met';
 import { NasaProvider } from './nasa';
 import { OpenverseProvider } from './openverse';
@@ -40,6 +41,7 @@ export class SearchClient {
       wikimedia: new WikimediaProvider(),
       'wikidata-commons': new WikidataCommonsProvider(),
       met: new MetProvider(),
+      'internet-archive': new InternetArchiveProvider(),
     };
   }
 
@@ -79,7 +81,8 @@ export class SearchClient {
           err.code === 'E_QUOTA_NASA' ||
           err.code === 'E_QUOTA_WIKIMEDIA' ||
           err.code === 'E_QUOTA_WIKIDATA' ||
-          err.code === 'E_QUOTA_MET')
+          err.code === 'E_QUOTA_MET' ||
+          err.code === 'E_QUOTA_INTERNET_ARCHIVE')
       ) {
         this.log.warn({ providerId, code: err.code }, 'quota exhausted — skipping request');
         return { candidates: [], cacheHit: false };

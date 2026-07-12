@@ -47,6 +47,7 @@ export const NASA_HOUR_BUDGET = 1_000; // NASA images-api has no published cap; 
 export const WIKIMEDIA_HOUR_BUDGET = 1_000; // Commons API has no hard key cap; self-imposed polite ceiling
 export const WIKIDATA_HOUR_BUDGET = 1_000; // Wikidata + Commons resolution; keyless, self-imposed polite ceiling
 export const MET_HOUR_BUDGET = 1_000; // Met Collection API, keyless, self-imposed polite ceiling
+export const INTERNET_ARCHIVE_HOUR_BUDGET = 1_000; // Internet Archive, keyless, self-imposed polite ceiling
 export const RESEARCH_RESERVE = 30; // kept free for storyboard re-search
 export const SEARCH_CACHE_TTL_H = 24; // Pixabay requires ≥24 h caching
 export const PER_PAGE_VIDEO = 20;

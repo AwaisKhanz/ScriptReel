@@ -1,5 +1,6 @@
 import type { EntityCategory, ShotWant } from './analysis';
 import {
+  INTERNET_ARCHIVE_HOUR_BUDGET,
   MET_HOUR_BUDGET,
   NASA_HOUR_BUDGET,
   OPENVERSE_DAY_BUDGET,
@@ -25,7 +26,8 @@ export type ProviderId =
   | 'nasa'
   | 'wikimedia'
   | 'wikidata-commons'
-  | 'met';
+  | 'met'
+  | 'internet-archive';
 export type MediaKind = 'video' | 'image';
 export type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -176,13 +178,17 @@ export function planTier1Requests(
     requests.push({ provider: 'pixabay', kind: 'image', query: l0 });
     // Openverse: universal copyright-free CC/PD image reach (doc 23), image-only.
     requests.push({ provider: 'openverse', kind: 'image', query: l0 });
-    // Domain-routed archives (doc 23 §5): e.g. NASA only on space/science/nature.
-    for (const a of ARCHIVE_PROVIDERS) {
-      if (a.domains.includes(domain)) requests.push({ provider: a.id, kind: a.kind, query: l0 });
-    }
   }
   if (mediaPreference === 'photos') {
     requests.push({ provider: 'pexels', kind: 'image', query: l1 });
+  }
+  // Domain-routed archives (doc 23 §5, doc 25 §2), gated by their OWN media kind so image
+  // archives (nasa/wikimedia/met) fire for mixed/photos and video archives (internet-archive)
+  // fire for mixed/videos. Runs regardless of the image branch above.
+  for (const a of ARCHIVE_PROVIDERS) {
+    if (!a.domains.includes(domain)) continue;
+    const wanted = a.kind === 'video' ? mediaPreference !== 'photos' : mediaPreference !== 'videos';
+    if (wanted) requests.push({ provider: a.id, kind: a.kind, query: l0 });
   }
   return requests.filter((r) => r.query.length > 0);
 }
@@ -216,6 +222,7 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'wikimedia:hour', unit: 'hour', budget: WIKIMEDIA_HOUR_BUDGET },
   { key: 'wikidata-commons:hour', unit: 'hour', budget: WIKIDATA_HOUR_BUDGET },
   { key: 'met:hour', unit: 'hour', budget: MET_HOUR_BUDGET },
+  { key: 'internet-archive:hour', unit: 'hour', budget: INTERNET_ARCHIVE_HOUR_BUDGET },
 ];
 
 // Per-KEY budget windows a provider must satisfy to serve one request (doc 23). With
@@ -233,6 +240,9 @@ export const PROVIDER_WINDOWS: Record<ProviderId, readonly QuotaBudget[]> = {
     { key: 'wikidata-commons:hour', unit: 'hour', budget: WIKIDATA_HOUR_BUDGET },
   ],
   met: [{ key: 'met:hour', unit: 'hour', budget: MET_HOUR_BUDGET }],
+  'internet-archive': [
+    { key: 'internet-archive:hour', unit: 'hour', budget: INTERNET_ARCHIVE_HOUR_BUDGET },
+  ],
 };
 
 // provider_usage key for one key's window, e.g. "pexels:hour#<keyId>" (doc 23).
@@ -248,6 +258,7 @@ export const PROVIDER_QUOTA_CODE = {
   wikimedia: 'E_QUOTA_WIKIMEDIA',
   'wikidata-commons': 'E_QUOTA_WIKIDATA',
   met: 'E_QUOTA_MET',
+  'internet-archive': 'E_QUOTA_INTERNET_ARCHIVE',
 } as const;
 
 // Copyright-free archive/aggregator sources (doc 23). Curated stock (Pexels/Pixabay)
@@ -260,6 +271,7 @@ const ARCHIVE_PROVIDER_SET: ReadonlySet<string> = new Set([
   'wikimedia',
   'wikidata-commons',
   'met',
+  'internet-archive',
 ]);
 export function isArchiveProvider(provider: string): boolean {
   return ARCHIVE_PROVIDER_SET.has(provider);
@@ -285,6 +297,9 @@ export const ARCHIVE_PROVIDERS: {
   // The Met Open Access (doc 25 §2): CC0 artworks/artifacts — route to the domains
   // where museum objects are the real subject (paintings, sculpture, historical relics).
   { id: 'met', kind: 'image', domains: ['art', 'history'] },
+  // Internet Archive (doc 25 §2): keyless PD/CC archival VIDEO footage — the first video
+  // archive. Routed to the domains where historical/archival motion is the real subject.
+  { id: 'internet-archive', kind: 'video', domains: ['history', 'science', 'people', 'art'] },
 ];
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock

@@ -63,9 +63,10 @@ export class QuotaGuard {
       provider === 'nasa' ||
       provider === 'wikimedia' ||
       provider === 'wikidata-commons' ||
-      provider === 'met'
+      provider === 'met' ||
+      provider === 'internet-archive'
     ) {
-      return [{ id: 'anon', creds: {} }]; // Openverse anon / NASA + Wikimedia + Wikidata + Met keyless
+      return [{ id: 'anon', creds: {} }]; // Openverse anon / NASA + Wikimedia + Wikidata + Met + Internet Archive keyless
     }
     return [];
   }

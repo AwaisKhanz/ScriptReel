@@ -85,6 +85,15 @@ export const PROVIDER_PROBE: Record<ProviderId, ProbeSpec> = {
     resetKind: null,
     window: null,
   },
+  // Keyless video archive (doc 25 §2): no per-key limit; a cheap advancedsearch call
+  // confirms reachability. Not shown in the key manager (no credential fields).
+  'internet-archive': {
+    url: 'https://archive.org/advancedsearch.php?q=mediatype:movies&rows=1&output=json',
+    method: 'GET',
+    limitSource: 'none',
+    resetKind: null,
+    window: null,
+  },
 };
 
 function toInt(raw: string | null): number | null {
