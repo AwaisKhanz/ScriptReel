@@ -150,9 +150,9 @@ export default function SettingsPage() {
               <Skeleton key={i} className="h-24" />
             ))}
           </div>
-        ) : (
+        ) : quota.data?.meters?.length ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {quota.data?.meters.map((m) => {
+            {quota.data?.meters?.map((m) => {
               const pct = m.budget > 0 ? Math.round((m.used / m.budget) * 100) : 0;
               const tone = pct > 85 ? 'danger' : pct > 60 ? 'progress' : 'accent';
               return (
@@ -174,6 +174,10 @@ export default function SettingsPage() {
               );
             })}
           </div>
+        ) : (
+          <p className="text-sm text-fg-muted">
+            Quota is unavailable right now — try again shortly.
+          </p>
         )}
       </section>
 
