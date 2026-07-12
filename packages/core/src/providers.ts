@@ -70,6 +70,10 @@ export interface RawCandidate {
   height: number;
   duration?: number;
   thumbUrl: string;
+  // Provider-supplied preview-frame image URLs for a video, spread across the clip and in
+  // clip order; empty/absent ⇒ single-thumb behavior. Lets the score stage judge a video
+  // on its best-matching frame instead of one thumbnail (doc 25 §4 multi-frame candidates).
+  frameUrls?: string[];
   downloadUrl: string;
   pageUrl: string;
   author: string;

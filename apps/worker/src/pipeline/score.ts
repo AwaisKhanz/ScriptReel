@@ -54,6 +54,21 @@ function parseMoments(raw: db.BeatRow['visual_moments']): string[] {
   return Array.isArray(raw) ? raw.filter((m): m is string => typeof m === 'string') : [];
 }
 
+// A candidate's preview-frame paths (doc 25 §4). The search stage stores up to 3 frames
+// for a video in meta.frames (≈10/50/90% through the clip); single-thumb and older
+// candidates have none, so we fall back to thumb_path. `meta` is Json — parse defensively.
+export function framesOf(c: { meta: unknown; thumb_path: string | null }): string[] {
+  const meta = c.meta;
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    const frames = (meta as Record<string, unknown>).frames;
+    if (Array.isArray(frames)) {
+      const paths = frames.filter((f): f is string => typeof f === 'string');
+      if (paths.length >= 1) return paths;
+    }
+  }
+  return c.thumb_path ? [c.thumb_path] : [];
+}
+
 // score stage (doc 09): embed each beat's visualDescription + every candidate thumb
 // (SigLIP 2), score, greedily select with τ thresholds, run the variety pass, persist
 // rank/score + chosen_candidate_id, and write selection.json (the tuning instrument).
@@ -67,7 +82,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'montage-6', // bump to re-run score when the selection logic changes (doc 23 §7)
+      logic: 'multiframe-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
@@ -93,7 +108,8 @@ export const scoreStage: Stage = {
     // Candidates per beat, in DB order (persisted rank from search).
     const candidatesByBeat = await Promise.all(beats.map((b) => db.getCandidatesForBeat(b.id)));
 
-    // 1) Embed beat descriptions (one call) + all candidate thumbs (batched, cached).
+    // 1) Embed beat descriptions (one call) + every candidate frame (batched, cached).
+    // A video contributes up to 3 preview frames (doc 25 §4); images contribute one.
     report(10, 'embedding beat descriptions');
     const descriptions = beats.map((b) => b.visual_description ?? b.text);
     const descRes = await embedText(descriptions, ctx.signal);
@@ -107,9 +123,7 @@ export const scoreStage: Stage = {
         : { vectors: [] as number[][], dim: descRes.dim };
     const momentEmbByPhrase = new Map(momentPhrases.map((p, i) => [p, momentRes.vectors[i] ?? []]));
 
-    const uniquePaths = [
-      ...new Set(candidatesByBeat.flat().flatMap((c) => (c.thumb_path ? [c.thumb_path] : []))),
-    ];
+    const uniquePaths = [...new Set(candidatesByBeat.flat().flatMap((c) => framesOf(c)))];
     const thumbEmbeddings = new Map<string, number[]>();
     const failedThumbs = new Set<string>();
     for (let i = 0; i < uniquePaths.length; i += EMBED_IMAGE_BATCH) {
@@ -133,15 +147,25 @@ export const scoreStage: Stage = {
       );
     }
 
-    // 2) Build selection beats: sim = cosine(descEmbedding, thumbEmbedding).
+    // 2) Build selection beats: sim = MAX over the candidate's frames of
+    // cosine(descEmbedding, frameEmbedding); the best frame's embedding becomes the
+    // candidate's representative for dup-detection + montage diversity (doc 25 §4).
     const selectionBeats: SelectionBeat[] = beats.map((beat, i) => {
       const descEmbedding = descRes.vectors[i] ?? [];
       const rows = candidatesByBeat[i] ?? [];
       const candidates: SelectionCandidate[] = [];
       for (const c of rows) {
-        if (!c.thumb_path) continue;
-        const thumbEmbedding = thumbEmbeddings.get(c.thumb_path);
-        if (!thumbEmbedding) continue; // failed/dropped thumb
+        // Judge a video on its best-matching frame: score every embedded frame and keep
+        // the max, carrying that frame's embedding forward. A single-thumb candidate has
+        // one frame; a candidate with no embedded frame is skipped (as a failed thumb was).
+        let best: { sim: number; emb: number[] } | null = null;
+        for (const path of framesOf(c)) {
+          const emb = thumbEmbeddings.get(path);
+          if (!emb) continue; // failed/dropped frame
+          const sim = cosine(descEmbedding, emb);
+          if (!best || sim > best.sim) best = { sim, emb };
+        }
+        if (!best) continue;
         candidates.push({
           id: c.id,
           assetKey: `${c.provider}:${c.provider_id}`,
@@ -155,8 +179,8 @@ export const scoreStage: Stage = {
             durationSec: c.duration == null ? null : Number(c.duration),
             fps: null, // real fps only known post-fetch (ffprobe); fpsFit uses 0.5 for videos
           },
-          sim: cosine(descEmbedding, thumbEmbedding),
-          thumbEmbedding,
+          sim: best.sim,
+          thumbEmbedding: best.emb,
           isArchive: isArchiveProvider(c.provider), // cross-check (doc 23 §6)
         });
       }

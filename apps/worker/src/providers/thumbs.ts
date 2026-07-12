@@ -9,9 +9,27 @@ import { FFMPEG_BIN } from '../ffmpeg/bin';
 // Thumbnail pipeline (doc 08 §Thumbnail pipeline). Download each candidate's thumb
 // → cache/thumbs/{provider}/{id}.jpg, resize to 384px max side (SigLIP input).
 // A failed thumb drops the candidate (caller filters nulls), never fails the stage.
+// Videos may carry several preview frames (doc 25 §4) → {id}_{i}.jpg, see ensureFrames.
+
+function thumbDir(candidate: RawCandidate): string {
+  return join(paths.cacheDir, 'thumbs', candidate.provider);
+}
 
 function thumbPath(candidate: RawCandidate): string {
-  return join(paths.cacheDir, 'thumbs', candidate.provider, `${candidate.providerId}.jpg`);
+  return join(thumbDir(candidate), `${candidate.providerId}.jpg`);
+}
+
+function framePath(candidate: RawCandidate, i: number): string {
+  return join(thumbDir(candidate), `${candidate.providerId}_${i}.jpg`);
+}
+
+// Already cached with content → reuse so re-runs stay network-free (doc 08).
+async function isCached(outPath: string): Promise<boolean> {
+  try {
+    return (await stat(outPath)).size > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function fetchBuffer(url: string, signal: AbortSignal): Promise<Buffer> {
@@ -40,19 +58,15 @@ async function thumbFromVideoFrame(videoUrl: string, outPath: string): Promise<v
   );
 }
 
-// Returns the absolute thumb path, or null if it couldn't be produced.
-export async function ensureThumb(
+// The original single-thumbnail path (doc 08): provider thumb, else a frame grab from
+// the tiny video variant (Pixabay). Returns the absolute thumb path, or null on failure.
+async function ensureSingleThumb(
   candidate: RawCandidate,
   signal: AbortSignal,
 ): Promise<string | null> {
   const outPath = thumbPath(candidate);
-  // Already cached by provider+id → reuse (re-runs stay truly network-free, doc 08).
-  try {
-    if ((await stat(outPath)).size > 0) return outPath;
-  } catch {
-    // not cached yet — download below
-  }
-  await mkdir(join(paths.cacheDir, 'thumbs', candidate.provider), { recursive: true });
+  if (await isCached(outPath)) return outPath;
+  await mkdir(thumbDir(candidate), { recursive: true });
   try {
     if (candidate.thumbUrl) {
       await resizeToJpeg(await fetchBuffer(candidate.thumbUrl, signal), outPath);
@@ -67,4 +81,58 @@ export async function ensureThumb(
   } catch {
     return null; // drop the candidate; caller logs the count
   }
+}
+
+// Download + resize one preview-frame URL to outPath, reusing an already-cached file.
+// Returns outPath on success, null on any failure — one bad frame never fails the set.
+async function cacheFrame(
+  url: string,
+  outPath: string,
+  signal: AbortSignal,
+): Promise<string | null> {
+  if (await isCached(outPath)) return outPath;
+  try {
+    await resizeToJpeg(await fetchBuffer(url, signal), outPath);
+    return outPath;
+  } catch {
+    return null;
+  }
+}
+
+// Returns the absolute thumb path, or null if it couldn't be produced (doc 08). Kept as
+// the single-thumb API for callers that don't need multi-frame (ladder, beat-research).
+export async function ensureThumb(
+  candidate: RawCandidate,
+  signal: AbortSignal,
+): Promise<string | null> {
+  return ensureSingleThumb(candidate, signal);
+}
+
+// Multi-frame candidate representation (doc 25 §4). When a provider supplies ≥2 preview
+// frames (Pexels `video_pictures`), cache each so the score stage can judge the video on
+// its best-matching frame; `primary` (the middle ≈50% frame) is the representative stored
+// as the candidate's thumb_path. Falls back to the single-thumb path when fewer than 2
+// frames are available or succeed, so every candidate degrades to one thumb. null ⇒ drop.
+export async function ensureFrames(
+  candidate: RawCandidate,
+  signal: AbortSignal,
+): Promise<{ primary: string; frames: string[] } | null> {
+  const urls = candidate.frameUrls ?? [];
+  if (urls.length >= 2) {
+    await mkdir(thumbDir(candidate), { recursive: true });
+    const frames: string[] = [];
+    for (let i = 0; i < urls.length; i += 1) {
+      const url = urls[i];
+      if (!url) continue;
+      const path = await cacheFrame(url, framePath(candidate, i), signal);
+      if (path) frames.push(path);
+    }
+    if (frames.length >= 2) {
+      const mid = frames[Math.floor(frames.length / 2)];
+      if (mid) return { primary: mid, frames };
+    }
+    // <2 frames succeeded — fall through to the single-thumb path.
+  }
+  const thumb = await ensureSingleThumb(candidate, signal);
+  return thumb ? { primary: thumb, frames: [thumb] } : null;
 }

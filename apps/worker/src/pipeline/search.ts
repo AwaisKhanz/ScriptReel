@@ -27,7 +27,7 @@ import pLimit from 'p-limit';
 import { type EntityKnowledge, expandEntity } from '../analysis/knowledge';
 import { QuotaGuard } from '../providers/quota-guard';
 import { SearchClient } from '../providers/search';
-import { ensureThumb } from '../providers/thumbs';
+import { ensureFrames } from '../providers/thumbs';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
 
 // Bounded concurrency (doc 06): beats overlap and provider requests overlap, but both
@@ -225,16 +225,17 @@ export const searchStage: Stage = {
         if (kept.length >= MAX_CANDIDATES_PER_BEAT) break;
       }
 
-      // Thumbnails (max 4 parallel); a failed thumb drops that candidate (doc 08).
+      // Thumbnails (max 4 parallel); a failed thumb drops that candidate (doc 08). Videos
+      // resolve to up to 3 spread preview frames (doc 25 §4) — primary is the representative.
       const withThumbs = await Promise.all(
         kept.map((candidate) =>
           limit(async () => {
-            const thumb = await ensureThumb(candidate, ctx.signal);
-            if (!thumb) {
+            const result = await ensureFrames(candidate, ctx.signal);
+            if (!result) {
               thumbFailures += 1;
               return null;
             }
-            return { candidate, thumb };
+            return { candidate, result };
           }),
         ),
       );
@@ -243,7 +244,7 @@ export const searchStage: Stage = {
       let rank = 0;
       for (const entry of withThumbs) {
         if (!entry) continue;
-        const { candidate, thumb } = entry;
+        const { candidate, result } = entry;
         rows.push({
           beatId: beat.id,
           provider: candidate.provider,
@@ -252,13 +253,15 @@ export const searchStage: Stage = {
           width: candidate.width,
           height: candidate.height,
           ...(candidate.duration !== undefined ? { duration: candidate.duration } : {}),
-          thumbPath: thumb,
+          thumbPath: result.primary,
           remoteUrl: candidate.downloadUrl,
           pageUrl: candidate.pageUrl,
           author: candidate.author,
           license: candidate.license,
           rank,
-          ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
+          // Persist the preview-frame paths so the score stage can judge the best frame
+          // (doc 25 §4); merged over any provider meta (e.g. Pixabay tinyUrl).
+          meta: { ...(candidate.meta ?? {}), frames: result.frames },
         });
         rank += 1;
       }

@@ -54,6 +54,21 @@ function bestFile(
   return withHeight.sort((a, b) => (b.height ?? 0) - (a.height ?? 0))[0] ?? null;
 }
 
+// Up to 3 preview frames spread across a clip (doc 25 §4): the pictures at ≈10% / 50% /
+// 90% of the ordered `video_pictures` list, de-duplicated, order preserved. This lets the
+// score stage judge a video on its best-matching frame instead of a single thumbnail.
+// Empty input ⇒ []; a single (or all-identical, e.g. very short) list collapses to one.
+export function pickSpreadFrames(pictures: readonly string[]): string[] {
+  const len = pictures.length;
+  if (len === 0) return [];
+  const out: string[] = [];
+  for (const frac of [0.1, 0.5, 0.9]) {
+    const pic = pictures[Math.floor((len - 1) * frac)];
+    if (pic && !out.includes(pic)) out.push(pic);
+  }
+  return out;
+}
+
 export function mapPexelsVideos(json: unknown, orientation: string): RawCandidate[] {
   const data = VideoResponse.parse(json);
   const target = targetHeight(orientation);
@@ -69,6 +84,7 @@ export function mapPexelsVideos(json: unknown, orientation: string): RawCandidat
       height: file.height ?? v.height,
       duration: v.duration,
       thumbUrl: v.video_pictures?.[0]?.picture ?? v.image,
+      frameUrls: pickSpreadFrames((v.video_pictures ?? []).map((p) => p.picture)),
       downloadUrl: file.link,
       pageUrl: v.url,
       author: v.user?.name ?? 'Unknown',
