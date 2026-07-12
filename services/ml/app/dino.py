@@ -55,7 +55,9 @@ def _load() -> None:
     # local_files_only: never auto-download from a request — an un-fetched model must
     # read as "absent" (raises → available() False), so the gate is truly inert until
     # `make fetch-identity` (the #1 degrade requirement, invariant 7).
-    model = AutoModel.from_pretrained(MODEL_ID, local_files_only=True)
+    # low_cpu_mem_usage=False: avoid the meta-device load path in newer transformers that
+    # makes the later `.to(_device)` fail with "Cannot copy out of meta tensor".
+    model = AutoModel.from_pretrained(MODEL_ID, local_files_only=True, low_cpu_mem_usage=False)
     model.eval()
     model.to(_device)
     _model = model

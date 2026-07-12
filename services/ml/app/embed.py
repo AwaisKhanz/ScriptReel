@@ -49,7 +49,10 @@ async def _ensure_loaded() -> None:
                 if torch.cuda.is_available()
                 else "cpu"
             )
-            model = AutoModel.from_pretrained(MODEL_ID)
+            # low_cpu_mem_usage=False forces materialized weights. Newer transformers (4.5x,
+            # pulled in with mlx-vlm) otherwise loads on the META device via accelerate, and
+            # the later `.to(_device)` then fails with "Cannot copy out of meta tensor".
+            model = AutoModel.from_pretrained(MODEL_ID, low_cpu_mem_usage=False)
             model.eval()
             model.to(_device)
             _model = model
