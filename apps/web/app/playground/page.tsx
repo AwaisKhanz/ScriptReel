@@ -361,7 +361,8 @@ function ResultCard({
 // Qualitative band per metric — rough, honest guidance, not the pipeline's exact τ.
 function band(value: number, kind: string): { label: string; tone: string; frac: number } {
   const table: Record<string, [number, number]> = {
-    text: [0.22, 0.3], // SigLIP text↔image
+    text: [0.1, 0.18], // SigLIP text↔image — raw cosine is compressed; a genuine terse match
+    //                    lands ~0.12–0.18, a clear miss ~0.05, so bands sit lower than intuition
     image: [0.6, 0.8], // SigLIP image↔image
     dino: [0.45, 0.6], // DINOv2 image↔image
     face: [0.28, 0.45], // InsightFace ArcFace cosine
