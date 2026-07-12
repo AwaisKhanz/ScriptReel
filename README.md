@@ -15,6 +15,10 @@ a good abstract match always beats a wrong literal one — and it never hard-fai
 
 ## 60-second start
 
+> **New machine, a teammate onboarding, or Windows/Linux?** Read [SETUP.md](SETUP.md) — the
+> complete cross-platform guide (prerequisites, `.env`, models, and the honest platform-support
+> matrix). The quick start below is the macOS-Apple-Silicon happy path.
+
 Prerequisites (Homebrew, one time — see [docs/19-SETUP-MACOS.md](docs/19-SETUP-MACOS.md)):
 
 ```bash
