@@ -1,6 +1,6 @@
 # ScriptReel — developer one-liners. See docs/19-SETUP-MACOS.md for prerequisites
-# (Homebrew: ffmpeg-full, node@22, pnpm, uv, espeak-ng, git-lfs; Python 3.12).
-.PHONY: setup setup-ja models music sidecar dev check db test-sidecar clean-cache help
+# (Homebrew: ffmpeg-full, tesseract, node@22, pnpm, uv, espeak-ng, git-lfs; Python 3.12).
+.PHONY: setup setup-ja models identity music sidecar dev check db test-sidecar clean-cache help
 .DEFAULT_GOAL := help
 
 help: ## Show this help
@@ -13,11 +13,14 @@ setup: ## One-liner: install JS + Python deps and create .env
 	@[ -f .env ] || cp .env.example .env
 	@echo ""
 	@echo "Next: fill .env (OPENAI_API_KEY, PEXELS_API_KEY, PIXABAY_API_KEY, DATABASE_URL"
-	@echo "      = Supabase Cloud session pooler), then:  make models && make music && make db"
+	@echo "      = Supabase Cloud session pooler), then:  make models && make identity && make music && make db"
 	@echo "Then: pnpm dev   →   http://localhost:3000/settings  (all health cards green)"
 
 models: ## Download ML models (~7 GB) into data/models (add --no-flux to skip FLUX)
 	HF_HOME="$$PWD/data/models" uv run --directory services/ml python -m scripts.fetch_models
+
+identity: ## Download reference-identity models (~400 MB: DINOv2 + InsightFace, doc 25 §6)
+	HF_HOME="$$PWD/data/models" uv run --directory services/ml python -m scripts.fetch_models --identity
 
 music: ## Download the 14 CC BY 4.0 music tracks into assets/music
 	uv run --directory services/ml python ../../scripts/fetch_music.py || python scripts/fetch_music.py
