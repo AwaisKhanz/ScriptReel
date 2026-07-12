@@ -193,6 +193,9 @@ def _run_vlm_sync(items: list[dict]) -> tuple[list[dict], list[str]]:
     """Load (once), run the checklist over every item, then EVICT the weights. A single
     item's exception or unparseable output is reported in ``failed`` and never fatal —
     but a failure to LOAD propagates (the worker catches it and skips the gate)."""
+    import contextlib
+    import io
+
     from mlx_vlm import generate
     from mlx_vlm.prompt_utils import apply_chat_template
     from PIL import Image
@@ -224,14 +227,18 @@ def _run_vlm_sync(items: list[dict]) -> tuple[list[dict], list[str]]:
                     str(item.get("description", "")), str(item.get("era", "timeless"))
                 )
                 prompt = apply_chat_template(_processor, _config, question, num_images=1)
-                out = generate(
-                    _model,
-                    _processor,
-                    prompt,
-                    image=gen_path,
-                    max_tokens=_MAX_TOKENS,
-                    verbose=False,
-                )
+                # mlx-vlm 0.1.27 prints a benign "Failed to process inputs … return_tensors='pt'"
+                # warning to stderr on EVERY call (a transformers-5.x processor quirk) — it always
+                # falls back to pt and works. Swallow that stderr spam; real errors still raise.
+                with contextlib.redirect_stderr(io.StringIO()):
+                    out = generate(
+                        _model,
+                        _processor,
+                        prompt,
+                        image=gen_path,
+                        max_tokens=_MAX_TOKENS,
+                        verbose=False,
+                    )
                 # mlx-vlm 0.1.x returns (text, metadata); older/newer returns bare text.
                 text = out[0] if isinstance(out, tuple) else out
                 parsed = _parse_checklist(str(text))

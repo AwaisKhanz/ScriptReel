@@ -57,11 +57,20 @@ const CommonsResponse = z.object({
   query: z.object({ pages: z.array(Page).nullish() }).nullish(),
 });
 
-async function getJson(url: URL): Promise<unknown> {
+async function getJson(url: URL, retries = 1): Promise<unknown> {
   const res = await fetch(url, {
     headers: { 'user-agent': UA, 'api-user-agent': UA },
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
+  // Wikimedia rate-limits bursts (429) — a space/history script routes many beats here. Back
+  // off once (honoring Retry-After) before giving up, so a busy moment falls back to stock only
+  // when it truly must (invariant 7). Mirrors the wikidata-commons resolver.
+  if ((res.status === 429 || res.status >= 500) && retries > 0) {
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1200;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return getJson(url, retries - 1);
+  }
   if (!res.ok) throw new Error(`${url.host} → HTTP ${res.status}`);
   return res.json();
 }
