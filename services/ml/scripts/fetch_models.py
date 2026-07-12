@@ -1,7 +1,6 @@
 """Download and verify the models ScriptReel uses (doc 19 §5, doc 25 §6).
 
-Usage:
-    export HF_HOME="$PWD/data/models"
+Usage (HF_HOME defaults to the repo's data/models automatically — see below):
     uv run --directory services/ml python -m scripts.fetch_models [--no-flux]
     uv run --directory services/ml python -m scripts.fetch_models --identity
 
@@ -20,6 +19,14 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
+
+# Mirror app/main.py: default HF_HOME to the repo's data/models so fetched weights land
+# exactly where the sidecar looks (main.py sets the same default via setdefault). Without
+# this, `make fetch-*` writes to ~/.cache/huggingface and the sidecar — which forces
+# data/models — silently can't find them. setdefault still honors an explicit HF_HOME.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+os.environ.setdefault("HF_HOME", str(_REPO_ROOT / "data" / "models"))
 
 # (repo id, human label, approx size, note)
 MODELS = [
