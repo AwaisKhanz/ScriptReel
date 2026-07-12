@@ -31,6 +31,12 @@ const NAV = [
     match: (p: string) => p.startsWith('/projects/new'),
   },
   {
+    href: '/playground',
+    label: 'Playground',
+    icon: BeakerIcon,
+    match: (p: string) => p.startsWith('/playground'),
+  },
+  {
     href: '/settings',
     label: 'Settings',
     icon: SlidersIcon,
@@ -107,6 +113,7 @@ const TITLES: { test: (p: string) => boolean; label: string }[] = [
   { test: (p) => p === '/', label: 'Dashboard' },
   { test: (p) => p.startsWith('/projects/new'), label: 'New Project' },
   { test: (p) => p.startsWith('/projects/'), label: 'Project' },
+  { test: (p) => p.startsWith('/playground'), label: 'Model Playground' },
   { test: (p) => p.startsWith('/settings'), label: 'Settings' },
 ];
 
@@ -257,6 +264,13 @@ function PlusIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" className={className} {...base} aria-hidden>
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+function BeakerIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} {...base} aria-hidden>
+      <path d="M9 3h6M10 3v6l-5.5 9.5A2 2 0 0 0 6 21h12a2 2 0 0 0 1.5-3.5L14 9V3M7.5 14h9" />
     </svg>
   );
 }

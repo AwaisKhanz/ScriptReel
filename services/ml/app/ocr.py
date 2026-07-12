@@ -14,6 +14,9 @@ The per-word confidence floor ``_OCR_MIN_CONF`` mirrors ``OCR_MIN_CONF`` in
 from __future__ import annotations
 
 import asyncio
+import logging
+
+_log = logging.getLogger("scriptreel.ocr")
 
 _OCR_MIN_CONF = 45  # mirrors OCR_MIN_CONF (packages/core/src/constants.ts, doc 25 §5)
 _available: bool | None = None  # one-time availability probe cache
@@ -58,32 +61,35 @@ def _run_ocr_sync(paths: list[str]) -> tuple[list[dict], list[str]]:
     results: list[dict] = []
     failed: list[str] = []
     for path in paths:
+        # Wrap the WHOLE per-image body: an unreadable image OR a tesseract failure (the
+        # subprocess can fail to spawn under memory pressure in a long-running, model-loaded
+        # sidecar) drops just this image to `failed` — never an unhandled 500 for the batch.
         try:
             img = Image.open(path).convert("RGB")
-        except Exception:  # noqa: BLE001 — unreadable/corrupt image → drop, don't fail the call
+            data = pytesseract.image_to_data(img, output_type=Output.DICT)
+            words: list[str] = []
+            boxes: list[tuple[int, int]] = []
+            for i in range(len(data["text"])):
+                text = str(data["text"][i]).strip()
+                try:
+                    conf = float(data["conf"][i])
+                except (TypeError, ValueError):
+                    conf = -1.0
+                if not text or conf < _OCR_MIN_CONF:
+                    continue
+                words.append(text)
+                boxes.append((int(data["width"][i]), int(data["height"][i])))
+            results.append(
+                {
+                    "path": path,
+                    "text": " ".join(words),
+                    "coverage": _coverage(boxes, img.width, img.height),
+                    "wordCount": len(words),
+                }
+            )
+        except Exception:  # noqa: BLE001 — never let one image sink the whole /ocr call
+            _log.warning("OCR failed for %s", path, exc_info=True)
             failed.append(path)
-            continue
-        data = pytesseract.image_to_data(img, output_type=Output.DICT)
-        words: list[str] = []
-        boxes: list[tuple[int, int]] = []
-        for i in range(len(data["text"])):
-            text = str(data["text"][i]).strip()
-            try:
-                conf = float(data["conf"][i])
-            except (TypeError, ValueError):
-                conf = -1.0
-            if not text or conf < _OCR_MIN_CONF:
-                continue
-            words.append(text)
-            boxes.append((int(data["width"][i]), int(data["height"][i])))
-        results.append(
-            {
-                "path": path,
-                "text": " ".join(words),
-                "coverage": _coverage(boxes, img.width, img.height),
-                "wordCount": len(words),
-            }
-        )
     return results, failed
 
 
