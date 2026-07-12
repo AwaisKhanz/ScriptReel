@@ -50,6 +50,35 @@ IDENTITY_MODELS = [
         "doc 25 §5-C",
     ),
 ]
+# VLM checklist cascade (doc 25 §5-D), fetched only with --vlm. 4-bit is plenty for a
+# constrained yes/no checklist and loads fast on an M3 Pro (load-on-demand, evicted after).
+VLM_MODELS = [
+    (
+        os.environ.get("QWEN_VL_MODEL", "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"),
+        "Qwen2.5-VL-3B 4-bit (VLM checklist, MLX)",
+        "~2.2 GB",
+        "doc 25 §5-D",
+    ),
+]
+
+
+def _fetch_list(models: list[tuple[str, str, str, str]], heading: str) -> int:
+    """Snapshot-download a list of HF repos. HF_HOME is defaulted at import to the repo's
+    data/models so the sidecar finds them."""
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        print("huggingface_hub is not installed — run `uv sync` in services/ml first.", file=sys.stderr)
+        return 1
+    print(f"HF_HOME = {os.environ.get('HF_HOME', '<default HF cache>')}")
+    print(f"{heading}:\n")
+    for repo_id, label, size, note in models:
+        suffix = f"  [{note}]" if note else ""
+        print(f"-> {label} ({size}) — {repo_id}{suffix}")
+        path = snapshot_download(repo_id=repo_id)
+        print(f"   ok: {path}\n")
+    print("Done.")
+    return 0
 
 
 def _fetch_identity() -> int:
@@ -98,10 +127,17 @@ def main() -> int:
         action="store_true",
         help="Fetch only the reference-identity models (DINOv2 + InsightFace, doc 25 §5-C).",
     )
+    parser.add_argument(
+        "--vlm",
+        action="store_true",
+        help="Fetch only the VLM checklist model (Qwen2.5-VL-3B 4-bit, doc 25 §5-D).",
+    )
     args = parser.parse_args()
 
     if args.identity:
         return _fetch_identity()
+    if args.vlm:
+        return _fetch_list(VLM_MODELS, "Fetching VLM checklist model (doc 25 §5-D)")
 
     try:
         from huggingface_hub import snapshot_download

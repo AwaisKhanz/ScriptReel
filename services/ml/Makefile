@@ -1,5 +1,5 @@
 # ScriptReel ML sidecar — auxiliary setup targets (doc 19).
-.PHONY: sync setup-ja fetch-models fetch-identity
+.PHONY: sync setup-ja fetch-models fetch-identity fetch-vlm
 
 sync:
 	uv sync
@@ -18,3 +18,8 @@ fetch-models:
 # gate stays inert until these are present.
 fetch-identity:
 	uv run python -m scripts.fetch_models --identity
+
+# VLM checklist model (doc 25 §5-D): Qwen2.5-VL-3B 4-bit (~2.2 GB, MLX). Optional; the
+# VLM gate stays inert until it's present.
+fetch-vlm:
+	uv run python -m scripts.fetch_models --vlm

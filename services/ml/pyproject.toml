@@ -8,9 +8,10 @@ dependencies = [
   "uvicorn[standard]>=0.34",
   "torch>=2.5",
   "torchvision>=0.20", # DINOv2 AutoImageProcessor (doc 25 §6) needs it
-  "transformers>=4.48",
-  "mlx>=0.21",
+  "transformers>=4.48,<5", # <5: SigLIP2/DINOv2 code targets 4.x; mlx-vlm would otherwise pull 5.x
+  "mlx>=0.22",
   "mlx-whisper>=0.4",
+  "mlx-vlm>=0.1.15,<0.2", # Qwen2.5-VL VLM checklist (doc 25 §5-D, step 7). Pinned to the 0.1.x line: keeps numpy<2 and minimizes transformers/mlx bumps (>=0.6 needs numpy>=2 + transformers>=4.53 + mlx-audio)
   "kokoro>=0.9",
   "misaki[en]>=0.9",
   "soundfile>=0.12",
@@ -19,6 +20,9 @@ dependencies = [
   "insightface>=0.7",
   "onnxruntime>=1.19",
   "numpy<2",
+  # Transitive of mlx-whisper + mlx-vlm; pinned so the resolver can't backtrack to the
+  # ancient numba 0.53.1 (llvmlite 0.36) that fails to build on Python 3.12 (step 7).
+  "numba>=0.60",
   "huggingface-hub>=0.27",
 ]
 

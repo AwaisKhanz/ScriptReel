@@ -1,6 +1,6 @@
 # ScriptReel — developer one-liners. See docs/19-SETUP-MACOS.md for prerequisites
 # (Homebrew: ffmpeg-full, tesseract, node@22, pnpm, uv, espeak-ng, git-lfs; Python 3.12).
-.PHONY: setup setup-ja models identity music sidecar dev check db test-sidecar clean-cache help
+.PHONY: setup setup-ja models identity vlm music sidecar dev check db test-sidecar clean-cache help
 .DEFAULT_GOAL := help
 
 help: ## Show this help
@@ -21,6 +21,9 @@ models: ## Download ML models (~7 GB) into data/models (add --no-flux to skip FL
 
 identity: ## Download reference-identity models (~400 MB: DINOv2 + InsightFace, doc 25 §6)
 	HF_HOME="$$PWD/data/models" uv run --directory services/ml python -m scripts.fetch_models --identity
+
+vlm: ## Download the VLM checklist model (~2.2 GB: Qwen2.5-VL-3B 4-bit, doc 25 §5-D)
+	HF_HOME="$$PWD/data/models" uv run --directory services/ml python -m scripts.fetch_models --vlm
 
 music: ## Download the 14 CC BY 4.0 music tracks into assets/music
 	uv run --directory services/ml python ../../scripts/fetch_music.py || python scripts/fetch_music.py
