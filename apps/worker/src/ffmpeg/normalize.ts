@@ -115,9 +115,11 @@ function kenBurnsVf(kb: KenBurns, width: number, height: number, frames: number)
   const z = `${kb.zoomFrom}+(${kb.zoomTo}-${kb.zoomFrom})*on/${frames}`;
   const x = `(iw-iw/zoom)*${fx}`;
   const y = `(ih-ih/zoom)*${fy}`;
+  // setsar=1 to match the video path's square pixels — zoompan can emit a hair-off SAR
+  // (e.g. 5746:5745), and concat rejects any SAR mismatch between montage sub-clips.
   return (
     `scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},` +
-    `zoompan=z='${z}':x='${x}':y='${y}':d=${frames}:s=${width}x${height}:fps=30,format=yuv420p`
+    `zoompan=z='${z}':x='${x}':y='${y}':d=${frames}:s=${width}x${height}:fps=30,setsar=1,format=yuv420p`
   );
 }
 

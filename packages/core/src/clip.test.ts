@@ -10,6 +10,7 @@ import {
   planSemanticMontage,
   splitSegmentFrames,
 } from './clip';
+import { MONTAGE_MAX_SEGMENTS } from './constants';
 
 // Build 1 sample/sec with the given per-second motion values.
 function samples(motions: number[]): MotionSample[] {
@@ -185,7 +186,7 @@ describe('planMontage', () => {
       cand('c', 0.8, [0, 0, 1]),
       cand('d', 0.75, [0.7, 0, 0.7]),
     ];
-    expect((planMontage('a', cands, 30) ?? []).length).toBeLessThanOrEqual(3);
+    expect((planMontage('a', cands, 30) ?? []).length).toBeLessThanOrEqual(MONTAGE_MAX_SEGMENTS);
   });
 
   it('returns null when the chosen candidate is not in the pool', () => {

@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { paths } from '@scriptreel/config';
 import * as db from '@scriptreel/db';
 import { NextResponse } from 'next/server';
 
@@ -57,6 +60,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         chosenCandidateId: beat.chosen_candidate_id,
         score: num(chosen?.score),
         segments,
+        // Rendered combined montage clip (fetch runs before the gate, doc 24 §8) — the
+        // storyboard previews the REAL stitched per-beat video once it exists on disk.
+        clipUrl: existsSync(join(paths.projectDir(id), 'clips', `${beat.idx}.mp4`))
+          ? `/api/files/projects/${id}/clips/${beat.idx}.mp4`
+          : null,
         candidates: candidates.map((c) => ({
           id: c.id,
           kind: c.kind,

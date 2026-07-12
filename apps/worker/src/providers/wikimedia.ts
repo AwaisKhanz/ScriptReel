@@ -1,22 +1,31 @@
-import {
-  applyAuth,
-  type MediaProvider,
-  type RawCandidate,
-  type RequestAuth,
-  type SearchQuery,
-} from '@scriptreel/core';
+import type { MediaProvider, RawCandidate, RequestAuth, SearchQuery } from '@scriptreel/core';
 import { z } from 'zod';
 
-// Wikimedia Commons (doc 23): the universal named-subject archive — people, places,
-// events, works — under a mix of PD/CC0/CC-BY/CC-BY-SA. Image-only. Keyless (a
-// descriptive User-Agent is all Commons asks for). The search-stage license gate
-// drops ShareAlike/NC/ND defensively, so only strike-safe items survive.
-const COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
+// Wikimedia Commons (doc 23 / doc 24): the universal named-subject archive — people,
+// places, events, works — under a mix of PD/CC0/CC-BY/CC-BY-SA. Image-only. Keyless (a
+// descriptive User-Agent is all Commons asks for). The search-stage license gate drops
+// ShareAlike/NC/ND defensively, so only strike-safe items survive.
+//
+// Host choice is load-bearing: `commons.wikimedia.org` is TLS-unreachable from some
+// networks (ECONNRESET — confirmed here and in the doc 24 research), so we split the work
+// across two hosts that ARE reachable, exactly like the wikidata-commons resolver:
+//   1. api.wikimedia.org — Commons full-text search → File: titles
+//   2. en.wikipedia.org  — cross-wiki imageinfo     → url + license (extmetadata)
+const COMMONS_SEARCH = 'https://api.wikimedia.org/core/v1/commons/search/page';
+const IMAGEINFO_API = 'https://en.wikipedia.org/w/api.php';
+const UA = 'ScriptReel/1.0 (local script-to-video; free CC/PD media)';
+const HTTP_TIMEOUT_MS = 12_000;
 
 // We ask for a bounded, pre-scaled render (iiurlwidth) so we never download a 50 MP
 // original; 1920 px is ample for 1080p/1920p output with room for a Ken Burns zoom.
 const RENDER_WIDTH = 1920;
 
+// ── Step 1: Commons full-text search → File: titles (reachable host) ──
+const SearchResponse = z.object({
+  pages: z.array(z.object({ key: z.string().nullish(), title: z.string().nullish() })).nullish(),
+});
+
+// ── Step 2: cross-wiki imageinfo → url + license ──
 const ExtField = z.object({ value: z.string() }).nullish();
 const ImageInfo = z.object({
   url: z.string().nullish(), // full-resolution original
@@ -48,6 +57,15 @@ const CommonsResponse = z.object({
   query: z.object({ pages: z.array(Page).nullish() }).nullish(),
 });
 
+async function getJson(url: URL): Promise<unknown> {
+  const res = await fetch(url, {
+    headers: { 'user-agent': UA, 'api-user-agent': UA },
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`${url.host} → HTTP ${res.status}`);
+  return res.json();
+}
+
 // extmetadata values are HTML fragments (e.g. `<a href="…">Jane Doe</a>`). Reduce to
 // plain text: strip tags, collapse whitespace, decode the handful of common entities.
 function plainText(html: string | null | undefined): string {
@@ -72,33 +90,35 @@ function value(field: { value: string } | null | undefined): string | undefined 
 export class WikimediaProvider implements MediaProvider {
   readonly id = 'wikimedia' as const;
 
-  async search(query: SearchQuery, auth: RequestAuth): Promise<RawCandidate[]> {
+  // `_auth` unused: anonymous access is sufficient and the keyed OAuth path lived on the
+  // unreachable commons.wikimedia.org host (doc 24 §4). QuotaGuard still meters requests.
+  async search(query: SearchQuery, _auth: RequestAuth): Promise<RawCandidate[]> {
     if (query.kind === 'video') return []; // image-only for now
 
-    const url = new URL(COMMONS_API);
-    url.searchParams.set('action', 'query');
-    url.searchParams.set('format', 'json');
-    url.searchParams.set('formatversion', '2');
-    url.searchParams.set('generator', 'search');
-    // `filetype:bitmap` restricts to raster photos (skips SVG/PDF/audio/video).
-    url.searchParams.set('gsrsearch', `${query.query} filetype:bitmap`);
-    url.searchParams.set('gsrnamespace', '6'); // File: namespace
-    url.searchParams.set('gsrlimit', String(query.perPage));
-    url.searchParams.set('prop', 'imageinfo');
-    url.searchParams.set('iiprop', 'url|size|mime|extmetadata');
-    url.searchParams.set('iiurlwidth', String(RENDER_WIDTH));
-    url.searchParams.set(
-      'iiextmetadatafilter',
-      'License|LicenseShortName|LicenseUrl|Artist|Attribution|Credit',
-    );
+    // Step 1: full-text Commons search on a reachable host → File: titles only.
+    const searchUrl = new URL(COMMONS_SEARCH);
+    searchUrl.searchParams.set('q', query.query);
+    searchUrl.searchParams.set('limit', String(query.perPage));
+    const searchParsed = SearchResponse.safeParse(await getJson(searchUrl));
+    const titles = (searchParsed.success ? (searchParsed.data.pages ?? []) : [])
+      .map((p) => p.title ?? '')
+      .filter((t) => t.startsWith('File:')) // gallery/category pages carry no imageinfo
+      .slice(0, query.perPage);
+    if (titles.length === 0) return [];
 
-    const headers: Record<string, string> = {
-      'user-agent': 'ScriptReel/1.0 (local script-to-video; free CC/PD media)',
-    };
-    applyAuth(url, headers, auth); // optional Authorization: Bearer <OAuth token>
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
-    if (!res.ok) throw new Error(`wikimedia /api → HTTP ${res.status}`);
-    const parsed = CommonsResponse.parse(await res.json());
+    // Step 2: one cross-wiki imageinfo call → url + license for every title.
+    const infoUrl = new URL(IMAGEINFO_API);
+    infoUrl.search = new URLSearchParams({
+      action: 'query',
+      format: 'json',
+      formatversion: '2',
+      titles: titles.join('|'),
+      prop: 'imageinfo',
+      iiprop: 'url|size|mime|extmetadata',
+      iiurlwidth: String(RENDER_WIDTH),
+      iiextmetadatafilter: 'License|LicenseShortName|LicenseUrl|Artist|Attribution|Credit',
+    }).toString();
+    const parsed = CommonsResponse.parse(await getJson(infoUrl));
 
     const out: RawCandidate[] = [];
     for (const page of parsed.query?.pages ?? []) {

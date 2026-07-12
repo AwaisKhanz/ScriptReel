@@ -73,8 +73,8 @@ export const DUP_COSINE = 0.92; // thumb cosine above this = visual near-duplica
 // Montage planning (doc 23 §7). A beat long enough to hold several visuals is split
 // into a mini-sequence of diverse clips instead of one static hold — the anti-boring
 // lever. [CALIBRATE 23e]
-export const MONTAGE_TARGET_SEG_SEC = 3.0; // aim for ~3 s per montage segment
-export const MONTAGE_MAX_SEGMENTS = 3; // never fragment a beat past this
+export const MONTAGE_TARGET_SEG_SEC = 2.5; // ~2.5 s per shot — documentary cut cadence
+export const MONTAGE_MAX_SEGMENTS = 4; // up to 4 shots so long beats keep cutting, not holding
 export const MONTAGE_MIN_SEG_SEC = 1.8; // a segment shorter than this feels like a flash
 export const MONTAGE_DIVERSITY_COSINE = 0.85; // segments must differ (thumb cosine ≤ this)
 // Kind mixing (photo ⇄ video) inside a montage: when every segment so far is one kind,
@@ -86,8 +86,10 @@ export const MONTAGE_MIX_RANK = 5;
 // two slightly-similar shots still beat one long static hold. [CALIBRATE 23e]
 export const MONTAGE_DIVERSITY_RELAXED = 0.95;
 // Same-source montage needs spare footage for distinct windows: source must be at
-// least this × the beat duration. [CALIBRATE 23e]
-export const MONTAGE_SAME_SOURCE_FACTOR = 1.5;
+// least this × the beat duration. Lowered so most stock videos (10–20 s) self-cut into
+// a montage instead of holding one static shot — the main "why is this beat single" lever.
+// [CALIBRATE 23e / doc 24]
+export const MONTAGE_SAME_SOURCE_FACTOR = 1.25;
 
 // Greedy selection thresholds in base-score space. SigLIP cosine ranges are
 // model-specific — these were CALIBRATED in Phase 6 from 30 labeled pairs (G1–G3)

@@ -29,12 +29,16 @@ async function main(): Promise<void> {
   await boss.start();
 
   // pipeline: one video at a time (batchSize 1); parallelism lives inside stages
-  // (doc 06). retry twice for retryable failures; expire abandoned jobs after 2 h.
+  // (doc 06). retry twice for retryable failures. `expireInSeconds` is how long a job
+  // that a dead worker was holding stays stuck before pg-boss re-dispatches it — kept
+  // safely above the longest render but low enough that a crashed run RESUMES within
+  // ~30 min (stages are idempotent, so the retry skips completed work). Single worker +
+  // batchSize 1 means an expired-but-still-running job can't be double-processed.
   await boss.createQueue(PIPELINE_QUEUE, {
     name: PIPELINE_QUEUE,
     retryLimit: 2,
     retryDelay: 30,
-    expireInSeconds: 7200,
+    expireInSeconds: 1800,
   });
   await boss.work(PIPELINE_QUEUE, { batchSize: 1 }, async (jobs) => {
     for (const job of jobs) {

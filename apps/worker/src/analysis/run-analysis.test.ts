@@ -16,6 +16,7 @@ function beat(text: string): Beat {
     keyPhrase: 'k',
     emotion: 'neutral',
     shotType: 'wide',
+    era: 'timeless',
     entities: [],
     queries: { literal: ['a', 'b'], conceptual: 'c', mood: 'm' },
     shots: [],

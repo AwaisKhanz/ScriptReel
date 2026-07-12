@@ -24,6 +24,7 @@ function beat(text: string, over: Partial<Beat> = {}): Beat {
     keyPhrase: 'key phrase',
     emotion: 'neutral',
     shotType: 'wide',
+    era: 'timeless',
     entities: [],
     queries: {
       literal: ['office dawn', 'desk lamp'],
@@ -47,6 +48,7 @@ function processed(
     keyPhrase: 'k',
     emotion: 'neutral',
     shotType: 'wide',
+    era: 'timeless',
     entities: [],
     queries: { literal: ['a', 'b'], conceptual: 'c', mood: 'm' },
     shots: [],

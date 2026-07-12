@@ -98,6 +98,7 @@ export type Database = {
           chosen_candidate_id: string | null
           emotion: string | null
           entities: Json | null
+          era: string | null
           est_seconds: number | null
           forced_textcard: boolean
           id: string
@@ -117,6 +118,7 @@ export type Database = {
           chosen_candidate_id?: string | null
           emotion?: string | null
           entities?: Json | null
+          era?: string | null
           est_seconds?: number | null
           forced_textcard?: boolean
           id?: string
@@ -136,6 +138,7 @@ export type Database = {
           chosen_candidate_id?: string | null
           emotion?: string | null
           entities?: Json | null
+          era?: string | null
           est_seconds?: number | null
           forced_textcard?: boolean
           id?: string

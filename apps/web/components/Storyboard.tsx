@@ -1,8 +1,8 @@
 'use client';
 
 import { TAU_HI, TAU_LO } from '@scriptreel/core';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { fileUrl, fmtDuration } from '../lib/format';
 import { Badge, Button, Card, Dot, Skeleton, Spinner } from './ui';
@@ -12,7 +12,7 @@ export interface Candidate {
   kind: 'video' | 'image' | 'generated' | 'textcard';
   provider: string;
   thumbPath: string | null;
-  remoteUrl: string | null; // direct media file — used to preview video in the browser
+  remoteUrl: string | null;
   duration: number | null;
   author: string | null;
   score: number | null;
@@ -30,45 +30,12 @@ function Portal({ children }: { children: React.ReactNode }) {
   return mounted ? createPortal(children, document.body) : null;
 }
 
-// Thumbnail that plays the real clip on demand. Video candidates get a play button;
-// the source is the provider's file URL (nothing is downloaded until render).
-function ThumbMedia({
-  thumbPath,
-  remoteUrl,
-  playing,
-}: {
-  thumbPath: string | null;
-  remoteUrl: string | null;
-  playing: boolean;
-}) {
-  if (playing && remoteUrl) {
-    return (
-      <video
-        src={remoteUrl}
-        controls
-        autoPlay
-        muted
-        playsInline
-        className="size-full bg-black object-contain"
-        onClick={(e) => e.stopPropagation()}
-      />
-    );
-  }
-  return thumbPath ? (
-    <img src={fileUrl(thumbPath)} alt="" className="size-full object-cover" />
-  ) : (
-    <div className="flex size-full items-center justify-center bg-surface-2 text-xs text-fg-subtle">
-      no preview
-    </div>
-  );
-}
-
 function PlayBadge({ onClick }: { onClick: (e: React.MouseEvent) => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label="Play preview"
+      aria-label="Play the stitched beat clip"
       className="absolute left-1/2 top-1/2 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur transition-transform duration-[var(--dur-fast)] hover:scale-105"
     >
       <svg viewBox="0 0 24 24" className="size-5 translate-x-px" fill="currentColor" aria-hidden>
@@ -77,6 +44,7 @@ function PlayBadge({ onClick }: { onClick: (e: React.MouseEvent) => void }) {
     </button>
   );
 }
+
 export interface Beat {
   id: string;
   idx: number;
@@ -87,8 +55,10 @@ export interface Beat {
   forcedTextcard: boolean;
   chosenCandidateId: string | null;
   score: number | null;
-  // montage sequence (doc 23 §7); each shot references its candidate for per-segment swap
+  // montage sequence (doc 23 §7): the ordered shots stitched into the beat clip
   segments: { candidateId: string; thumbPath: string | null; kind: string }[] | null;
+  // rendered combined montage clip — fetch runs before the review gate (doc 24 §8)
+  clipUrl: string | null;
   candidates: Candidate[];
 }
 
@@ -122,8 +92,6 @@ export function Storyboard({
   busy: boolean;
   onApprove: () => void;
 }) {
-  const qc = useQueryClient();
-  const [swapSeg, setSwapSeg] = useState<{ beatId: string; index: number } | null>(null);
   const [researchBeat, setResearchBeat] = useState<Beat | null>(null);
   const [researching, setResearching] = useState<Record<string, number>>({}); // beatId → prior candidate count
 
@@ -150,30 +118,6 @@ export function Storyboard({
 
   const weakCount = beats.filter(isWeak).length;
   const total = beats.reduce((sum, b) => sum + (b.estSeconds ?? 0), 0);
-
-  // Swap one shot within a montage (doc 23 §7b): update segment `index`, keep the rest.
-  async function chooseSegment(beatId: string, index: number, candidateId: string) {
-    const cand = beats.find((b) => b.id === beatId)?.candidates.find((c) => c.id === candidateId);
-    qc.setQueryData<{ beats: Beat[] }>(['beats', projectId], (prev) =>
-      prev
-        ? {
-            beats: prev.beats.map((b) => {
-              if (b.id !== beatId || !b.segments || !cand) return b;
-              const segments = b.segments.map((s, i) =>
-                i === index ? { candidateId, thumbPath: cand.thumbPath, kind: cand.kind } : s,
-              );
-              return { ...b, segments, ...(index === 0 ? { chosenCandidateId: candidateId } : {}) };
-            }),
-          }
-        : prev,
-    );
-    const res = await fetch(`/api/beats/${beatId}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ segmentSwap: { index, candidateId } }),
-    }).catch(() => null);
-    if (!res?.ok) refetch();
-  }
 
   async function toggleTextcard(beat: Beat) {
     await fetch(`/api/beats/${beat.id}`, {
@@ -228,7 +172,8 @@ export function Storyboard({
         <div>
           <h2 className="text-base font-semibold">Storyboard</h2>
           <p className="text-sm text-fg-muted">
-            Review each beat — swap a clip, re-search, or pin a text card before rendering.
+            Each beat is stitched into its real montage clip — press play to preview before
+            rendering.
           </p>
         </div>
       </div>
@@ -240,7 +185,6 @@ export function Storyboard({
             beat={beat}
             aspect={aspect}
             researching={beat.id in researching}
-            onSegmentSwap={(index) => setSwapSeg({ beatId: beat.id, index })}
             onResearch={() => setResearchBeat(beat)}
             onTextcard={() => toggleTextcard(beat)}
           />
@@ -256,7 +200,7 @@ export function Storyboard({
                 <span className="flex items-center gap-2 text-warning">
                   <Dot tone="warning" />
                   {weakCount} {weakCount === 1 ? 'beat is a weak match' : 'beats are weak matches'}{' '}
-                  — swap or continue
+                  — re-search or continue
                 </span>
               ) : (
                 <span className="flex items-center gap-2 text-success">
@@ -272,23 +216,6 @@ export function Storyboard({
         </div>
       </Portal>
 
-      {swapSeg &&
-        (() => {
-          const b = beats.find((x) => x.id === swapSeg.beatId);
-          if (!b) return null;
-          return (
-            <SwapDrawer
-              beat={b}
-              title={`Swap shot ${swapSeg.index + 1} · beat ${b.idx + 1}`}
-              highlightId={b.segments?.[swapSeg.index]?.candidateId}
-              onChoose={(cid) => {
-                void chooseSegment(swapSeg.beatId, swapSeg.index, cid);
-                setSwapSeg(null);
-              }}
-              onClose={() => setSwapSeg(null)}
-            />
-          );
-        })()}
       {researchBeat && (
         <ReSearchDialog
           beat={researchBeat}
@@ -305,13 +232,11 @@ function BeatCard({
   aspect,
   researching,
   onResearch,
-  onSegmentSwap,
   onTextcard,
 }: {
   beat: Beat;
   aspect: string;
   researching: boolean;
-  onSegmentSwap: (index: number) => void;
   onResearch: () => void;
   onTextcard: () => void;
 }) {
@@ -319,7 +244,10 @@ function BeatCard({
   const kind = beat.forcedTextcard ? 'textcard' : (chosen?.kind ?? 'textcard');
   const tone = scoreTone({ score: beat.score, kind });
   const [playing, setPlaying] = useState(false);
-  const canPlay = !beat.forcedTextcard && chosen?.kind === 'video' && !!chosen.remoteUrl;
+  // Play the REAL stitched beat clip (fetch runs before the gate, doc 24 §8) — available
+  // for every non-textcard beat, montage or single, video or Ken Burns still.
+  const canPlay = !beat.forcedTextcard && !!beat.clipUrl;
+  const poster = chosen?.thumbPath ?? beat.segments?.[0]?.thumbPath ?? null;
   const montage =
     !beat.forcedTextcard && beat.segments && beat.segments.length > 1 ? beat.segments : null;
   return (
@@ -331,11 +259,21 @@ function BeatCard({
           <div className="flex size-full items-center justify-center bg-surface-2 text-xs text-fg-subtle">
             text card
           </div>
-        ) : chosen ? (
-          <ThumbMedia thumbPath={chosen.thumbPath} remoteUrl={chosen.remoteUrl} playing={playing} />
+        ) : playing && beat.clipUrl ? (
+          <video
+            src={beat.clipUrl}
+            controls
+            autoPlay
+            muted
+            playsInline
+            className="size-full bg-black object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : poster ? (
+          <img src={fileUrl(poster)} alt="" className="size-full object-cover" />
         ) : (
           <div className="flex size-full items-center justify-center bg-surface-2 text-xs text-fg-subtle">
-            no match
+            {beat.clipUrl ? 'ready' : 'no match'}
           </div>
         )}
         {canPlay && !playing && (
@@ -362,23 +300,19 @@ function BeatCard({
             {kind === 'textcard' ? 'text' : kind === 'image' ? 'photo' : kind}
           </Badge>
         </span>
+        {/* Static filmstrip: the ordered shots that make up this beat's stitched clip. */}
         {montage && !playing && (
           <div className="absolute inset-x-0 bottom-0 flex items-end gap-0.5 bg-gradient-to-t from-black/70 to-transparent p-1.5">
             {montage.map((s, i) => (
-              <button
-                type="button"
+              <div
                 key={`${s.candidateId}-${i}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSegmentSwap(i);
-                }}
-                title={`shot ${i + 1} · ${s.kind === 'video' ? 'video' : 'photo'} — click to swap`}
-                className="relative h-8 flex-1 overflow-hidden rounded-sm border border-white/40 bg-surface-2 transition-transform hover:scale-105 hover:border-white"
+                title={`shot ${i + 1} · ${s.kind === 'video' ? 'video' : 'photo'}`}
+                className="relative h-8 flex-1 overflow-hidden rounded-sm border border-white/40 bg-surface-2"
               >
                 {s.thumbPath && (
                   <img src={fileUrl(s.thumbPath)} alt="" className="size-full object-cover" />
                 )}
-              </button>
+              </div>
             ))}
           </div>
         )}
@@ -389,8 +323,12 @@ function BeatCard({
         </p>
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-fg-subtle">
           {beat.emotion && <Badge tone="neutral">{beat.emotion}</Badge>}
-          {chosen?.duration != null && <span>{chosen.duration.toFixed(1)}s clip</span>}
-          {chosen?.provider && !beat.forcedTextcard && <span>· {chosen.provider}</span>}
+          {beat.estSeconds != null && <span>{beat.estSeconds.toFixed(1)}s beat</span>}
+          {montage ? (
+            <span>· {montage.length} shots</span>
+          ) : (
+            chosen?.provider && !beat.forcedTextcard && <span>· {chosen.provider}</span>
+          )}
         </div>
         <div className="mt-auto flex gap-1.5 pt-1">
           <ActionBtn onClick={onResearch} label="Re-search" />
@@ -426,151 +364,6 @@ function ActionBtn({
     >
       {label}
     </button>
-  );
-}
-
-function SwapDrawer({
-  beat,
-  onChoose,
-  onClose,
-  highlightId,
-  title,
-}: {
-  beat: Beat;
-  onChoose: (candidateId: string) => void;
-  onClose: () => void;
-  highlightId?: string | undefined; // which candidate reads as "active" (defaults to chosen)
-  title?: string | undefined;
-}) {
-  const cands = beat.candidates;
-  const activeId = highlightId ?? beat.chosenCandidateId;
-  const chosenIdx = Math.max(
-    0,
-    cands.findIndex((c) => c.id === activeId),
-  );
-  const [cursor, setCursor] = useState(chosenIdx);
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    ref.current?.focus();
-  }, []);
-
-  function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Escape') onClose();
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown')
-      setCursor((c) => Math.min(cands.length - 1, c + 1));
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') setCursor((c) => Math.max(0, c - 1));
-    else if (e.key === 'Enter') {
-      const c = cands[cursor];
-      if (c) onChoose(c.id);
-    }
-  }
-
-  return (
-    <Portal>
-      <div className="fixed inset-0 z-50 flex justify-end animate-[var(--animate-fade-in)]">
-        <button type="button" aria-label="Close" className="flex-1 bg-black/50" onClick={onClose} />
-        <div
-          ref={ref}
-          role="dialog"
-          aria-label={`Swap clip for beat ${beat.idx + 1}`}
-          tabIndex={-1}
-          onKeyDown={onKeyDown}
-          className="flex h-full w-full max-w-md flex-col border-l border-border bg-surface shadow-[var(--shadow-lg)] outline-none animate-[var(--animate-fade-up)]"
-        >
-          <div className="flex shrink-0 items-center justify-between border-b border-border p-4">
-            <div>
-              <h3 className="text-sm font-semibold">
-                {title ?? `Swap clip · beat ${beat.idx + 1}`}
-              </h3>
-              <p className="mt-0.5 text-xs text-fg-subtle">
-                {cands.length} alternates · ▶ preview · ←/→ move · Enter choose · Esc close
-              </p>
-            </div>
-            <Button variant="subtle" size="sm" onClick={onClose}>
-              Close
-            </Button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="grid grid-cols-2 gap-3">
-              {cands.map((c, i) => {
-                const active = c.id === activeId;
-                const isPlaying = playingId === c.id;
-                const canPlay = c.kind === 'video' && !!c.remoteUrl;
-                return (
-                  // biome-ignore lint/a11y/useSemanticElements: nests a play button, so not a <button>
-                  <div
-                    key={c.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onChoose(c.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        onChoose(c.id);
-                      }
-                    }}
-                    onMouseEnter={() => setCursor(i)}
-                    className={`cursor-pointer overflow-hidden rounded-xl border text-left transition-all duration-[var(--dur-fast)] ${
-                      active
-                        ? 'border-accent ring-2 ring-accent/40'
-                        : cursor === i
-                          ? 'border-border-strong'
-                          : 'border-border hover:border-border-strong'
-                    }`}
-                  >
-                    <div className="relative aspect-video bg-bg">
-                      <ThumbMedia
-                        thumbPath={c.thumbPath}
-                        remoteUrl={c.remoteUrl}
-                        playing={isPlaying}
-                      />
-                      {active && !isPlaying && (
-                        <span className="absolute right-1.5 top-1.5 flex size-5 items-center justify-center rounded-full bg-accent text-white">
-                          <svg
-                            viewBox="0 0 24 24"
-                            className="size-3"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="3"
-                            aria-hidden
-                          >
-                            <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </span>
-                      )}
-                      {canPlay && !isPlaying && (
-                        <PlayBadge
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPlayingId(c.id);
-                          }}
-                        />
-                      )}
-                    </div>
-                    <div className="space-y-1 p-2">
-                      <div className="flex items-center justify-between">
-                        <Badge tone={scoreTone(c)}>
-                          {c.score != null ? c.score.toFixed(2) : c.kind}
-                        </Badge>
-                        <span className="text-[10px] uppercase tracking-wide text-fg-subtle">
-                          {c.provider}
-                        </span>
-                      </div>
-                      <div className="truncate text-xs text-fg-subtle">
-                        {c.duration != null ? `${c.duration.toFixed(1)}s · ` : ''}
-                        {c.author ?? '—'}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
-    </Portal>
   );
 }
 

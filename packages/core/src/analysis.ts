@@ -19,6 +19,10 @@ export type Emotion = z.infer<typeof EmotionSchema>;
 export const ShotTypeSchema = z.enum(['wide', 'medium', 'close', 'detail', 'aerial', 'abstract']);
 export type ShotType = z.infer<typeof ShotTypeSchema>;
 
+// The time period a beat's visuals should evoke (doc 25 §2) — guides retrieval + verification.
+export const EraSchema = z.enum(['modern', 'historical', 'timeless']);
+export type Era = z.infer<typeof EraSchema>;
+
 export const MusicMoodSchema = z.enum([
   'uplifting',
   'calm',
@@ -106,6 +110,7 @@ export const BeatSchema = z.object({
   keyPhrase: z.string().max(48), // ≤6 words, script language
   emotion: EmotionSchema,
   shotType: ShotTypeSchema,
+  era: EraSchema.default('timeless'), // modern | historical | timeless (doc 25 §2, rule 12)
   // Typed entities (doc 24 §2) — drive authoritative sourcing; REAL names belong here.
   entities: EntitySchema.array().max(8).default([]),
   queries: z.object({
@@ -217,6 +222,10 @@ RULES — VISUAL DESIGN
     {phrase:"jordan locator map",entity:"Jordan",want:"map",weight:1},
     {phrase:"israel locator map",entity:"Israel",want:"map",weight:1},
     {phrase:"dead sea salt formations",entity:"Dead Sea",want:"scene",weight:1}]
+12. \`era\` — the time period the beat's VISUALS should evoke: "modern" (contemporary / present-day
+   subjects), "historical" (a specific past period or event, pre-modern), or "timeless" (nature,
+   space, abstract, or era-agnostic). Infer it from the subject and any dates. It guides which
+   archives are searched and is checked during verification; default to "timeless" when unsure.
 
 For Japanese/Chinese target 18–30 characters (fast), 25–45 (normal), 40–65 (slow) per beat.
 
@@ -234,6 +243,7 @@ export interface ProcessedBeat {
   keyPhrase: string;
   emotion: Emotion;
   shotType: ShotType;
+  era: Era; // modern | historical | timeless (doc 25 §2)
   entities: Entity[]; // typed entities (doc 24 §2)
   queries: { literal: string[]; conceptual: string; mood: string };
   shots: Shot[]; // ordered visual plan (doc 24 §3)
@@ -565,6 +575,7 @@ export function postProcessAnalysis(input: PostProcessInput): PostProcessOutput 
     keyPhrase: beat.keyPhrase,
     emotion: beat.emotion,
     shotType: beat.shotType,
+    era: beat.era,
     entities: [...beat.entities],
     queries: {
       literal: [...beat.queries.literal],

@@ -163,6 +163,11 @@ async function renderBeatClip(
       await normalizeOne(seg.media, lengthSec, isFirst ? headPad : 0, dims, dst, signal);
     }
     await concatClips(temps, outPath, signal);
+  } catch (err) {
+    if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
+    // A montage sub-clip / concat failed — degrade to the single chosen visual for the
+    // whole beat rather than failing the entire render (invariant 7 — degrade, never die).
+    await normalizeOne(beat.media, entry.lengthSec, entry.headPadSec, dims, outPath, signal);
   } finally {
     await Promise.all(temps.map((t) => rm(t, { force: true }).catch(() => {})));
   }

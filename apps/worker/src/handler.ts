@@ -44,8 +44,9 @@ export interface RunPipelineOptions {
 }
 
 // The `pipeline` queue handler and its DAG (doc 06 §Stage graph):
-//   analyze → [search→score ∥ tts] → REVIEW GATE → align → fetch → compose
-// Modes: full (with gate), continue (post-gate), composeOnly (re-render), stage:<name>.
+//   analyze → [search→score ∥ tts] → fetch → REVIEW GATE → align → compose
+// fetch runs BEFORE the gate (doc 24 §8) so the storyboard previews each beat's real
+// stitched montage clip. Modes: full (with gate), continue (post-gate), composeOnly, stage:<name>.
 export async function runPipeline(
   payload: PipelinePayload,
   opts: RunPipelineOptions,
@@ -56,7 +57,9 @@ export async function runPipeline(
 
   const settings = parseSettings(project.settings);
   await db.ensurePipelineRuns(projectId, STAGES);
-  await db.clearCancel(projectId);
+  // cancel_requested is cleared by the dispatch routes (generate/continue/rerender), NOT
+  // here: clearing on every run would wipe a user's cancel when pg-boss retries a job whose
+  // worker died mid-run — silently resuming a project the user asked to stop.
   await db.setProjectStatus(projectId, 'running');
 
   const controller = new AbortController();
@@ -94,7 +97,9 @@ export async function runPipeline(
       await run(['compose']);
       await db.setProjectStatus(projectId, 'done');
     } else if (mode === 'continue') {
-      await run(['align', 'fetch', 'compose']); // pre-gate stages already complete
+      // fetch already ran pre-gate; re-run (idempotent) to re-stitch any beat changed at
+      // review, then finish with align + compose.
+      await run(['fetch', 'align', 'compose']);
       await db.setProjectStatus(projectId, 'done');
     } else {
       // mode === 'full'
@@ -108,12 +113,16 @@ export async function runPipeline(
         });
       await Promise.all([branch(['search', 'score']), branch(['tts'])]);
 
+      // Stitch each beat's montage BEFORE the gate (doc 24 §8) so the storyboard shows the
+      // real combined per-beat clip. Heavier to reach review, but it's the accurate preview.
+      await run(['fetch']);
+
       if (settings.reviewBeforeRender) {
         await db.setProjectStatus(projectId, 'awaiting_review');
         opts.log.info({ projectId }, 'awaiting review — paused at storyboard');
         return; // complete the job; UI Continue enqueues mode:continue
       }
-      await run(['align', 'fetch', 'compose']);
+      await run(['align', 'compose']);
       await db.setProjectStatus(projectId, 'done');
     }
     opts.log.info({ projectId, mode }, 'pipeline finished');

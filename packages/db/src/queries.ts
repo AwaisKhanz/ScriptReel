@@ -232,6 +232,7 @@ export interface BeatInsert {
   keyPhrase: string;
   emotion: string;
   shotType: string;
+  era: string;
   entities: {
     surface: string;
     canonical: string;
@@ -254,10 +255,10 @@ export async function replaceBeats(projectId: string, beats: readonly BeatInsert
     for (const b of beats) {
       await tx`
         insert into beats
-          (project_id, idx, text, visual_description, key_phrase, emotion, shot_type, entities, queries, visual_moments, shots, est_seconds)
+          (project_id, idx, text, visual_description, key_phrase, emotion, shot_type, era, entities, queries, visual_moments, shots, est_seconds)
         values
           (${projectId}, ${b.idx}, ${b.text}, ${b.visualDescription}, ${b.keyPhrase}, ${b.emotion},
-           ${b.shotType}, ${tx.json(b.entities as JsonValue)}, ${tx.json(b.queries as JsonValue)},
+           ${b.shotType}, ${b.era}, ${tx.json(b.entities as JsonValue)}, ${tx.json(b.queries as JsonValue)},
            ${tx.json((b.visualMoments ?? []) as JsonValue)}, ${tx.json((b.shots ?? []) as JsonValue)}, ${b.estSeconds})`;
     }
   });

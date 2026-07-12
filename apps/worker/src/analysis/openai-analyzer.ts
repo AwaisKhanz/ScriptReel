@@ -37,6 +37,7 @@ const RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
           'keyPhrase',
           'emotion',
           'shotType',
+          'era',
           'entities',
           'queries',
           'shots',
@@ -61,6 +62,10 @@ const RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
           shotType: {
             type: 'string',
             enum: ['wide', 'medium', 'close', 'detail', 'aerial', 'abstract'],
+          },
+          era: {
+            type: 'string',
+            enum: ['modern', 'historical', 'timeless'],
           },
           entities: {
             type: 'array',

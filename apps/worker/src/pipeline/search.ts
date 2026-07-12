@@ -47,7 +47,7 @@ export const searchStage: Stage = {
     const beats = await db.getBeats(ctx.projectId);
     return hashObject({
       stage: 'search',
-      logic: 'entity-1', // bump when request planning changes (doc 24 §5)
+      logic: 'entity-2', // bump when request planning changes (doc 24 §5) — v2: NASA keyless + Wikimedia reachable-host fix
       queries: beats.map((b) => b.queries),
       shots: beats.map((b) => parseShots(b.shots)), // entity shot plan drives routing (doc 24)
       entities: beats.map((b) => parseEntities(b.entities)),

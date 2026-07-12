@@ -60,7 +60,10 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
       </div>
     );
   }
-  if (isError || !data) return <ErrorPanel title="Couldn’t load this project." onRetry={refetch} />;
+  // Guard project too: a deleted/missing project returns a body without `project`, which
+  // would otherwise crash on `project.status` below.
+  if (isError || !data?.project)
+    return <ErrorPanel title="Couldn’t load this project." onRetry={refetch} />;
 
   const { project, runs, overall, renders } = data;
   const status = project.status;

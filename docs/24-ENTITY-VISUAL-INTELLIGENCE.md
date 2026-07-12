@@ -4,8 +4,9 @@ Extends doc 07 (script analysis), doc 08 (media search), doc 09 (matching), doc 
 sourcing). Goal: the engine must **understand each beat before it searches** — extract the real
 entities, classify them, and resolve them to *authoritative* imagery (the actual Dead Sea, the real
 flag, the NASA photo of Pluto) instead of guessing keywords against generic stock. The output should
-read like a premium documentary (MagnatesMedia / Johnny Harris), not a stock slideshow. Free, no
-local models (OpenAI GPT only). Owner directive 2026-07-12.
+read like a premium documentary (MagnatesMedia / Johnny Harris), not a stock slideshow. Free (OpenAI
+GPT the only cloud call). Owner directive 2026-07-12. **Superseded by doc 25** — the "no local
+models" constraint no longer holds; doc 25 adds local verification + generation models.
 
 ## 1. The reframe — understanding precedes searching
 

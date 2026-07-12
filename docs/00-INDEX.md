@@ -45,6 +45,7 @@
 | 22 | RISKS-LIMITS-LICENSES | Quota math, license table, mitigations |
 | 23 | EXPANDED-SOURCING | Copyright-free archive providers, license gate, clip intelligence (post-v1) |
 | 24 | ENTITY-VISUAL-INTELLIGENCE | Understand-before-search: typed entities, Wikidata→Commons resolution, category routing (post-v1) |
+| 25 | RETRIEVAL-VERIFICATION-CASCADE | Era + knowledge expansion + federated archives + local verify cascade (OCR/InsightFace/DINOv2/Qwen-VL/SDXL); reverses no-local-models (post-v1) |
 | — | `CLAUDE.md` (repo root) | Commands, invariants, working rules for Claude Code |
 
 ## Core invariants (memorize)
