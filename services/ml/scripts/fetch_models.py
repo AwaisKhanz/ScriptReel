@@ -1,8 +1,15 @@
-"""Download and verify the models ScriptReel uses (doc 19 §5).
+"""Download and verify the models ScriptReel uses (doc 19 §5, doc 25 §6).
 
 Usage:
     export HF_HOME="$PWD/data/models"
     uv run --directory services/ml python -m scripts.fetch_models [--no-flux]
+    uv run --directory services/ml python -m scripts.fetch_models --identity
+
+--identity fetches the reference-identity cascade models (doc 25 §5-C): DINOv2
+(HF snapshot) plus InsightFace buffalo_l (downloaded by constructing FaceAnalysis,
+which pulls the pack into ~/.insightface). Kept separate from the default fetch so
+the optional, non-commercial-licensed InsightFace pack (doc 25 §6) is only fetched
+when explicitly requested.
 
 Repo ids drift. If a download 404s, search Hugging Face for the current id and
 update this list *and* doc 04 rather than pinning a fork.
@@ -27,6 +34,49 @@ FLUX = (
     "~6.5 GB",
     "Phase 13 only",
 )
+# Reference-identity cascade (doc 25 §5-C), fetched only with --identity.
+IDENTITY_MODELS = [
+    (
+        os.environ.get("DINO_MODEL", "facebook/dinov2-small"),
+        "DINOv2 small (landmark / artwork identity)",
+        "~88 MB",
+        "doc 25 §5-C",
+    ),
+]
+
+
+def _fetch_identity() -> int:
+    """Fetch the doc 25 §5-C identity models: DINOv2 (HF snapshot) + InsightFace
+    buffalo_l (forced by constructing FaceAnalysis, which downloads to ~/.insightface)."""
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        print("huggingface_hub is not installed — run `uv sync` in services/ml first.", file=sys.stderr)
+        return 1
+
+    print(f"HF_HOME = {os.environ.get('HF_HOME', '<default HF cache>')}")
+    print("Fetching reference-identity models (doc 25 §5-C):\n")
+
+    for repo_id, label, size, note in IDENTITY_MODELS:
+        suffix = f"  [{note}]" if note else ""
+        print(f"-> {label} ({size}) — {repo_id}{suffix}")
+        path = snapshot_download(repo_id=repo_id)
+        print(f"   ok: {path}\n")
+
+    # InsightFace buffalo_l (~300 MB) has no HF repo; constructing the app triggers its
+    # download. Guard the import so a machine without insightface still fetches DINOv2.
+    print("-> InsightFace buffalo_l (person identity) (~300 MB)  [doc 25 §6: non-commercial]")
+    try:
+        from insightface.app import FaceAnalysis
+
+        app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+        app.prepare(ctx_id=-1, det_size=(640, 640))
+        print("   ok: buffalo_l ready (~/.insightface)\n")
+    except Exception as exc:  # noqa: BLE001 — insightface optional; note and continue
+        print(f"   skipped: insightface not installed — `uv sync` to enable ({exc})\n")
+
+    print("Done.")
+    return 0
 
 
 def main() -> int:
@@ -36,7 +86,15 @@ def main() -> int:
         action="store_true",
         help="Skip the ~6.5 GB FLUX model (only needed for Phase 13).",
     )
+    parser.add_argument(
+        "--identity",
+        action="store_true",
+        help="Fetch only the reference-identity models (DINOv2 + InsightFace, doc 25 §5-C).",
+    )
     args = parser.parse_args()
+
+    if args.identity:
+        return _fetch_identity()
 
     try:
         from huggingface_hub import snapshot_download

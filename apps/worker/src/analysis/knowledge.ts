@@ -4,6 +4,8 @@ import { z } from 'zod';
 import {
   type Claims,
   claimEntityIds,
+  claimStrings,
+  fetchCommonsFiles,
   getClaims,
   searchEntities,
 } from '../providers/wikidata-commons';
@@ -197,7 +199,7 @@ async function wikipediaTerms(title: string, exclude: readonly string[]): Promis
 
 // Resolve the entity's Q-id, verifying sense via P31 (doc 24 §4) — same rule as the
 // resolver so the two agree on which entity we mean.
-async function resolveVerifiedClaims(
+export async function resolveVerifiedClaims(
   canonical: string,
   instanceOf: string,
 ): Promise<{ qid: string; claims: Claims } | null> {
@@ -211,6 +213,32 @@ async function resolveVerifiedClaims(
     if (!expected || claimEntityIds(claims, 'P31').includes(expected)) return { qid, claims };
   }
   return first; // lenient: unmapped instanceOf accepts the top hit (like the resolver)
+}
+
+// Resolve a named entity to a reachable REFERENCE-IMAGE url (doc 25 §5-C) for the
+// identity gate: the entity's Wikidata P18 (image), falling back to P154 (logo) then
+// P242 (locator map). The filename is rasterized through Commons imageinfo to a
+// downloadable en.wikipedia.org thumbnail (commons.wikimedia.org is TLS-unreachable —
+// fetchCommonsFiles already picks the right host). Any failure → null; NEVER throws, so
+// an absent reference never breaks selection (invariant 7). The identity pass compares a
+// beat's candidate thumbs to this image with InsightFace (person) / DINOv2 (landmark).
+export async function resolveReferenceImage(
+  canonical: string,
+  instanceOf: string,
+): Promise<string | null> {
+  try {
+    const resolved = await resolveVerifiedClaims(canonical, instanceOf);
+    if (!resolved) return null;
+    const filename =
+      claimStrings(resolved.claims, 'P18')[0] ??
+      claimStrings(resolved.claims, 'P154')[0] ??
+      claimStrings(resolved.claims, 'P242')[0];
+    if (!filename) return null;
+    const files = await fetchCommonsFiles([filename]);
+    return files[0]?.url ?? null;
+  } catch {
+    return null; // no reference is fine — the gate simply skips this beat
+  }
 }
 
 // Expand one entity. Returns EMPTY on any failure (invariant 7). The caller memoizes by

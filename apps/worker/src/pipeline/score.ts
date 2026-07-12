@@ -33,6 +33,7 @@ import { QuotaGuard } from '../providers/quota-guard';
 import { SearchClient } from '../providers/search';
 import { embedImage, embedText, ocr } from '../sidecar/client';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
+import { applyIdentityGate } from './identity';
 import { type LadderBeat, runLadder } from './ladder';
 
 const EMBED_IMAGE_BATCH = 64; // sidecar accepts ≤64 paths/call (doc 14)
@@ -92,7 +93,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'ocr-gate-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4/§5)
+      logic: 'identity-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4/§5/§6)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
@@ -289,6 +290,30 @@ export const scoreStage: Stage = {
       }
     }
 
+    // 2c) Reference-identity gate (doc 25 §6, cascade C). For a beat naming a specific
+    // person / landmark / artwork, compare its SigLIP top-5 (the same shortlist the OCR
+    // gate used) to the entity's Wikidata reference image with a LOCAL model — veto a
+    // lookalike person (InsightFace), penalize a wrong landmark / artwork (DINOv2).
+    //
+    // DEGRADE, NEVER DIE (invariant 7): the identity models are optional and NOT
+    // installed by default. If the sidecar can't embed (model absent, down, timeout) the
+    // gate skips entirely — no vetoes, no penalties, selection unchanged — and the first
+    // failure short-circuits so no further Wikidata references are resolved.
+    const identityResult = await applyIdentityGate({
+      selectionBeats,
+      beats,
+      thumbByCandidate,
+      shortlistIdsByBeat,
+      cacheDir: paths.cacheDir,
+      log: ctx.log,
+      signal: ctx.signal,
+    });
+    selectionBeats = identityResult.selectionBeats;
+    const identityReasonById = identityResult.reasons;
+    const identityPenalized = identityResult.penalized;
+    const identityVetoed = identityResult.vetoed;
+    const identitySkipped = identityResult.skipped;
+
     // 3) Greedy selection + global variety pass (doc 09 §3, §5).
     report(55, 'selecting best asset per beat');
     const firstPass = selectBeats(selectionBeats, scoreCtx);
@@ -429,9 +454,13 @@ export const scoreStage: Stage = {
         topScore: top ? Number(top.score.toFixed(4)) : null,
         candidateCount: ranked.length,
         scores: ranked.slice(0, 8).map((r) => {
-          const base = { id: r.id, score: Number(r.score.toFixed(4)), rank: r.rank };
-          const reason = ocrReasonById.get(r.id); // OCR watermark/coverage note (doc 25 §5)
-          return reason ? { ...base, ocr: reason } : base;
+          const base: { id: string; score: number; rank: number; ocr?: string; identity?: string } =
+            { id: r.id, score: Number(r.score.toFixed(4)), rank: r.rank };
+          const ocrReason = ocrReasonById.get(r.id); // OCR watermark/coverage note (doc 25 §5)
+          if (ocrReason) base.ocr = ocrReason;
+          const identityReason = identityReasonById.get(r.id); // identity veto/penalty note (doc 25 §6)
+          if (identityReason) base.identity = identityReason;
+          return base;
         }),
       });
       report(
@@ -503,6 +532,9 @@ export const scoreStage: Stage = {
         ocrPenalized, // candidates docked for a watermark / text overlay (doc 25 §5)
         ocrVetoed, // candidates dropped for era contradiction / full overlay (doc 25 §5)
         ocrSkipped, // true ⇒ Tesseract unavailable, gate skipped (degrade path)
+        identityPenalized, // candidates docked for a landmark/artwork reference mismatch (doc 25 §6)
+        identityVetoed, // candidates dropped as a lookalike person (doc 25 §6)
+        identitySkipped, // true ⇒ identity models unavailable, gate skipped (degrade path)
         dim: descRes.dim,
       },
     };

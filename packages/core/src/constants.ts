@@ -122,3 +122,15 @@ export const OCR_WATERMARK_PENALTY = 0.12; // [CALIBRATE] doc 25 §5 (owned by S
 export const OCR_COVERAGE_PENALTY = 0.15; // [CALIBRATE] doc 25 §5 (owned by Step 5) — max coverage-driven penalty (scaled floor→ceil)
 export const OCR_MAX_PENALTY = 0.25; // [CALIBRATE] doc 25 §5 (owned by Step 5) — cap on the combined OCR penalty
 export const OCR_ERA_MODERN_YEAR = 1975; // [CALIBRATE] doc 25 §5 (owned by Step 5) — a burned-in year ≥ this contradicts a historical beat
+
+// Reference-identity gate (doc 25 §5-C, cascade C). For a beat naming a specific
+// person / landmark / artwork, the score stage compares each SigLIP top-5 candidate to
+// the entity's Wikidata reference image with a local model: InsightFace face cosine
+// (person → veto a clear mismatch) or DINOv2 image cosine (landmark/building/artwork →
+// penalize a mismatch). Cosine ranges are model-specific — recalibrate on any model
+// swap (never copy τ across models). All numbers [CALIBRATE] doc 25 §6 (owned by Step 6).
+export const IDENTITY_FACE_TAU = 0.32; // [CALIBRATE] doc 25 §6 (owned by Step 6) — InsightFace cosine below which the face is a different person
+export const IDENTITY_DINO_TAU = 0.55; // [CALIBRATE] doc 25 §6 (owned by Step 6) — DINOv2 cosine below which it's a different landmark/artwork
+export const IDENTITY_MISMATCH_PENALTY = 0.15; // [CALIBRATE] doc 25 §6 (owned by Step 6) — score docked for a landmark/artwork identity mismatch (subtracted un-multiplied)
+export const IDENTITY_FACE_CATEGORIES: readonly string[] = ['person']; // [CALIBRATE] doc 25 §6 (owned by Step 6) — categories routed to InsightFace
+export const IDENTITY_DINO_CATEGORIES: readonly string[] = ['landmark', 'building', 'artwork']; // [CALIBRATE] doc 25 §6 (owned by Step 6) — categories routed to DINOv2

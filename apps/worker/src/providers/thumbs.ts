@@ -99,6 +99,26 @@ async function cacheFrame(
   }
 }
 
+// Download + resize an arbitrary image URL to an explicit outPath (doc 25 §5-C) — used
+// for entity reference images the identity gate embeds. Same download/resize/cache path
+// as cacheFrame, but the caller names the destination (references/<slug>.jpg) and ensures
+// its directory. Returns outPath on success, null on any failure (never throws —
+// invariant 7). Reuses an already-cached file so re-runs stay network-free.
+export async function cacheImageTo(
+  url: string,
+  outPath: string,
+  signal: AbortSignal,
+): Promise<string | null> {
+  if (await isCached(outPath)) return outPath;
+  try {
+    await mkdir(join(outPath, '..'), { recursive: true });
+    await resizeToJpeg(await fetchBuffer(url, signal), outPath);
+    return outPath;
+  } catch {
+    return null;
+  }
+}
+
 // Returns the absolute thumb path, or null if it couldn't be produced (doc 08). Kept as
 // the single-thumb API for callers that don't need multi-frame (ladder, beat-research).
 export async function ensureThumb(

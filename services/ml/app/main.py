@@ -18,7 +18,7 @@ from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from app import align, embed, models, ocr, textcard, tts  # noqa: E402
+from app import align, dino, embed, face, models, ocr, textcard, tts  # noqa: E402
 
 app = FastAPI(title="ScriptReel ML Sidecar", version="0.1.0")
 
@@ -45,6 +45,16 @@ async def _textcard_error_handler(_request: Request, exc: textcard.TextcardError
 
 @app.exception_handler(ocr.OcrError)
 async def _ocr_error_handler(_request: Request, exc: ocr.OcrError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
+
+
+@app.exception_handler(face.FaceError)
+async def _face_error_handler(_request: Request, exc: face.FaceError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
+
+
+@app.exception_handler(dino.DinoError)
+async def _dino_error_handler(_request: Request, exc: dino.DinoError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": {"code": exc.code, "message": str(exc)}})
 
 
@@ -89,6 +99,8 @@ def health() -> HealthResponse:
             "kokoro": "loaded" if loaded else "cold",
             "siglip": "loaded" if embed.is_loaded() else "cold",
             "ocr": "ready" if ocr.available() else "cold",
+            "insightface": "ready" if face.available() else "cold",
+            "dinov2": "ready" if dino.available() else "cold",
         },
         versions={"python": platform.python_version(), "hf_home": os.environ.get("HF_HOME", "")},
     )
@@ -198,3 +210,34 @@ class OcrResponse(BaseModel):
 async def ocr_endpoint(req: OcrRequest) -> OcrResponse:
     results, failed = await ocr.run_ocr(req.paths)
     return OcrResponse(results=[OcrItem(**r) for r in results], failed=failed)
+
+
+# Reference-identity cascade (doc 25 §5-C). /face/embed (InsightFace, person identity)
+# and /dino/embed (DINOv2, landmark/artwork identity) share the /embed/image response
+# shape: vectors[i] aligns with paths[i] (a zero row for a failed path), failed lists
+# paths with no usable embedding. A missing model raises E_FACE/E_DINO (500) → the
+# worker skips the identity pass (invariant 7).
+class FaceEmbedRequest(BaseModel):
+    paths: list[str]
+
+
+class DinoEmbedRequest(BaseModel):
+    paths: list[str]
+
+
+class EmbedVectorsResponse(BaseModel):
+    vectors: list[list[float]]
+    dim: int
+    failed: list[str]
+
+
+@app.post("/face/embed", response_model=EmbedVectorsResponse)
+async def face_embed_endpoint(req: FaceEmbedRequest) -> EmbedVectorsResponse:
+    vectors, dim, failed = await face.embed_faces(req.paths)
+    return EmbedVectorsResponse(vectors=vectors, dim=dim, failed=failed)
+
+
+@app.post("/dino/embed", response_model=EmbedVectorsResponse)
+async def dino_embed_endpoint(req: DinoEmbedRequest) -> EmbedVectorsResponse:
+    vectors, dim, failed = await dino.embed_images(req.paths)
+    return EmbedVectorsResponse(vectors=vectors, dim=dim, failed=failed)

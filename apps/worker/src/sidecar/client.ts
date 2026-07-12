@@ -175,6 +175,19 @@ export function embedImage(paths: string[], signal?: AbortSignal): Promise<Embed
   return postSidecar('/embed/image', { paths }, EmbedImageResponseSchema, signal, 90_000);
 }
 
+// Reference-identity embeds (doc 25 §5-C, cascade C). InsightFace face vectors and DINOv2
+// image vectors share the /embed/image response shape ({ vectors, dim, failed }). Either
+// endpoint throws E_FACE_UNAVAILABLE / E_DINO_UNAVAILABLE (or E_SIDECAR_DOWN / timeout)
+// when its model is absent — the identity pass catches that, skips the whole gate, and
+// leaves selection unchanged (invariant 7).
+export function faceEmbed(paths: string[], signal?: AbortSignal): Promise<EmbedImageResult> {
+  return postSidecar('/face/embed', { paths }, EmbedImageResponseSchema, signal, 90_000);
+}
+
+export function dinoEmbed(paths: string[], signal?: AbortSignal): Promise<EmbedImageResult> {
+  return postSidecar('/dino/embed', { paths }, EmbedImageResponseSchema, signal, 90_000);
+}
+
 // OCR gate (doc 25 §5): Tesseract reads burned-in text/coverage for a beat's SigLIP
 // shortlist. Tesseract may be absent — this call throws E_OCR_UNAVAILABLE (or times
 // out / E_SIDECAR_DOWN) and the score stage catches it to skip the gate (invariant 7).

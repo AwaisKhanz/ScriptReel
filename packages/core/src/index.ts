@@ -11,6 +11,7 @@ export * from './emotion';
 export * from './entity-routing';
 export * from './errors';
 export * from './hash';
+export * from './identity-gate';
 export * from './invalidation';
 export * from './jobs';
 export * from './license';

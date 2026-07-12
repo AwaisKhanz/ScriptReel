@@ -145,6 +145,10 @@ export interface SelectionCandidate {
   // Watermark / text-overlay penalty from the OCR gate (doc 25 §5); subtracted
   // un-multiplied — an intrinsic defect, not a diversity preference.
   ocrPenalty?: number;
+  // Reference-identity mismatch penalty from the identity gate (doc 25 §6, cascade C);
+  // a landmark/artwork that doesn't match the entity's reference image. Subtracted
+  // un-multiplied — an intrinsic wrong-subject defect, not a diversity preference.
+  identityPenalty?: number;
 }
 
 export interface SelectionBeat {
@@ -212,6 +216,9 @@ function rankBeat(
     // OCR gate (doc 25 §5): an intrinsic watermark / text-overlay defect, subtracted
     // un-multiplied and independent of selection order (unlike the penalties above).
     score -= c.ocrPenalty ?? 0;
+    // Identity gate (doc 25 §6): an intrinsic wrong-subject defect (landmark/artwork
+    // mismatch), likewise subtracted un-multiplied and independent of selection order.
+    score -= c.identityPenalty ?? 0;
     return { id: c.id, score };
   });
   scored.sort((a, b) => b.score - a.score);

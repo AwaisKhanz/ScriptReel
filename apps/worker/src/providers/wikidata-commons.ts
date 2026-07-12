@@ -170,7 +170,7 @@ function stripHtml(s: string): string {
     .trim();
 }
 
-async function fetchCommonsFiles(filenames: string[]): Promise<CommonsFile[]> {
+export async function fetchCommonsFiles(filenames: string[]): Promise<CommonsFile[]> {
   if (filenames.length === 0) return [];
   const url = new URL(COMMONS_API);
   url.search = new URLSearchParams({
