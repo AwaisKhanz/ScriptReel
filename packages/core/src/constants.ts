@@ -45,6 +45,7 @@ export const PIXABAY_MINUTE_BUDGET = 100; // Pixabay free: 100 req / 60 s
 export const OPENVERSE_DAY_BUDGET = 10_000; // Openverse registered (OAuth) tier ≈ 10k/day; anon ≈ 100/day
 export const NASA_HOUR_BUDGET = 1_000; // NASA images-api has no published cap; self-imposed polite ceiling
 export const WIKIMEDIA_HOUR_BUDGET = 1_000; // Commons API has no hard key cap; self-imposed polite ceiling
+export const WIKIDATA_HOUR_BUDGET = 1_000; // Wikidata + Commons resolution; keyless, self-imposed polite ceiling
 export const RESEARCH_RESERVE = 30; // kept free for storyboard re-search
 export const SEARCH_CACHE_TTL_H = 24; // Pixabay requires ≥24 h caching
 export const PER_PAGE_VIDEO = 20;
@@ -80,6 +81,13 @@ export const MONTAGE_DIVERSITY_COSINE = 0.85; // segments must differ (thumb cos
 // prefer the best other-kind candidate if it ranks within this window for the slot —
 // rank-based (no absolute sim threshold), so it needs no re-calibration. [CALIBRATE 23e]
 export const MONTAGE_MIX_RANK = 5;
+// Montage guarantee ladder (doc 23 §7b): when the strict diversity pass finds only
+// near-duplicates, retry relaxed before falling back to multi-window same-source cuts —
+// two slightly-similar shots still beat one long static hold. [CALIBRATE 23e]
+export const MONTAGE_DIVERSITY_RELAXED = 0.95;
+// Same-source montage needs spare footage for distinct windows: source must be at
+// least this × the beat duration. [CALIBRATE 23e]
+export const MONTAGE_SAME_SOURCE_FACTOR = 1.5;
 
 // Greedy selection thresholds in base-score space. SigLIP cosine ranges are
 // model-specific — these were CALIBRATED in Phase 6 from 30 labeled pairs (G1–G3)

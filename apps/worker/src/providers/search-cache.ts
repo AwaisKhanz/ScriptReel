@@ -19,8 +19,9 @@ export async function readSearchCache(
   kind: string,
   orientation: string,
   query: string,
+  variant = '',
 ): Promise<RawCandidate[] | null> {
-  const path = cachePath(provider, searchCacheKey(provider, kind, orientation, query));
+  const path = cachePath(provider, searchCacheKey(provider, kind, orientation, query, variant));
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as CacheFile;
     const ageMs = Date.now() - new Date(parsed.fetchedAt).getTime();
@@ -37,8 +38,9 @@ export async function writeSearchCache(
   orientation: string,
   query: string,
   candidates: RawCandidate[],
+  variant = '',
 ): Promise<void> {
-  const path = cachePath(provider, searchCacheKey(provider, kind, orientation, query));
+  const path = cachePath(provider, searchCacheKey(provider, kind, orientation, query, variant));
   await mkdir(dirname(path), { recursive: true });
   const payload: CacheFile = { fetchedAt: new Date().toISOString(), candidates };
   await writeFile(path, JSON.stringify(payload, null, 2), 'utf8');

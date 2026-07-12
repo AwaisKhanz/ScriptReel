@@ -51,6 +51,7 @@ export type Database = {
           last_used_at: string
           license: string | null
           local_path: string
+          motion: Json | null
           page_url: string | null
           provider: string
           provider_id: string
@@ -67,6 +68,7 @@ export type Database = {
           last_used_at?: string
           license?: string | null
           local_path: string
+          motion?: Json | null
           page_url?: string | null
           provider: string
           provider_id: string
@@ -83,6 +85,7 @@ export type Database = {
           last_used_at?: string
           license?: string | null
           local_path?: string
+          motion?: Json | null
           page_url?: string | null
           provider?: string
           provider_id?: string
@@ -105,6 +108,7 @@ export type Database = {
           queries: Json | null
           segments: Json | null
           shot_type: string | null
+          shots: Json | null
           text: string
           visual_description: string | null
           visual_moments: Json | null
@@ -123,6 +127,7 @@ export type Database = {
           queries?: Json | null
           segments?: Json | null
           shot_type?: string | null
+          shots?: Json | null
           text: string
           visual_description?: string | null
           visual_moments?: Json | null
@@ -141,6 +146,7 @@ export type Database = {
           queries?: Json | null
           segments?: Json | null
           shot_type?: string | null
+          shots?: Json | null
           text?: string
           visual_description?: string | null
           visual_moments?: Json | null

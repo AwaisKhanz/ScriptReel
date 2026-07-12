@@ -196,6 +196,24 @@ drawer; `updateBeatSegment` replaces one shot's clip while keeping the rest of t
 segments-aware inputsHash. **The montage feature is complete** — contained + semantic + per-moment
 search + per-segment swap.
 
+**Shipped (montage guarantee + media-fit verification + motion cache).**
+- *Guarantee ladder:* semantic → diverse (τ 0.85) → relaxed diversity (0.95) → **same-source
+  multi-window** (`planSameSourceMontage`): when every alternate is a near-dupe but the chosen video
+  has ≥1.5× the beat's footage, the beat cuts between 2–3 *different windows of the chosen source* —
+  `pickBestWindows` returns the top-k non-overlapping motion windows (golden-ratio spread fill), and
+  `buildTimeline` hands each occurrence of a repeated path its own in-point. A long beat renders as
+  one static hold only when even its own source has no spare footage.
+- *Media-fit verification (§6, GPT vision):* after selection, every planned montage shot's thumbnail
+  (videos: a frame) is checked by the OpenAI vision model against the exact phrase it must depict
+  (its `momentIdx` moment, else the beat's visualDescription); clear misfits are pruned (<2 survivors
+  ⇒ single visual). Batched 8/request ×3 parallel, low-detail 384px thumbs, accept-on-any-error —
+  verification can never fail a render. Same-source plans skip it (one already-τ-approved asset).
+- *Motion cache (§8):* per-asset scdet analysis persists to `asset_cache.motion` (migration 0008) —
+  re-renders, swaps, and other projects reusing an asset skip the ffmpeg pass.
+- *Fix:* fetch now resolves **every** plan entry (a semantic plan's first shot may not be the chosen
+  clip — it was silently replaced before); `assembleSegmentInputs` (core, pure) owns that mapping.
+- Moment phrases are now required to be concrete, searchable 3–6-word queries (prompt rule 10).
+
 **Shipped (23e-1) — motion-aware best-window in-point.** The single-segment half, backward-compatible
 and calibration-free. The fetch stage samples per-frame motion (one fast downscaled `ffmpeg scdet`
 pass → `lavfi.scd.mafd`, `apps/worker/src/ffmpeg/motion.ts`) and the pure `pickBestWindow`

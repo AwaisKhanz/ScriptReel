@@ -16,8 +16,9 @@ function beat(text: string): Beat {
     keyPhrase: 'k',
     emotion: 'neutral',
     shotType: 'wide',
-    entities: { people: [], places: [], objects: [] },
+    entities: [],
     queries: { literal: ['a', 'b'], conceptual: 'c', mood: 'm' },
+    shots: [],
   };
 }
 

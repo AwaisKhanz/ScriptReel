@@ -2,6 +2,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '@scriptreel/config';
 import {
+  assembleSegmentInputs,
   type BuildBeatInput,
   buildTimeline,
   clipPlan,
@@ -65,6 +66,21 @@ function parseSegmentPlan(raw: unknown): { candidateId: string; weight: number }
     ) {
       const w = Number((it as { weight?: unknown }).weight);
       out.push({ candidateId: (it as { candidateId: string }).candidateId, weight: w > 0 ? w : 1 });
+    }
+  }
+  return out;
+}
+
+// Cached per-asset motion analysis (asset_cache.motion, doc 23 §8); null ⇒ not cached.
+function parseMotionSamples(raw: unknown): MotionSample[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: MotionSample[] = [];
+  for (const it of raw) {
+    const s = it as { t?: unknown; motion?: unknown } | null;
+    if (s && typeof s.t === 'number' && typeof s.motion === 'number') {
+      out.push({ t: s.t, motion: s.motion });
+    } else {
+      return null; // malformed cache — re-analyze
     }
   }
   return out;
@@ -229,16 +245,21 @@ export const fetchStage: Stage = {
           );
           if (spec.kind === 'video') {
             const probe = await probeVideo(row.local_path);
-            const motionSamples =
-              probe.durationSec > 0
-                ? await analyzeMotion(row.local_path, ctx.signal).catch((err) => {
-                    ctx.log.warn(
-                      { err, beat: beatIdx },
-                      'motion analysis failed — geometric in-point',
-                    );
-                    return [] as MotionSample[];
-                  })
-                : [];
+            // Motion analysis is a pure function of the file — reuse the cached result
+            // (asset_cache.motion) and persist a fresh one for the next render (§8).
+            const cached = parseMotionSamples(row.motion);
+            let motionSamples = cached ?? [];
+            if (!cached && probe.durationSec > 0) {
+              motionSamples = await analyzeMotion(row.local_path, ctx.signal).catch((err) => {
+                ctx.log.warn({ err, beat: beatIdx }, 'motion analysis failed — geometric in-point');
+                return [] as MotionSample[];
+              });
+              if (motionSamples.length > 0) {
+                await db
+                  .setAssetMotion(row.id, motionSamples)
+                  .catch((err) => ctx.log.warn({ err }, 'motion cache write failed'));
+              }
+            }
             return {
               kind: 'video',
               path: row.local_path,
@@ -260,15 +281,16 @@ export const fetchStage: Stage = {
       }
     };
 
-    // The chosen visual per beat (montage segment 0), plus every extra montage segment
-    // candidate (doc 23 §7). downloadToCache dedupes, so shared assets cost one fetch.
+    // The chosen visual per beat, plus every montage segment candidate that isn't that
+    // beat's chosen (a semantic plan's FIRST shot may be a different clip, doc 23 §7b).
+    // downloadToCache dedupes, so shared assets cost one fetch.
     const sources = await Promise.all(media.map((m) => dlLimit(() => resolveMedia(m, m.idx))));
     const extraIds = [
       ...new Set(
         media.flatMap((m) =>
           parseSegmentPlan(m.segments)
-            .slice(1)
-            .map((p) => p.candidateId),
+            .map((p) => p.candidateId)
+            .filter((id) => id !== m.chosenCandidateId),
         ),
       ),
     ];
@@ -297,21 +319,23 @@ export const fetchStage: Stage = {
         (m.narration as { durationSec?: number } | null)?.durationSec ?? 0;
       const beatMedia = toBuildMedia(src);
 
-      // Montage: segment 0 is the chosen (src); the rest resolve from extraById. A
-      // segment whose download failed is dropped; <2 survivors ⇒ single visual.
+      // Montage: resolve every plan entry in order (the chosen candidate maps to its
+      // already-resolved media; duplicates — same-source montage — share one media
+      // object). A segment whose download failed drops; <2 survivors ⇒ single visual.
       const plan = parseSegmentPlan(m.segments);
-      let segments: NonNullable<BuildBeatInput['segments']> | undefined;
+      let segments: BuildBeatInput['segments'];
       if (plan.length > 1) {
-        const first = plan[0];
-        const visuals: NonNullable<BuildBeatInput['segments']> = [
-          { media: beatMedia, weight: first?.weight ?? 1 },
-        ];
-        for (let k = 1; k < plan.length; k += 1) {
-          const p = plan[k];
-          const ex = p ? extraById.get(p.candidateId) : null;
-          if (ex) visuals.push({ media: toBuildMedia(ex), weight: p?.weight ?? 1 });
+        const resolved = new Map<string, BuildBeatInput['media']>();
+        for (const p of plan) {
+          if (resolved.has(p.candidateId)) continue;
+          if (p.candidateId === m.chosenCandidateId) {
+            resolved.set(p.candidateId, beatMedia);
+          } else {
+            const ex = extraById.get(p.candidateId);
+            if (ex) resolved.set(p.candidateId, toBuildMedia(ex));
+          }
         }
-        if (visuals.length > 1) segments = visuals;
+        segments = assembleSegmentInputs(plan, resolved);
       }
 
       beatsInput.push({

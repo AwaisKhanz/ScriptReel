@@ -232,8 +232,17 @@ export interface BeatInsert {
   keyPhrase: string;
   emotion: string;
   shotType: string;
-  entities: { people: string[]; places: string[]; objects: string[] };
+  entities: {
+    surface: string;
+    canonical: string;
+    category: string;
+    instanceOf: string;
+    disambiguation: string;
+    searchTerms: string[];
+    visualizable: boolean;
+  }[];
   queries: { literal: string[]; conceptual: string; mood: string };
+  shots: { phrase: string; entity: string; want: string; weight: number }[];
   visualMoments: string[];
   estSeconds: number;
 }
@@ -245,11 +254,11 @@ export async function replaceBeats(projectId: string, beats: readonly BeatInsert
     for (const b of beats) {
       await tx`
         insert into beats
-          (project_id, idx, text, visual_description, key_phrase, emotion, shot_type, entities, queries, visual_moments, est_seconds)
+          (project_id, idx, text, visual_description, key_phrase, emotion, shot_type, entities, queries, visual_moments, shots, est_seconds)
         values
           (${projectId}, ${b.idx}, ${b.text}, ${b.visualDescription}, ${b.keyPhrase}, ${b.emotion},
            ${b.shotType}, ${tx.json(b.entities as JsonValue)}, ${tx.json(b.queries as JsonValue)},
-           ${tx.json((b.visualMoments ?? []) as JsonValue)}, ${b.estSeconds})`;
+           ${tx.json((b.visualMoments ?? []) as JsonValue)}, ${tx.json((b.shots ?? []) as JsonValue)}, ${b.estSeconds})`;
     }
   });
 }
@@ -644,6 +653,7 @@ export interface ChosenMediaRow {
   narration: unknown;
   shotType: string | null;
   emotion: string | null;
+  chosenCandidateId: string;
   provider: string;
   providerId: string;
   kind: string;
@@ -662,6 +672,7 @@ export interface ChosenMediaRow {
 export interface BeatSegmentPlan {
   candidateId: string;
   weight: number;
+  momentIdx?: number; // which visual moment this shot illustrates (semantic plans)
 }
 
 // Candidate media by id — resolves a beat's montage segment candidates for fetch.
@@ -729,7 +740,7 @@ export async function insertRender(r: RenderInsert): Promise<RenderRow> {
 export async function getChosenMedia(projectId: string): Promise<ChosenMediaRow[]> {
   const rows = await sql<ChosenMediaRow[]>`
     select b.id as "beatId", b.idx, b.text, b.narration, b.shot_type as "shotType", b.emotion,
-      b.segments,
+      b.chosen_candidate_id as "chosenCandidateId", b.segments,
       c.provider, c.provider_id as "providerId", c.kind, c.remote_url as "remoteUrl",
       c.thumb_path as "thumbPath", c.width, c.height, c.duration,
       c.author, c.page_url as "pageUrl", c.license
@@ -737,6 +748,22 @@ export async function getChosenMedia(projectId: string): Promise<ChosenMediaRow[
     where b.project_id = ${projectId}
     order by b.idx`;
   return [...rows];
+}
+
+// Overwrite one beat's montage plan (media-fit verification may prune segments after
+// selection, doc 23 §6); null ⇒ single visual.
+export async function setBeatSegments(
+  beatId: string,
+  segments: readonly BeatSegmentPlan[] | null,
+): Promise<void> {
+  const plan = segments && segments.length > 1 ? sql.json(segments as unknown as JsonValue) : null;
+  await sql`update beats set segments = ${plan} where id = ${beatId}`;
+}
+
+// Cache per-asset motion analysis on the shared asset row (doc 23 §8) — a pure
+// function of the file, so every later render/swap/project reuses it.
+export async function setAssetMotion(assetId: string, samples: unknown): Promise<void> {
+  await sql`update asset_cache set motion = ${sql.json(samples as JsonValue)} where id = ${assetId}`;
 }
 
 // Persist the score stage's result for one beat (doc 09): each candidate's rank +

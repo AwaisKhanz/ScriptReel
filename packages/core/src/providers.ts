@@ -1,9 +1,11 @@
+import type { EntityCategory, ShotWant } from './analysis';
 import {
   NASA_HOUR_BUDGET,
   OPENVERSE_DAY_BUDGET,
   PEXELS_HOUR_BUDGET,
   PEXELS_MONTH_BUDGET,
   PIXABAY_MINUTE_BUDGET,
+  WIKIDATA_HOUR_BUDGET,
   WIKIMEDIA_HOUR_BUDGET,
 } from './constants';
 import type { Domain } from './domain';
@@ -15,15 +17,33 @@ import type { SubtitleAspect } from './subtitles/presets';
 // (PexelsProvider/PixabayProvider) live in the worker. Every call goes through
 // QuotaGuard then SearchCache — no path may hit a provider directly.
 
-export type ProviderId = 'pexels' | 'pixabay' | 'openverse' | 'nasa' | 'wikimedia';
+export type ProviderId =
+  | 'pexels'
+  | 'pixabay'
+  | 'openverse'
+  | 'nasa'
+  | 'wikimedia'
+  | 'wikidata-commons';
 export type MediaKind = 'video' | 'image';
 export type Orientation = 'landscape' | 'portrait' | 'square';
+
+// Authoritative-resolution context (doc 24 §4): present on a request when we're resolving
+// a specific entity to its real Commons/NASA asset. `wikidata-commons` reads it; other
+// providers ignore it. `want` also enters the cache key so a flag and a map of the same
+// entity don't collide.
+export interface EntitySearchContext {
+  canonical: string;
+  category: EntityCategory;
+  instanceOf: string;
+  want: ShotWant;
+}
 
 export interface SearchQuery {
   query: string;
   kind: MediaKind;
   orientation: Orientation;
   perPage: number;
+  entity?: EntitySearchContext;
 }
 
 export interface RawCandidate {
@@ -58,8 +78,10 @@ export function searchCacheKey(
   kind: string,
   orientation: string,
   query: string,
+  variant = '', // e.g. a shot's `want` — keeps flag vs map of the same entity distinct
 ): string {
-  return sha1Hex(`${provider}|${kind}|${orientation}|${normalizeSearchQuery(query)}`);
+  const suffix = variant ? `|${variant}` : ''; // conditional → non-entity keys stay byte-identical
+  return sha1Hex(`${provider}|${kind}|${orientation}|${normalizeSearchQuery(query)}${suffix}`);
 }
 
 // Trailing atmosphere/time words carry mood, not subject — strip them before
@@ -134,6 +156,7 @@ export interface PlannedRequest {
   provider: ProviderId;
   kind: MediaKind;
   query: string;
+  entity?: EntitySearchContext; // set for authoritative entity resolution (doc 24 §5)
 }
 
 export function planTier1Requests(
@@ -189,6 +212,7 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET },
   { key: 'nasa:hour', unit: 'hour', budget: NASA_HOUR_BUDGET },
   { key: 'wikimedia:hour', unit: 'hour', budget: WIKIMEDIA_HOUR_BUDGET },
+  { key: 'wikidata-commons:hour', unit: 'hour', budget: WIKIDATA_HOUR_BUDGET },
 ];
 
 // Per-KEY budget windows a provider must satisfy to serve one request (doc 23). With
@@ -202,6 +226,9 @@ export const PROVIDER_WINDOWS: Record<ProviderId, readonly QuotaBudget[]> = {
   openverse: [{ key: 'openverse:day', unit: 'day', budget: OPENVERSE_DAY_BUDGET }],
   nasa: [{ key: 'nasa:hour', unit: 'hour', budget: NASA_HOUR_BUDGET }],
   wikimedia: [{ key: 'wikimedia:hour', unit: 'hour', budget: WIKIMEDIA_HOUR_BUDGET }],
+  'wikidata-commons': [
+    { key: 'wikidata-commons:hour', unit: 'hour', budget: WIKIDATA_HOUR_BUDGET },
+  ],
 };
 
 // provider_usage key for one key's window, e.g. "pexels:hour#<keyId>" (doc 23).
@@ -215,13 +242,19 @@ export const PROVIDER_QUOTA_CODE = {
   openverse: 'E_QUOTA_OPENVERSE',
   nasa: 'E_QUOTA_NASA',
   wikimedia: 'E_QUOTA_WIKIMEDIA',
+  'wikidata-commons': 'E_QUOTA_WIKIDATA',
 } as const;
 
 // Copyright-free archive/aggregator sources (doc 23). Curated stock (Pexels/Pixabay)
 // is reliably on-topic; these are broader but variable quality, so the cross-check
 // (doc 23 §6) holds their matches to a stricter bar on named-subject beats. Accepts a
 // raw string so callers can pass a DB column (textcard/generated → not an archive).
-const ARCHIVE_PROVIDER_SET: ReadonlySet<string> = new Set(['openverse', 'nasa', 'wikimedia']);
+const ARCHIVE_PROVIDER_SET: ReadonlySet<string> = new Set([
+  'openverse',
+  'nasa',
+  'wikimedia',
+  'wikidata-commons',
+]);
 export function isArchiveProvider(provider: string): boolean {
   return ARCHIVE_PROVIDER_SET.has(provider);
 }

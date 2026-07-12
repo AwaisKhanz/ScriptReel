@@ -167,6 +167,9 @@ function probe(provider: ProviderId, creds: ProviderCredentials): Promise<ProbeR
       return probeOpenverse(creds);
     case 'wikimedia':
       return probeWikimedia(creds);
+    default:
+      // Keyless providers (e.g. wikidata-commons) have no stored key to test.
+      return Promise.resolve(fail(0, 'provider has no testable key'));
   }
 }
 

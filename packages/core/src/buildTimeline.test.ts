@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type BuildBeatInput, type BuildTimelineInput, buildTimeline } from './buildTimeline';
+import {
+  assembleSegmentInputs,
+  type BuildBeatInput,
+  type BuildBeatMedia,
+  type BuildTimelineInput,
+  buildTimeline,
+} from './buildTimeline';
 import { FRAME_SEC } from './constants';
 import { assertTimelineInvariants } from './timeline';
 
@@ -124,5 +130,76 @@ describe('buildTimeline', () => {
       .map((s) => (s.media.kind !== 'video' ? s.media.kenburns.direction : null))
       .filter(Boolean);
     expect(new Set(dirs).size).toBe(dirs.length);
+  });
+
+  it('same-source montage: repeated video segments get distinct in-points (doc 23 §7b)', () => {
+    const source: BuildBeatInput['media'] = {
+      kind: 'video',
+      path: '/clips/long.mp4',
+      sourceDurationSec: 26,
+    };
+    const input: BuildTimelineInput = {
+      projectId: 'p',
+      createdAt: '2026-07-10T00:00:00Z',
+      render: { aspect: '16:9', width: 1920, height: 1080, preset: 'final' },
+      narration: { audioPath: '/vo.wav', durationSec: 9 },
+      beats: [
+        {
+          idx: 0,
+          text: 'a long hold cut into three windows',
+          narrationDurationSec: 9,
+          media: source,
+          segments: [{ media: source }, { media: source }, { media: source }],
+        },
+      ],
+      pauseSec: 0,
+      transitions: { style: 'cut', crossfadeSec: 0.4 },
+      music: null,
+      subtitles: null,
+      credits: '',
+    };
+    const timeline = buildTimeline(input);
+    expect(() => assertTimelineInvariants(timeline)).not.toThrow();
+    const inPoints = (timeline.beats[0]?.segments ?? []).map((s) =>
+      s.media.kind === 'video' ? (s.media.inPointSec ?? 0) : -1,
+    );
+    expect(inPoints).toHaveLength(3);
+    expect(new Set(inPoints.map((x) => x.toFixed(2))).size).toBe(3); // all different
+    // ascending — the montage plays forward through the source
+    expect([...inPoints].sort((a, b) => a - b)).toEqual(inPoints);
+  });
+});
+
+describe('assembleSegmentInputs', () => {
+  const media = (path: string): BuildBeatMedia => ({ kind: 'image', path });
+
+  it('resolves every plan entry in order, including duplicates', () => {
+    const resolved = new Map([
+      ['a', media('/a.jpg')],
+      ['b', media('/b.jpg')],
+    ]);
+    const out = assembleSegmentInputs(
+      [
+        { candidateId: 'b', weight: 2 }, // semantic plans may not start with the chosen
+        { candidateId: 'a', weight: 1 },
+        { candidateId: 'a', weight: 1 }, // same-source repeat
+      ],
+      resolved,
+    );
+    expect(out?.map((s) => s.media.path)).toEqual(['/b.jpg', '/a.jpg', '/a.jpg']);
+    expect(out?.[0]?.weight).toBe(2);
+  });
+
+  it('drops unresolved ids; <2 survivors ⇒ undefined (single visual)', () => {
+    const resolved = new Map([['a', media('/a.jpg')]]);
+    expect(
+      assembleSegmentInputs(
+        [
+          { candidateId: 'a', weight: 1 },
+          { candidateId: 'missing', weight: 1 },
+        ],
+        resolved,
+      ),
+    ).toBeUndefined();
   });
 });

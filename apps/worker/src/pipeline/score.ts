@@ -6,11 +6,16 @@ import {
   hashObject,
   invariant,
   isArchiveProvider,
+  MONTAGE_DIVERSITY_RELAXED,
+  namesSubject,
   PipelineError,
+  parseEntities,
   planMontage,
+  planSameSourceMontage,
   planSemanticMontage,
   type Rung,
   type ScoreContext,
+  type SegmentPlanItem,
   type SelectionBeat,
   type SelectionCandidate,
   type SubtitleAspect,
@@ -19,6 +24,7 @@ import {
   varietyPass,
 } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
+import { type FitItem, verifyMediaFit } from '../analysis/media-verifier';
 import { QuotaGuard } from '../providers/quota-guard';
 import { SearchClient } from '../providers/search';
 import { embedImage, embedText } from '../sidecar/client';
@@ -40,8 +46,7 @@ function candidateFingerprint(rows: readonly db.CandidateRow[]): unknown {
 // place — the cases where a generic stand-in would be wrong. Objects (e.g. "a bridge")
 // are generic enough to leave to stock, so they don't trigger the stricter cross-check.
 function beatNamesSubject(entities: db.BeatRow['entities']): boolean {
-  const e = entities as { people?: unknown[]; places?: unknown[] } | null;
-  return (e?.people?.length ?? 0) > 0 || (e?.places?.length ?? 0) > 0;
+  return namesSubject(parseEntities(entities));
 }
 
 // Ordered visual-moment phrases for a beat (doc 23 §7b); [] for a single-image beat.
@@ -62,7 +67,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'montage-3', // bump to re-run score when the selection logic changes (doc 23 §7)
+      logic: 'montage-5', // bump to re-run score when the selection logic changes (doc 23 §7)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
@@ -186,6 +191,15 @@ export const scoreStage: Stage = {
     let chosenCount = 0;
     let weakCount = 0;
     let montageCount = 0;
+    // Montage plans queued for media-fit verification (doc 23 §6), checked in one
+    // batched pass after selection so the vision calls don't serialize the beat loop.
+    const toVerify: {
+      beatId: string;
+      segments: SegmentPlanItem[];
+      moments: string[];
+      fallbackPhrase: string;
+      thumbById: Map<string, string>;
+    }[] = [];
     for (let i = 0; i < beats.length; i += 1) {
       const beat = beats[i];
       const sel = selections[i];
@@ -247,26 +261,45 @@ export const scoreStage: Stage = {
         kind: c.features.kind === 'video' ? ('video' as const) : ('image' as const),
         score: scoreById.get(c.id) ?? 0,
         thumbEmbedding: c.thumbEmbedding,
+        durationSec: c.features.durationSec,
       }));
-      // Semantic montage first (each moment → its best clip); fall back to the diverse
-      // planner when analyze gave no moments or too few assign (doc 23 §7b).
+      // Montage guarantee ladder (doc 23 §7b): semantic (each moment → its best clip)
+      // → diverse alternates → relaxed diversity → different windows of the chosen
+      // source itself. A beat long enough to montage stays a single long hold only
+      // when even its own source has no spare footage.
       const moments = parseMoments(beat.visual_moments);
-      const diverse = () =>
-        planMontage(chosenId ?? '', montageCandidates, Number(beat.est_seconds ?? 0));
-      let segments: ReturnType<typeof planMontage> = null;
+      let segments: SegmentPlanItem[] | null = null;
       if (chosenId) {
+        const dur = Number(beat.est_seconds ?? 0);
         if (moments.length >= 2) {
           const momentInputs = moments.map((p) => ({
             embedding: momentEmbByPhrase.get(p) ?? [],
             weight: p.split(/\s+/).filter(Boolean).length || 1,
           }));
-          segments = planSemanticMontage(momentInputs, montageCandidates) ?? diverse();
-        } else {
-          segments = diverse();
+          segments = planSemanticMontage(momentInputs, montageCandidates);
         }
+        segments ??= planMontage(chosenId, montageCandidates, dur);
+        segments ??= planMontage(chosenId, montageCandidates, dur, MONTAGE_DIVERSITY_RELAXED);
+        segments ??= planSameSourceMontage(chosenId, montageCandidates, dur);
       }
       if (segments) montageCount += 1;
       await db.applyBeatSelection(beat.id, ranked, chosenId, segments);
+      // Queue the plan for media-fit verification (doc 23 §6). Same-source plans are
+      // skipped — one already-τ-approved asset, nothing new to check.
+      if (segments && new Set(segments.map((s) => s.candidateId)).size > 1) {
+        const thumbById = new Map(
+          (candidatesByBeat[i] ?? []).flatMap((c) =>
+            c.thumb_path ? [[c.id, c.thumb_path] as const] : [],
+          ),
+        );
+        toVerify.push({
+          beatId: beat.id,
+          segments,
+          moments,
+          fallbackPhrase: beat.visual_description ?? beat.text,
+          thumbById,
+        });
+      }
       const top = ranked[0];
       selectionLog.push({
         beatIdx: beat.idx,
@@ -283,6 +316,44 @@ export const scoreStage: Stage = {
         55 + Math.round((40 * (i + 1)) / beats.length),
         JSON.stringify({ op: 'select', beat: i + 1, of: beats.length }),
       );
+    }
+
+    // Media-fit verification (doc 23 §6): show each planned shot's thumbnail to the
+    // vision model with the exact phrase it should depict; clear misfits are pruned
+    // (<2 survivors ⇒ the beat renders its chosen single visual). Accept-on-error —
+    // verification may never break a render.
+    let verifiedItems = 0;
+    let misfitsDropped = 0;
+    const flat: FitItem[] = [];
+    const spans: { start: number; count: number }[] = [];
+    for (const v of toVerify) {
+      spans.push({ start: flat.length, count: v.segments.length });
+      for (const seg of v.segments) {
+        flat.push({
+          thumbPath: v.thumbById.get(seg.candidateId) ?? '',
+          phrase:
+            seg.momentIdx !== undefined
+              ? (v.moments[seg.momentIdx] ?? v.fallbackPhrase)
+              : v.fallbackPhrase,
+        });
+      }
+    }
+    if (flat.length > 0) {
+      report(96, JSON.stringify({ op: 'verify', done: 0, total: flat.length }));
+      const fits = await verifyMediaFit(flat, ctx.log, ctx.signal);
+      verifiedItems = flat.length;
+      for (let vi = 0; vi < toVerify.length; vi += 1) {
+        const v = toVerify[vi];
+        const span = spans[vi];
+        if (!v || !span) continue;
+        const kept = v.segments.filter((_, j) => fits[span.start + j] !== false);
+        if (kept.length === v.segments.length) continue;
+        misfitsDropped += v.segments.length - kept.length;
+        const newPlan = kept.length >= 2 ? kept : null;
+        if (!newPlan) montageCount -= 1;
+        await db.setBeatSegments(v.beatId, newPlan);
+      }
+      report(99, JSON.stringify({ op: 'verify', done: flat.length, total: flat.length }));
     }
 
     const scoreDir = join(paths.projectDir(ctx.projectId), 'stages', 'score');
@@ -302,6 +373,8 @@ export const scoreStage: Stage = {
         chosen: chosenCount,
         weak: weakCount,
         montage: montageCount,
+        verified: verifiedItems,
+        misfitsDropped,
         rungs: rungCounts,
         thumbsEmbedded: thumbEmbeddings.size,
         thumbsFailed: failedThumbs.size,

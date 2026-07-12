@@ -37,6 +37,9 @@ export const PROVIDER_CREDENTIALS: Record<ProviderId, CredentialField[]> = {
     },
     { name: 'clientSecret', label: 'Client secret', secret: true },
   ],
+  // Keyless: Wikidata + Commons resolution needs only a descriptive User-Agent (doc 24
+  // §4). Empty ⇒ never shown in the key manager, never addable.
+  'wikidata-commons': [],
 };
 
 // Providers that accept pooled credentials (i.e. declare ≥1 field) — the single source

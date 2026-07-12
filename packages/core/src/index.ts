@@ -8,6 +8,7 @@ export * from './compose/verify';
 export * from './constants';
 export * from './domain';
 export * from './emotion';
+export * from './entity-routing';
 export * from './errors';
 export * from './hash';
 export * from './invalidation';

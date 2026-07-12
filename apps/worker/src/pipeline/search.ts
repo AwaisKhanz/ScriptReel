@@ -1,5 +1,8 @@
 import {
+  CATEGORY_DEFAULT_WANT,
+  CATEGORY_SOURCES,
   classifyDomain,
+  type EntitySearchContext,
   hashObject,
   invariant,
   isLicenseAllowed,
@@ -11,6 +14,8 @@ import {
   PER_PAGE_VIDEO,
   PipelineError,
   type PlannedRequest,
+  parseEntities,
+  parseShots,
   passesHygiene,
   planTier1Requests,
   type RawCandidate,
@@ -32,11 +37,6 @@ const BEAT_PARALLELISM = 3;
 const REQUEST_PARALLELISM = 4;
 const THUMB_PARALLELISM = 4;
 
-// Ordered visual-moment phrases for a beat (doc 23 §7b); [] for a single-image beat.
-function parseMoments(raw: db.BeatRow['visual_moments']): string[] {
-  return Array.isArray(raw) ? raw.filter((m): m is string => typeof m === 'string') : [];
-}
-
 // search stage (doc 08, tier-1 only): per beat, fire the planned provider requests
 // through cache+quota, apply hygiene, dedupe, cap at 40, download thumbs, persist
 // candidates. Tiers 2–3 belong to the score stage's fallback ladder (doc 09).
@@ -47,8 +47,10 @@ export const searchStage: Stage = {
     const beats = await db.getBeats(ctx.projectId);
     return hashObject({
       stage: 'search',
+      logic: 'entity-1', // bump when request planning changes (doc 24 §5)
       queries: beats.map((b) => b.queries),
-      moments: beats.map((b) => parseMoments(b.visual_moments)), // per-moment search (doc 23 §7b)
+      shots: beats.map((b) => parseShots(b.shots)), // entity shot plan drives routing (doc 24)
+      entities: beats.map((b) => parseEntities(b.entities)),
       aspect: ctx.settings.aspect,
       mediaPreference: ctx.settings.mediaPreference,
     });
@@ -79,12 +81,20 @@ export const searchStage: Stage = {
     const pctNow = () => Math.round((doneBeats / beats.length) * 100);
 
     const fetchRequest = (req: PlannedRequest): Promise<RawCandidate[]> => {
-      const key = `${req.provider}|${req.kind}|${orientation}|${normalizeSearchQuery(req.query)}`;
+      // The entity `want` is part of the identity — a flag and a map of the same name
+      // are different requests (doc 24 §4).
+      const key = `${req.provider}|${req.kind}|${orientation}|${normalizeSearchQuery(req.query)}|${req.entity?.want ?? ''}`;
       let pending = requestCache.get(key);
       if (!pending) {
         pending = reqLimit(async () => {
           const perPage = req.kind === 'video' ? PER_PAGE_VIDEO : PER_PAGE_PHOTO;
-          const query: SearchQuery = { query: req.query, kind: req.kind, orientation, perPage };
+          const query: SearchQuery = {
+            query: req.query,
+            kind: req.kind,
+            orientation,
+            perPage,
+            ...(req.entity ? { entity: req.entity } : {}),
+          };
           const result = await client.search(query, req.provider);
           if (result.cacheHit) cacheHits += 1;
           else networkCalls += 1;
@@ -115,18 +125,52 @@ export const searchStage: Stage = {
       );
       const plan = planTier1Requests(queries?.literal ?? [], mediaPreference, domain);
 
-      // Per-moment pool enrichment (doc 23 §7b): give a montage beat a purpose-found
-      // clip for each of its visual moments, so score's semantic matcher has one to
-      // assign. Lean (1 video + 1 image per moment, respecting mediaPreference) to keep
-      // quota bounded; image sources alternate pixabay/openverse so the pool isn't a
-      // single-provider monoculture. The 40-cap + round-robin still balance the pool.
-      parseMoments(beat.visual_moments).forEach((moment, mi) => {
-        const q = normalizeSearchQuery(moment);
+      // Per-shot entity routing (doc 24 §5): each shot resolves its named entity to
+      // AUTHORITATIVE media first (Wikidata→Commons for the real thing / flag / map, NASA
+      // for space), then a stock request on the shot phrase supplies generic texture and a
+      // fallback. Generic / non-visualizable shots get stock only. The 40-cap + round-robin
+      // keep the pool balanced and quota bounded.
+      const entityByCanonical = new Map(
+        parseEntities(beat.entities).map((e) => [e.canonical.toLowerCase(), e]),
+      );
+      parseShots(beat.shots).forEach((shot, mi) => {
+        const entity = shot.entity ? entityByCanonical.get(shot.entity.toLowerCase()) : undefined;
+        const want =
+          shot.want !== 'generic'
+            ? shot.want
+            : entity
+              ? CATEGORY_DEFAULT_WANT[entity.category]
+              : 'generic';
+
+        // Authoritative sources for a visualizable named entity.
+        if (entity?.visualizable) {
+          for (const source of CATEGORY_SOURCES[entity.category]) {
+            if (source === 'wikidata-commons') {
+              const context: EntitySearchContext = {
+                canonical: entity.canonical,
+                category: entity.category,
+                instanceOf: entity.instanceOf,
+                want,
+              };
+              plan.push({
+                provider: 'wikidata-commons',
+                kind: 'image',
+                query: entity.canonical,
+                entity: context,
+              });
+            } else if (source === 'nasa') {
+              plan.push({ provider: 'nasa', kind: 'image', query: entity.canonical });
+            }
+          }
+        }
+
+        // Stock texture + fallback, keyed on the shot phrase (also serves generic shots).
+        const q = normalizeSearchQuery(shot.phrase);
         if (!q) return;
-        if (mediaPreference !== 'photos')
-          plan.push({ provider: 'pexels', kind: 'video', query: q });
         if (mediaPreference !== 'videos')
           plan.push({ provider: mi % 2 === 0 ? 'pixabay' : 'openverse', kind: 'image', query: q });
+        if (mediaPreference !== 'photos')
+          plan.push({ provider: 'pexels', kind: 'video', query: q });
       });
 
       // All of this beat's requests in flight together (bounded by reqLimit);

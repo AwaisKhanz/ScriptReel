@@ -67,6 +67,15 @@ export const PROVIDER_PROBE: Record<ProviderId, ProbeSpec> = {
     resetKind: null,
     window: null,
   },
+  // Keyless resolver (doc 24 §4): no per-key limit to read; a cheap siteinfo call just
+  // confirms reachability. Not shown in the key manager (no credential fields).
+  'wikidata-commons': {
+    url: 'https://www.wikidata.org/w/api.php?action=query&format=json&meta=siteinfo&formatversion=2',
+    method: 'GET',
+    limitSource: 'none',
+    resetKind: null,
+    window: null,
+  },
 };
 
 function toInt(raw: string | null): number | null {

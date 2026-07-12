@@ -52,6 +52,8 @@ export function detailText(detail: string | null | undefined): string | null {
       return `Cutting clip ${e.beat}/${e.of}`;
     case 'tts':
       return `Narrating beat ${e.beat}/${e.of}`;
+    case 'verify':
+      return `Checking media fit ${e.done}/${e.total}`;
     default:
       return null;
   }

@@ -13,6 +13,7 @@ import { PexelsProvider } from './pexels';
 import { PixabayProvider } from './pixabay';
 import type { QuotaGuard } from './quota-guard';
 import { readSearchCache, writeSearchCache } from './search-cache';
+import { WikidataCommonsProvider } from './wikidata-commons';
 import { WikimediaProvider } from './wikimedia';
 
 export interface SearchResult {
@@ -36,18 +37,35 @@ export class SearchClient {
       openverse: new OpenverseProvider(),
       nasa: new NasaProvider(),
       wikimedia: new WikimediaProvider(),
+      'wikidata-commons': new WikidataCommonsProvider(),
     };
   }
 
   async search(query: SearchQuery, providerId: ProviderId): Promise<SearchResult> {
-    const cached = await readSearchCache(providerId, query.kind, query.orientation, query.query);
+    // Entity resolution varies by `want` (a flag vs a map of the same name) — keep them
+    // in distinct cache slots (doc 24 §4). Empty for ordinary stock requests.
+    const variant = query.entity?.want ?? '';
+    const cached = await readSearchCache(
+      providerId,
+      query.kind,
+      query.orientation,
+      query.query,
+      variant,
+    );
     if (cached) return { candidates: cached, cacheHit: true };
 
     try {
       const creds = await this.guard.reserve(providerId); // pooled credentials (doc 23)
       const auth = await resolveAuth(providerId, creds); // static key or refreshed OAuth token
       const candidates = await this.providers[providerId].search(query, auth);
-      await writeSearchCache(providerId, query.kind, query.orientation, query.query, candidates);
+      await writeSearchCache(
+        providerId,
+        query.kind,
+        query.orientation,
+        query.query,
+        candidates,
+        variant,
+      );
       return { candidates, cacheHit: false };
     } catch (err) {
       if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
@@ -57,7 +75,8 @@ export class SearchClient {
           err.code === 'E_QUOTA_PIXABAY' ||
           err.code === 'E_QUOTA_OPENVERSE' ||
           err.code === 'E_QUOTA_NASA' ||
-          err.code === 'E_QUOTA_WIKIMEDIA')
+          err.code === 'E_QUOTA_WIKIMEDIA' ||
+          err.code === 'E_QUOTA_WIKIDATA')
       ) {
         this.log.warn({ providerId, code: err.code }, 'quota exhausted — skipping request');
         return { candidates: [], cacheHit: false };

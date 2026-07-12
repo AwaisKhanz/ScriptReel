@@ -33,6 +33,7 @@ describe('pipeline activity detail', () => {
     );
     expect(detailText('{"op":"normalize","beat":5,"of":12}')).toBe('Cutting clip 5/12');
     expect(detailText('{"op":"tts","beat":1,"of":12}')).toBe('Narrating beat 1/12');
+    expect(detailText('{"op":"verify","done":8,"total":24}')).toBe('Checking media fit 8/24');
   });
 
   it('unknown op → null (UI hides rather than shows raw JSON)', () => {

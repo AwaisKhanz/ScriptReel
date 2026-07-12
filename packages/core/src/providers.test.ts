@@ -177,6 +177,7 @@ describe('quota windows', () => {
       'pexels:hour',
       'pexels:month',
       'pixabay:minute',
+      'wikidata-commons:hour',
       'wikimedia:hour',
     ]);
     expect([...new Set(QUOTA_BUDGETS.map((b) => b.unit))].sort()).toEqual([

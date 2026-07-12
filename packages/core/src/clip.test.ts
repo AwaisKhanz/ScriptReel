@@ -4,7 +4,9 @@ import {
   type MontageCandidate,
   type MotionSample,
   pickBestWindow,
+  pickBestWindows,
   planMontage,
+  planSameSourceMontage,
   planSemanticMontage,
   splitSegmentFrames,
 } from './clip';
@@ -54,6 +56,54 @@ describe('pickBestWindow', () => {
     ];
     const start = pickBestWindow(m, 10, 3);
     expect(start).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('pickBestWindows (same-source montage)', () => {
+  it('returns non-overlapping windows, most dynamic first-served, sorted by time', () => {
+    // motion peaks around t=5..7 and t=14..16 in a 20s source; need 2× 3s windows
+    const motions = Array.from({ length: 20 }, (_, t) =>
+      (t >= 5 && t <= 7) || (t >= 14 && t <= 16) ? 9 : 0.1,
+    );
+    const w = pickBestWindows(samples(motions), 20, 3, 2);
+    expect(w).toHaveLength(2);
+    expect(w[0]).toBeLessThan(w[1] ?? 0);
+    expect(Math.abs((w[0] ?? 0) - (w[1] ?? 0))).toBeGreaterThanOrEqual(3); // disjoint
+  });
+
+  it('always returns exactly `count` starts, even without motion samples', () => {
+    const w = pickBestWindows([], 30, 4, 3);
+    expect(w).toHaveLength(3);
+    // distinct starting points even with no signal (low-discrepancy spread)
+    expect(new Set(w.map((x) => x.toFixed(2))).size).toBe(3);
+  });
+
+  it('degenerate source (no room) → zeros, never throws', () => {
+    expect(pickBestWindows(samples([1, 1]), 2, 3, 2)).toEqual([0, 0]);
+  });
+});
+
+describe('planSameSourceMontage', () => {
+  const cand = (
+    id: string,
+    kind: 'video' | 'image',
+    durationSec: number | null,
+  ): MontageCandidate => ({ id, kind, score: 0.5, thumbEmbedding: [1, 0, 0], durationSec });
+
+  it('cuts a long chosen video into multiple windows of itself', () => {
+    const plan = planSameSourceMontage('v', [cand('v', 'video', 26)], 8);
+    expect(plan).not.toBeNull();
+    expect((plan ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((plan ?? []).every((p) => p.candidateId === 'v')).toBe(true);
+  });
+
+  it('refuses when the source has no spare footage or is an image', () => {
+    expect(planSameSourceMontage('v', [cand('v', 'video', 9)], 8)).toBeNull(); // < 1.5×
+    expect(planSameSourceMontage('i', [cand('i', 'image', null)], 8)).toBeNull();
+  });
+
+  it('refuses for beats too short to montage', () => {
+    expect(planSameSourceMontage('v', [cand('v', 'video', 30)], 3)).toBeNull();
   });
 });
 
@@ -161,18 +211,20 @@ describe('montage kind mixing (photo ⇄ video)', () => {
     expect(plan?.map((p) => p.candidateId)).toContain('i1');
   });
 
-  it('semantic montage prefers a close other-kind candidate over a same-kind top', () => {
+  it('semantic shots are image-first: a well-ranked image beats the video top', () => {
     const cands = [
       c('v1', 'video', 0.5, [1, 0, 0]),
       c('v2', 'video', 0.5, [0, 1, 0]),
+      c('v3', 'video', 0.5, [0, 0, 1]),
       c('i1', 'image', 0.5, [0, 0.9, 0.44]),
     ];
     const moments = [
-      { embedding: [1, 0, 0], weight: 1 }, // → v1
-      { embedding: [0, 1, 0], weight: 1 }, // v2 is top, but i1 ranks 2nd → mix picks i1
+      { embedding: [1, 0, 0], weight: 1 }, // → v1 (no image ranks in the window)
+      { embedding: [0, 1, 0], weight: 1 }, // v2 tops, but i1 ranks 2nd → image wins
     ];
     const plan = planSemanticMontage(moments, cands);
     expect(plan?.map((p) => p.candidateId)).toEqual(['v1', 'i1']);
+    expect(plan?.map((p) => p.momentIdx)).toEqual([0, 1]);
   });
 
   it('no other-kind candidate available → keeps the top pick (no forced mix)', () => {

@@ -38,7 +38,7 @@ export function classifyLicense(raw: string | null | undefined): LicenseClass {
     return allow('CC0-1.0', 'CC0 (public domain)', false);
   }
   if (
-    /public[\s-]?domain|\bpdm\b|publicdomain\/mark|no known copyright|no known restrictions|government work|us[\s-]?gov/.test(
+    /public[\s-]?domain|\bpdm\b|\bpd\b|publicdomain\/mark|no known copyright|no known restrictions|government work|us[\s-]?gov/.test(
       s,
     )
   ) {

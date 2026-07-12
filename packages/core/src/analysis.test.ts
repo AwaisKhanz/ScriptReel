@@ -9,6 +9,7 @@ import {
   queryHygiene,
   reconstructionMatches,
   repairVerbatim,
+  type Shot,
   splitLongBeats,
 } from './analysis';
 
@@ -23,12 +24,13 @@ function beat(text: string, over: Partial<Beat> = {}): Beat {
     keyPhrase: 'key phrase',
     emotion: 'neutral',
     shotType: 'wide',
-    entities: { people: [], places: [], objects: [] },
+    entities: [],
     queries: {
       literal: ['office dawn', 'desk lamp'],
       conceptual: 'quiet workplace',
       mood: 'soft morning',
     },
+    shots: [],
     ...over,
   };
 }
@@ -45,12 +47,17 @@ function processed(
     keyPhrase: 'k',
     emotion: 'neutral',
     shotType: 'wide',
-    entities: { people: [], places: [], objects: [] },
+    entities: [],
     queries: { literal: ['a', 'b'], conceptual: 'c', mood: 'm' },
+    shots: [],
     visualMoments: [],
     estSeconds,
     ...over,
   };
+}
+
+function shot(phrase: string): Shot {
+  return { phrase, entity: '', want: 'generic', weight: 1 };
 }
 
 describe('reconstructionMatches', () => {
@@ -105,13 +112,19 @@ describe('mergeShortBeats', () => {
     expect(out.every((b) => b.estSeconds >= 2.5)).toBe(true);
   });
 
-  it('keeps montage moments in text order when merging (doc 23 §7b)', () => {
+  it('keeps the shot plan in text order when merging (doc 24 §3)', () => {
     const beats = [
-      processed(words(20), 0, { visualMoments: ['dawn street', 'subway station'] }),
-      processed(words(4), 0, { visualMoments: ['man by gate'] }), // short trailer merges left
+      processed(words(20), 0, { shots: [shot('dawn street'), shot('subway station')] }),
+      processed(words(4), 0, { shots: [shot('man by gate')] }), // short trailer merges left
     ];
     const out = mergeShortBeats(beats, 'en-US', 1);
     expect(out.length).toBe(1);
+    expect(out[0]?.shots.map((s) => s.phrase)).toEqual([
+      'dawn street',
+      'subway station',
+      'man by gate',
+    ]);
+    // visualMoments is the derived back-compat projection of the shot plan
     expect(out[0]?.visualMoments).toEqual(['dawn street', 'subway station', 'man by gate']);
   });
 });

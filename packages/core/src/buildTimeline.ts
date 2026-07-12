@@ -1,4 +1,4 @@
-import { type MotionSample, pickBestWindow, splitSegmentFrames } from './clip';
+import { type MotionSample, pickBestWindow, pickBestWindows, splitSegmentFrames } from './clip';
 import { FRAME_SEC } from './constants';
 import { invariant } from './errors';
 import { type Timeline, TimelineSchema } from './timeline';
@@ -57,6 +57,23 @@ export interface BuildBeatInput {
 
 type OutMedia = Timeline['beats'][number]['media'];
 
+// Resolve a persisted montage plan into builder segment inputs, in plan order —
+// including the chosen candidate itself (a semantic plan's first shot is the first
+// MOMENT's match, not necessarily the chosen clip) and duplicate ids (same-source
+// montage). An unresolved id (failed download) drops its segment; <2 survivors ⇒
+// single visual. Pure, so the fetch stage's wiring stays trivially testable.
+export function assembleSegmentInputs(
+  plan: readonly { candidateId: string; weight: number }[],
+  resolved: ReadonlyMap<string, BuildBeatMedia>,
+): BuildBeatInput['segments'] | undefined {
+  if (plan.length < 2) return undefined;
+  const visuals = plan.flatMap((p) => {
+    const media = resolved.get(p.candidateId);
+    return media ? [{ media, weight: p.weight }] : [];
+  });
+  return visuals.length >= 2 ? visuals : undefined;
+}
+
 export interface BuildTimelineInput {
   projectId: string;
   createdAt: string; // ISO — passed in (core is pure, no clock)
@@ -92,13 +109,17 @@ function provenanceOf(media: BuildBeatMedia): Provenance {
   return out;
 }
 
-function buildVideoMedia(media: BuildBeatMedia, durationSec: number): OutMedia {
+function buildVideoMedia(
+  media: BuildBeatMedia,
+  durationSec: number,
+  inPointOverride?: number,
+): OutMedia {
   const source = media.kind === 'video' ? media.sourceDurationSec : undefined;
   const samples = media.kind === 'video' ? media.motionSamples : undefined;
   return {
     kind: 'video',
     path: media.path,
-    inPointSec: chooseInPoint(source, durationSec, samples),
+    inPointSec: inPointOverride ?? chooseInPoint(source, durationSec, samples),
     ...(source !== undefined ? { sourceDurationSec: source } : {}),
     ...provenanceOf(media),
   };
@@ -164,9 +185,37 @@ export function buildTimeline(input: BuildTimelineInput): Timeline {
         frames,
         beat.segments.map((s) => s.weight ?? 1),
       );
+      // Same-source montage (doc 23 §7b): when one video fills several segments, each
+      // occurrence gets its own motion-picked, non-overlapping window — different
+      // footage per cut, even though the source file is the same.
+      const pathTotals = new Map<string, number>();
+      for (const s of beat.segments) {
+        if (s.media.kind === 'video') {
+          pathTotals.set(s.media.path, (pathTotals.get(s.media.path) ?? 0) + 1);
+        }
+      }
+      const windowsByPath = new Map<string, number[]>();
+      const occByPath = new Map<string, number>();
       const segments = beat.segments.map((s, k) => {
         const segDur = (segFrames[k] ?? 1) * FRAME_SEC;
-        return { media: buildVisual(s.media, segDur), durationSec: segDur };
+        const m = s.media;
+        const repeats = m.kind === 'video' ? (pathTotals.get(m.path) ?? 0) : 0;
+        if (
+          m.kind === 'video' &&
+          repeats > 1 &&
+          m.sourceDurationSec !== undefined &&
+          m.sourceDurationSec > segDur
+        ) {
+          let windows = windowsByPath.get(m.path);
+          if (!windows) {
+            windows = pickBestWindows(m.motionSamples ?? [], m.sourceDurationSec, segDur, repeats);
+            windowsByPath.set(m.path, windows);
+          }
+          const occ = occByPath.get(m.path) ?? 0;
+          occByPath.set(m.path, occ + 1);
+          return { media: buildVideoMedia(m, segDur, windows[occ]), durationSec: segDur };
+        }
+        return { media: buildVisual(m, segDur), durationSec: segDur };
       });
       const first = segments[0];
       invariant(first !== undefined, 'buildTimeline: empty segments', 'compose');
