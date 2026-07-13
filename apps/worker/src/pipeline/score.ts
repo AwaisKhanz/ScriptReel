@@ -96,7 +96,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'authority-2', // bump to re-run score when the selection logic changes — v2: topic-authority provenance bonus + archive res de-penalize (doc 24 §7)
+      logic: 'verify-3', // bump to re-run score when the selection logic changes — v3: OCR-gate ladder candidates + ladder scoreOf mirrors rankBeat (doc 25 §5)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
@@ -405,6 +405,38 @@ export const scoreStage: Stage = {
       fallbackPhrase: string;
       thumbById: Map<string, string>;
     }[] = [];
+
+    // OCR gate for the fallback ladder (doc 25 §5, verify-everywhere): a score-stage closure the
+    // ladder calls on each rung's freshly-ingested candidates, so escalation can't reintroduce the
+    // watermarked / text-overlay stock the tier-1 gate removed. Reuses ocr() + ocrGate; short-
+    // circuits when the tier-1 pass already found OCR unavailable, so it degrades identically.
+    const gateOcrForLadder = async (
+      items: readonly { id: string; thumbPath: string }[],
+      era: Era,
+    ): Promise<Map<string, { veto: boolean; penalty: number }>> => {
+      const verdicts = new Map<string, { veto: boolean; penalty: number }>();
+      if (ocrSkipped || items.length === 0) return verdicts;
+      try {
+        const paths = [...new Set(items.map((it) => it.thumbPath))];
+        const res = await ocr(paths, ctx.signal);
+        const byPath = new Map<string, OcrResult>(
+          res.results.map((r) => [
+            r.path,
+            { text: r.text, coverage: r.coverage, wordCount: r.wordCount },
+          ]),
+        );
+        for (const it of items) {
+          const result = byPath.get(it.thumbPath);
+          if (!result) continue;
+          const v = ocrGate(result, { era });
+          if (v.veto || v.penalty > 0) verdicts.set(it.id, { veto: v.veto, penalty: v.penalty });
+        }
+      } catch (err) {
+        ctx.log.warn({ err }, 'ladder OCR gate skipped — continuing');
+      }
+      return verdicts;
+    };
+
     for (let i = 0; i < beats.length; i += 1) {
       const beat = beats[i];
       const sel = selections[i];
@@ -443,8 +475,15 @@ export const scoreStage: Stage = {
           // visualizable named entity — so generation never fabricates a real subject.
           nonEntity: !parseEntities(beat.entities).some((e) => e.visualizable),
           visualDescription: beat.visual_description ?? beat.text,
+          era: beatEra(beat.era),
         };
-        const result = await runLadder(ladderBeat, { ctx, scoreCtx, client, chosenAssetKeys });
+        const result = await runLadder(ladderBeat, {
+          ctx,
+          scoreCtx,
+          client,
+          chosenAssetKeys,
+          gateOcr: gateOcrForLadder,
+        });
         chosenId = result.chosenId;
         chosenAssetKey = result.chosenAssetKey;
         rung = result.rung;

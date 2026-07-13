@@ -2,9 +2,11 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { paths } from '@scriptreel/config';
 import {
+  AUTHORITY_BONUS,
   baseScore,
   broadenQuery,
   cosine,
+  type Era,
   matchesOrientation,
   orientationForAspect,
   PER_PAGE_PHOTO,
@@ -67,6 +69,8 @@ export interface LadderBeat {
   // The beat's rich visual description — used verbatim as the generation prompt (falls back
   // to conceptual / keyPhrase when empty).
   visualDescription: string;
+  // The beat's era — feeds the OCR gate's era-contradiction veto on fallback candidates (doc 25 §5).
+  era: Era;
 }
 
 export interface LadderDeps {
@@ -74,6 +78,13 @@ export interface LadderDeps {
   scoreCtx: ScoreContext;
   client: SearchClient;
   chosenAssetKeys: Set<string>; // assets chosen by earlier beats — avoid reuse
+  // Verify-everywhere (doc 25 §5): OCR-gate a rung's freshly-ingested candidates so escalation
+  // can't reintroduce watermarked / text-overlay stock the tier-1 gate would have caught. Provided
+  // by the score stage (reuses ocr() + ocrGate); absent / OCR-unavailable ⇒ a no-op (invariant 7).
+  gateOcr?: (
+    items: readonly { id: string; thumbPath: string }[],
+    era: Era,
+  ) => Promise<Map<string, { veto: boolean; penalty: number }>>;
 }
 
 export interface LadderResult {
@@ -198,7 +209,27 @@ async function fireRung(
       thumbEmbedding: te,
     });
   }
-  return out;
+
+  // Verify-everywhere (doc 25 §5): OCR-gate the freshly-ingested fallback candidates so a
+  // watermarked / text-overlay stock image can't win through escalation (the tier-1 gate only
+  // saw the primary pool). Veto drops it; a penalty rides along and is applied in scoreOf.
+  // Degrades to a no-op when no gate is wired or OCR is unavailable (invariant 7).
+  if (!deps.gateOcr || out.length === 0) return out;
+  const thumbById = new Map<string, string>();
+  for (const r of rows) if (r.thumb_path) thumbById.set(r.id, r.thumb_path);
+  const items = out.flatMap((c) => {
+    const thumb = thumbById.get(c.id);
+    return thumb ? [{ id: c.id, thumbPath: thumb }] : [];
+  });
+  const verdicts = await deps.gateOcr(items, beat.era);
+  if (verdicts.size === 0) return out;
+  const gated: SelectionCandidate[] = [];
+  for (const c of out) {
+    const v = verdicts.get(c.id);
+    if (v?.veto) continue; // egregious text overlay / era contradiction — drop from the fallback pool
+    gated.push(v && v.penalty > 0 ? { ...c, ocrPenalty: v.penalty } : c);
+  }
+  return gated;
 }
 
 async function makeTextcard(beat: LadderBeat, ctx: ProjectCtx): Promise<SelectionCandidate> {
@@ -306,8 +337,14 @@ async function makeGenerated(
 export async function runLadder(beat: LadderBeat, deps: LadderDeps): Promise<LadderResult> {
   const { scoreCtx } = deps;
   const pool: SelectionCandidate[] = [...beat.existing];
-  const scoreOf = (c: SelectionCandidate): number =>
-    baseScore(c.sim, c.features, scoreCtx, beat.beatDurationSec).base;
+  // Mirror rankBeat's scoring so the ladder agrees with tier-1: base + authority provenance bonus
+  // (doc 24 §7) − the intrinsic OCR/identity/VLM penalties (doc 25 §5). Without the penalty terms a
+  // gated tier-1 candidate — or a newly OCR-penalized fallback one — would be scored as if clean.
+  const scoreOf = (c: SelectionCandidate): number => {
+    const base = baseScore(c.sim, c.features, scoreCtx, beat.beatDurationSec).base;
+    const authority = c.authoritative ? AUTHORITY_BONUS : 0;
+    return base + authority - (c.ocrPenalty ?? 0) - (c.identityPenalty ?? 0) - (c.vlmPenalty ?? 0);
+  };
 
   const finish = (rung: Rung, chosen: SelectionCandidate): LadderResult => {
     const ranked = [...pool]
