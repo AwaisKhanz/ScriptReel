@@ -7,13 +7,16 @@ import {
 } from '@scriptreel/core';
 import { execa } from 'execa';
 import { FFMPEG_BIN } from './bin';
-import { hwEncodeArgs } from './encoder';
+import { getEncodeArgs } from './encoder';
 
 // Pass A per-beat normalization (doc 13): every source becomes a uniform W×H, 30 fps,
 // yuv420p, SAR 1, silent clip of length L_i. Video is scaled/cropped/looped/held;
 // stills get a Ken Burns move (pre-scaled 2× to kill zoompan jitter).
 
-const ENCODE = hwEncodeArgs(NORMALIZE_BITRATE); // platform HW/SW encoder (see ffmpeg/encoder.ts)
+// Encoder args (`-c:v …`) shared by every normalize call: the configured HW encoder, probed once
+// and demoted to libx264 if it can't open (see ffmpeg/encoder.ts). Resolved at each function's
+// start; the probe runs at most once (cached), so repeat calls are effectively free.
+const encodeArgs = (): Promise<string[]> => getEncodeArgs(NORMALIZE_BITRATE);
 
 async function ff(args: string[], outPath: string, signal?: AbortSignal): Promise<void> {
   try {
@@ -51,6 +54,7 @@ export interface NormalizeVideoParams {
 }
 
 export async function normalizeVideo(p: NormalizeVideoParams): Promise<void> {
+  const ENCODE = await encodeArgs();
   const L = p.lengthSec;
   const vf = coverVf(p.width, p.height);
   const t = L.toFixed(3);
@@ -134,6 +138,7 @@ export interface NormalizeStillParams {
 }
 
 export async function normalizeStill(p: NormalizeStillParams): Promise<void> {
+  const ENCODE = await encodeArgs();
   const frames = Math.round(p.lengthSec * 30);
   const vf = kenBurnsVf(p.kenburns, p.width, p.height, frames);
   await ff(
@@ -171,6 +176,7 @@ export async function concatClips(
     // Nothing to join — a degenerate single-segment beat; the caller normalized directly.
     return;
   }
+  const ENCODE = await encodeArgs();
   const args: string[] = [];
   for (const inp of inputs) args.push('-i', inp);
   const chain = inputs.map((_, i) => `[${i}:v]`).join('');

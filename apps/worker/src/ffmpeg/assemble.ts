@@ -1,7 +1,7 @@
 import { type ComposePlan, NORMALIZE_BITRATE, PipelineError } from '@scriptreel/core';
 import { execa } from 'execa';
 import { FFMPEG_BIN } from './bin';
-import { hwEncodeArgs } from './encoder';
+import { getEncodeArgs } from './encoder';
 
 // Compose Pass B (visual assembly) + Pass C (subtitles/audio/encode), doc 13.
 
@@ -77,7 +77,7 @@ export async function assembleVisual(
       parts.join(';'),
       '-map',
       `[${vout}]`,
-      ...hwEncodeArgs(NORMALIZE_BITRATE),
+      ...(await getEncodeArgs(NORMALIZE_BITRATE)),
       outPath,
     ],
     'Pass B (assemble)',
@@ -135,7 +135,7 @@ export async function encodeFinal(p: PassCParams): Promise<void> {
 
   const encode =
     p.preset === 'final'
-      ? [...hwEncodeArgs(p.aspect === '9:16' ? '12M' : '10M'), '-profile:v', 'high']
+      ? [...(await getEncodeArgs(p.aspect === '9:16' ? '12M' : '10M')), '-profile:v', 'high']
       : ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26'];
 
   await ff(
