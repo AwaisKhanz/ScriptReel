@@ -58,11 +58,28 @@ class OcrError(Exception):
         self.code = "E_OCR"
 
 
+def _configure_tesseract_cmd() -> None:
+    """Point pytesseract at an explicit tesseract binary when TESSERACT_CMD is set. The Windows
+    UB-Mannheim installer drops tesseract.exe under Program Files but frequently does NOT add it
+    to PATH, so pytesseract's default ``"tesseract"`` lookup fails; setting TESSERACT_CMD to the
+    full exe path fixes it without editing PATH. No-op when unset (relies on PATH, as on Unix)."""
+    cmd = os.environ.get("TESSERACT_CMD")
+    if not cmd:
+        return
+    try:
+        import pytesseract
+
+        pytesseract.pytesseract.tesseract_cmd = cmd
+    except Exception:  # noqa: BLE001 — an unimportable pytesseract is handled by available()
+        pass
+
+
 def available() -> bool:
     """True when the tesseract binary is importable and callable. Cached — the probe
     (an ``import`` + a version subprocess call) runs at most once per process."""
     global _available
     if _available is None:
+        _configure_tesseract_cmd()
         try:
             import pytesseract
 
@@ -146,7 +163,11 @@ def _run_ocr_sync(paths: list[str]) -> tuple[list[dict], list[str]]:
 async def run_ocr(paths: list[str]) -> tuple[list[dict], list[str]]:
     # Probe before threading — a missing binary is a 500 the worker catches, not work.
     if not available():
-        raise OcrError("E_OCR_UNAVAILABLE: tesseract not installed — brew install tesseract")
+        raise OcrError(
+            "E_OCR_UNAVAILABLE: tesseract not found — install it (macOS: `brew install "
+            "tesseract`; Windows: `winget install UB-Mannheim.TesseractOCR`), then put it on "
+            "PATH or set TESSERACT_CMD to the full path of tesseract.exe"
+        )
     if not paths:
         return [], []
     return await asyncio.to_thread(_run_ocr_sync, paths)

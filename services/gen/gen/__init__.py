@@ -18,6 +18,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 os.environ.setdefault("HF_HOME", str(_REPO_ROOT / "data" / "models"))
 if sys.platform == "win32":
-    # Windows blocks symlinks without admin / Developer Mode (WinError 1314); tell
-    # huggingface_hub to COPY blobs into snapshots instead. A little more disk, always works.
-    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+    # No symlink privilege without admin / Developer Mode → huggingface_hub copies blobs into
+    # snapshots instead (works, a little more disk). Silence its warning. (mflux is Apple-only,
+    # so this branch is inert where gen actually runs — kept correct for consistency.)
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")

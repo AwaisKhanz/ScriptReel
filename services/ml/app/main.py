@@ -13,10 +13,41 @@ from pathlib import Path
 # HF_HOME → DATA_DIR/models (doc 14), set before any model library is imported.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 os.environ.setdefault("HF_HOME", str(_REPO_ROOT / "data" / "models"))
-if platform.system() == "Windows":
-    # Windows blocks symlinks without admin / Developer Mode (WinError 1314); tell
-    # huggingface_hub to COPY blobs into snapshots instead. A little more disk, always works.
-    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+
+
+def _make_hf_symlink_probe_threadsafe() -> None:
+    """On Windows, huggingface_hub.are_symlinks_supported() caches an optimistic True into its
+    per-directory map BEFORE its live symlink test finishes, then corrects to False on failure.
+    With transformers' multi-threaded snapshot_download a sibling thread reads the stale True,
+    calls os.symlink, and dies with WinError 1314 (reliably on a 72-file repo like Kokoro).
+    Serialize the probe behind a lock so its result is cached before any concurrent caller reads
+    it — this is what lets the sidecar download models on demand on Windows without a random 500.
+    Idempotent, guarded (a huggingface_hub rename just leaves the original behavior), no-op off
+    Windows. setdefault the warning env too: symlink-less copy caching is expected here."""
+    if platform.system() != "Windows":
+        return
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    try:
+        import threading
+
+        from huggingface_hub import file_download
+
+        original = file_download.are_symlinks_supported
+        if getattr(original, "_scriptreel_locked", False):
+            return
+        lock = threading.Lock()
+
+        def locked(cache_dir: object = None) -> bool:
+            with lock:
+                return original(cache_dir)
+
+        locked._scriptreel_locked = True  # type: ignore[attr-defined]
+        file_download.are_symlinks_supported = locked
+    except Exception:  # noqa: BLE001 — best-effort; never block startup on a patch failure
+        pass
+
+
+_make_hf_symlink_probe_threadsafe()
 
 from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402

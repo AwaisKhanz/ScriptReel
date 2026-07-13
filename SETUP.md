@@ -86,13 +86,18 @@ winget install Python.Python.3.12       # Python 3.12 (NOT 3.13)
 winget install astral-sh.uv             # uv (Python package manager)
 winget install Git.Git GitHub.GitLFS
 winget install Gyan.FFmpeg              # a libass-enabled FFmpeg build
-winget install UB-Mannheim.TesseractOCR # Tesseract OCR (add its folder to PATH)
+winget install UB-Mannheim.TesseractOCR # Tesseract OCR (see PATH note below)
 corepack enable pnpm                    # pnpm (ships with Node via corepack)
 ```
 
 - **espeak-ng**: install the MSI from <https://github.com/espeak-ng/espeak-ng/releases>.
 - **FFmpeg**: confirm your build has libass — `ffmpeg -filters | findstr ass` must list the
   `ass`/`subtitles` filters. Set `FFMPEG_PATH` to the full `ffmpeg.exe` path (§5).
+- **Tesseract PATH**: the UB-Mannheim installer usually does **not** add tesseract to PATH, so
+  the OCR gate reports `E_OCR_UNAVAILABLE` (it degrades — video still renders — but the gate is
+  skipped). Fix it either way: tick *"Add to PATH"* during install, **or** set
+  `TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe` in `.env`. Verify with
+  `tesseract --version`.
 - **`make` is not on Windows** — use the raw commands shown in §3/§6 instead of `make …`.
 
 ---

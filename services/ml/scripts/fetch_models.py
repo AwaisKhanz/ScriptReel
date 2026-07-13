@@ -28,9 +28,18 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 os.environ.setdefault("HF_HOME", str(_REPO_ROOT / "data" / "models"))
 if sys.platform == "win32":
-    # Windows blocks symlinks without admin / Developer Mode (WinError 1314); tell
-    # huggingface_hub to COPY blobs into snapshots instead. A little more disk, always works.
-    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+    # No symlink privilege without admin / Developer Mode, so huggingface_hub copies blobs into
+    # snapshots instead (works, a little more disk). Silence its per-repo warning — the actual
+    # crash (WinError 1314) is a download-concurrency race, handled by _SNAPSHOT_KW below.
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+# huggingface_hub.are_symlinks_supported() writes an optimistic True into its per-directory
+# cache BEFORE its live symlink test finishes, then corrects to False on failure. With the
+# default 8-thread snapshot_download this races on Windows (no symlink privilege): a sibling
+# thread reads the stale True, calls os.symlink, and dies with WinError 1314 (reliably on a
+# 72-file repo like Kokoro). Serialize file downloads on Windows to dodge the race — this is a
+# one-time fetch, so the lost parallelism is irrelevant, and copy-mode caching then succeeds.
+_SNAPSHOT_KW: dict[str, int] = {"max_workers": 1} if sys.platform == "win32" else {}
 
 # (repo id, human label, approx size, note). Kokoro + SigLIP are cross-platform (torch); the
 # alignment model differs by platform — mlx-whisper on Apple, faster-whisper (CTranslate2)
@@ -94,7 +103,7 @@ def _fetch_list(models: list[tuple[str, str, str, str]], heading: str) -> int:
     for repo_id, label, size, note in models:
         suffix = f"  [{note}]" if note else ""
         print(f"-> {label} ({size}) — {repo_id}{suffix}")
-        path = snapshot_download(repo_id=repo_id)
+        path = snapshot_download(repo_id=repo_id, **_SNAPSHOT_KW)
         print(f"   ok: {path}\n")
     print("Done.")
     return 0
@@ -115,7 +124,7 @@ def _fetch_identity() -> int:
     for repo_id, label, size, note in IDENTITY_MODELS:
         suffix = f"  [{note}]" if note else ""
         print(f"-> {label} ({size}) — {repo_id}{suffix}")
-        path = snapshot_download(repo_id=repo_id)
+        path = snapshot_download(repo_id=repo_id, **_SNAPSHOT_KW)
         print(f"   ok: {path}\n")
 
     # InsightFace buffalo_l (~300 MB) has no HF repo; constructing the app triggers its
@@ -165,7 +174,9 @@ def main() -> int:
         return 1
 
     targets = list(MODELS)
-    if not args.no_flux:
+    # FLUX runs only through services/gen's mflux (Apple MLX) — unusable on Windows/Linux, where
+    # the generative rung degrades to a text card. Never fetch 6.5 GB no platform here can use.
+    if _IS_APPLE and not args.no_flux:
         targets.append(FLUX)
 
     print(f"HF_HOME = {os.environ.get('HF_HOME', '<default HF cache>')}")
@@ -174,7 +185,7 @@ def main() -> int:
     for repo_id, label, size, note in targets:
         suffix = f"  [{note}]" if note else ""
         print(f"-> {label} ({size}) — {repo_id}{suffix}")
-        path = snapshot_download(repo_id=repo_id)
+        path = snapshot_download(repo_id=repo_id, **_SNAPSHOT_KW)
         print(f"   ok: {path}\n")
 
     print("Done.")
