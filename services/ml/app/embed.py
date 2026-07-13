@@ -10,10 +10,13 @@ serialises the heavy forward passes; light ops (health) still interleave.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 
 import numpy as np
+
+_log = logging.getLogger("scriptreel.embed")
 
 MODEL_ID = os.environ.get("SIGLIP_MODEL", "google/siglip2-base-patch16-224")
 _TEXT_MAX_TOKENS = 64  # SigLIP text tower is fixed-length; must pad to max_length
@@ -58,6 +61,9 @@ async def _ensure_loaded() -> None:
             _model = model
             _processor = AutoProcessor.from_pretrained(MODEL_ID)
         except Exception as exc:  # noqa: BLE001 — surface any load failure as E_MODEL_LOAD
+            # Log the full traceback (like ocr/vlm) — the endpoint only returns the short code,
+            # so without this a SigLIP load failure is undiagnosable from the sidecar console.
+            _log.warning("SigLIP load failed (%s) on device=%s", MODEL_ID, _device, exc_info=True)
             raise EmbedError(f"E_MODEL_LOAD: SigLIP 2 ({MODEL_ID}) — {exc}") from exc
 
 

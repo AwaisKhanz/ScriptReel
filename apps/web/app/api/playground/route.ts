@@ -59,8 +59,14 @@ async function postSidecar<T>(path: string, body: unknown, ms: number): Promise<
     signal: AbortSignal.timeout(ms),
   });
   if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as { error?: { code?: string } } | null;
-    throw new Error(err?.error?.code ?? `sidecar ${path} → HTTP ${res.status}`);
+    const err = (await res.json().catch(() => null)) as {
+      error?: { code?: string; message?: string };
+    } | null;
+    // Surface the sidecar's full message (e.g. "E_MODEL_LOAD: SigLIP 2 (…) — <cause>"), not just
+    // the code — this is a diagnostic tool, so the real error is the whole point.
+    throw new Error(
+      err?.error?.message ?? err?.error?.code ?? `sidecar ${path} → HTTP ${res.status}`,
+    );
   }
   return res.json() as Promise<T>;
 }
