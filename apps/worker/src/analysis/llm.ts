@@ -49,8 +49,12 @@ export function jsonFormat(
   name: string,
   schema: Record<string, unknown>,
 ): NonNullable<OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']> {
+  // Both providers use grammar-constrained json_schema so the model CANNOT omit a required field
+  // (json_object alone only guarantees valid JSON, not the shape → E_LLM_SCHEMA). It also forces
+  // JSON from the first token, which suppresses a reasoning model's <think> ramble (faster). Ollama
+  // reads json_schema.schema; `strict` is OpenAI-only (Ollama ignores it, so we omit it there).
   return getLlm().provider === 'ollama'
-    ? { type: 'json_object' }
+    ? { type: 'json_schema', json_schema: { name, schema } }
     : { type: 'json_schema', json_schema: { name, strict: true, schema } };
 }
 
