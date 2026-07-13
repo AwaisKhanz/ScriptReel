@@ -53,8 +53,10 @@ const EnvSchema = z.object({
   OPENAI_MODEL: z.string().min(1).default('gpt-4o-mini'),
   // Local LLM via Ollama (active when LLM_PROVIDER=ollama). Text model drives analyze + knowledge
   // expansion; the vision model drives media-fit verification (it must be able to see images).
+  // Use a NON-reasoning model for text — reasoning models (qwen3, deepseek-r1) "think" before
+  // answering, which is slow and muddies the structured JSON; coder models are best at the schema.
   OLLAMA_BASE_URL: z.string().min(1).default('http://localhost:11434/v1'),
-  OLLAMA_MODEL: z.string().min(1).default('qwen3:14b'),
+  OLLAMA_MODEL: z.string().min(1).default('qwen2.5-coder:14b'),
   OLLAMA_VISION_MODEL: z.string().min(1).default('qwen2.5vl:7b'),
   FFMPEG_PATH: z.string().optional(),
   // Video encoder override. Default is platform-aware (VideoToolbox on Apple, libx264 elsewhere);
