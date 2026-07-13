@@ -184,6 +184,12 @@ export function planTier1Requests(
   literal: readonly string[],
   mediaPreference: 'videos' | 'mixed' | 'photos',
   sources: readonly ProviderId[] = [],
+  // The beat's specific subject term (a named entity) for the archives. Unlike stock, archives
+  // (Wikimedia/LoC/Met/NASA/…) reward the REAL name — "Apollo 11" finds the landing, the generic
+  // name-stripped literal ("astronauts moon surface") finds tangential space imagery. Empty ⇒
+  // archives fall back to the literal (a beat with no named entity). Stock always uses the literal
+  // (doc 07: stock queries stay generic).
+  archiveQuery = '',
 ): PlannedRequest[] {
   const l0 = literal[0] ?? '';
   const l1 = literal[1] ?? l0;
@@ -203,11 +209,12 @@ export function planTier1Requests(
   // which sources a beat warrants). Each fires on the beat literal, gated by its OWN media kind so
   // image archives (nasa/wikimedia/met) serve mixed/photos and the video archive (internet-archive)
   // serves mixed/videos. An id with no archive kind (a base/stock provider) is ignored here.
+  const archiveQ = archiveQuery || l0; // the named subject when we have one, else the literal
   for (const id of sources) {
     const kind = ARCHIVE_KIND[id];
     if (!kind) continue;
     const wanted = kind === 'video' ? mediaPreference !== 'photos' : mediaPreference !== 'videos';
-    if (wanted) requests.push({ provider: id, kind, query: l0 });
+    if (wanted) requests.push({ provider: id, kind, query: archiveQ });
   }
   return requests.filter((r) => r.query.length > 0);
 }

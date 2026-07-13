@@ -50,7 +50,7 @@ export const searchStage: Stage = {
     const beats = await db.getBeats(ctx.projectId);
     return hashObject({
       stage: 'search',
-      logic: 'topic-4', // bump when request planning changes — v4: unified topic/era source routing (topics.ts)
+      logic: 'topic-5', // bump when request planning changes — v5: archives query the beat's named subject (entity.searchTerms)
       queries: beats.map((b) => b.queries),
       shots: beats.map((b) => parseShots(b.shots)), // entity shot plan drives routing (doc 24)
       entities: beats.map((b) => parseEntities(b.entities)),
@@ -138,9 +138,21 @@ export const searchStage: Stage = {
       );
       const era: Era = beat.era === 'historical' || beat.era === 'modern' ? beat.era : 'timeless';
       const sources = routeTopicSources(topic, era);
-      const plan = planTier1Requests(queries?.literal ?? [], mediaPreference, sources);
+      // Archives reward the REAL subject name (unlike stock, which stays generic per doc 07): query
+      // the topic archives with the beat's dominant named entity — the LLM's search-tuned term, else
+      // its canonical name. This finally consumes entity.searchTerms (previously extracted, unused).
+      const dominant = entities.find((e) => e.visualizable && e.canonical.length > 0);
+      const archiveQuery = dominant
+        ? normalizeSearchQuery(dominant.searchTerms[0] || dominant.canonical)
+        : '';
+      const plan = planTier1Requests(
+        queries?.literal ?? [],
+        mediaPreference,
+        sources,
+        archiveQuery,
+      );
       // Terminal visibility of the routing decision per beat (doc 16 — surface every step).
-      ctx.log.info({ beat: beat.idx, topic, era, sources }, 'search/route');
+      ctx.log.info({ beat: beat.idx, topic, era, sources, archiveQuery }, 'search/route');
 
       // Per-shot entity routing (doc 24 §5): each shot resolves its named entity to
       // AUTHORITATIVE media first (Wikidata→Commons for the real thing / flag / map, NASA

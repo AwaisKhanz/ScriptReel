@@ -119,6 +119,22 @@ describe('planTier1Requests', () => {
     expect(plan).toEqual(base);
   });
 
+  it('queries archives with the named-subject term, stock with the generic literal', () => {
+    const plan = planTier1Requests(literal, 'mixed', ['nasa', 'wikimedia'], 'apollo 11');
+    // archives get the real subject — they reward the name
+    expect(plan.find((r) => r.provider === 'nasa')?.query).toBe('apollo 11');
+    expect(plan.find((r) => r.provider === 'wikimedia')?.query).toBe('apollo 11');
+    // stock stays on the generic literal (doc 07)
+    expect(plan.find((r) => r.provider === 'pexels')?.query).toBe('sunrise beach');
+    expect(plan.find((r) => r.provider === 'openverse')?.query).toBe('sunrise beach');
+  });
+
+  it('falls back to the literal for archives when no subject term is given', () => {
+    expect(
+      planTier1Requests(['lit'], 'mixed', ['nasa']).find((r) => r.provider === 'nasa')?.query,
+    ).toBe('lit');
+  });
+
   it('falls back to literal[0] when literal[1] is missing, and drops empty queries', () => {
     expect(planTier1Requests(['only'], 'videos')).toEqual([
       { provider: 'pexels', kind: 'video', query: 'only' },
