@@ -123,7 +123,12 @@ export async function encodeFinal(p: PassCParams): Promise<void> {
   }
   if (p.assPath)
     vFilters.push(`subtitles=${ffFilterPath(p.assPath)}:fontsdir=${ffFilterPath(p.fontsDir)}`);
-  const videoChain = `[0:v]${vFilters.length ? vFilters.join(',') : 'null'}[v]`;
+  // Pin 8-bit 4:2:0 before H.264. With libx264 (which advertises 4:2:2/4:4:4 support) the subtitles
+  // filter otherwise negotiates up to 4:4:4, which `-profile:v high` rejects ("high profile doesn't
+  // support 4:4:4"); it also keeps output broadly playable. VideoToolbox on macOS only advertises
+  // 4:2:0 so this never surfaced there — make it explicit for every encoder. Always last.
+  vFilters.push('format=yuv420p');
+  const videoChain = `[0:v]${vFilters.join(',')}[v]`;
 
   let audioChain: string;
   if (p.music) {
