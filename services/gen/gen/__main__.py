@@ -34,6 +34,10 @@ BASE_MODEL = "schnell"
 # AI) — fine for dev; point GEN_MODEL at a permissively-licensed model before any commercial use.
 SDXL_MODEL = os.environ.get("GEN_MODEL", "stabilityai/sdxl-turbo")
 _SDXL_MAX_SIDE = 1024  # SDXL-Turbo is 512–1024-native; cap the long side (the image is panned anyway)
+# Fetch ONLY the fp16 diffusers weights + configs (~6.5 GB). A bare snapshot_download pulls the
+# WHOLE repo — fp32 weights, ~7 GB single-file checkpoints, and ONNX/OpenVINO exports (~55 GB for
+# sdxl-turbo). from_pretrained(variant="fp16") needs exactly this subset.
+_SDXL_ALLOW = ["*.json", "*/*.json", "*/*.txt", "*/*.fp16.safetensors"]
 
 _MIN_DIM = 256
 
@@ -110,7 +114,7 @@ def _check_diffusers() -> int:
     try:
         from huggingface_hub import snapshot_download
 
-        snapshot_download(repo_id=SDXL_MODEL, local_files_only=True)
+        snapshot_download(repo_id=SDXL_MODEL, allow_patterns=_SDXL_ALLOW, local_files_only=True)
     except Exception as exc:  # noqa: BLE001
         print(f"gen: model {SDXL_MODEL} not in cache ({exc}) — run `make fetch-gen`", file=sys.stderr)
         return 1
@@ -121,8 +125,8 @@ def _check_diffusers() -> int:
 def _download_diffusers() -> int:
     from huggingface_hub import snapshot_download
 
-    print(f"Downloading {SDXL_MODEL} → {os.environ.get('HF_HOME', '<default>')}")
-    print(f"OK {snapshot_download(repo_id=SDXL_MODEL)}")
+    print(f"Downloading {SDXL_MODEL} (fp16 weights, ~6.5 GB) → {os.environ.get('HF_HOME', '<default>')}")
+    print(f"OK {snapshot_download(repo_id=SDXL_MODEL, allow_patterns=_SDXL_ALLOW)}")
     return 0
 
 
