@@ -1,20 +1,37 @@
 [project]
 name = "scriptreel-gen"
 version = "0.0.0"
-description = "ScriptReel generative fallback — isolated FLUX.1-schnell (mflux) image generation (doc 25 §5-E)."
-# Own venv, deliberately separate from services/ml: mflux needs numpy>=2 + torch>=2.7 +
-# transformers>=5, which conflicts with the sidecar's pinned numpy<2 (mlx-whisper's numba).
-# The worker never imports this — it shells out `uv run` here, exactly like ffmpeg (doc 25 §5-E).
+description = "ScriptReel generative fallback — FLUX.1-schnell (mflux/Apple) + SDXL-Turbo (diffusers/CUDA)."
+# Own venv, deliberately separate from services/ml: these heavy image-gen deps (numpy>=2,
+# torch>=2.7, diffusers) conflict with the sidecar's pinned numpy<2 (mlx-whisper's numba). The
+# worker never imports this — it shells out `uv run` here, exactly like ffmpeg (doc 25 §5-E).
 requires-python = "==3.12.*"
 dependencies = [
-  "mflux",
   "pillow",
-  "numpy>=2",
-  # mflux needs torch>=2.7.1; cap the upper bound so the resolver can't over-pick a
-  # version with no macOS arm64 wheel (doc 25 §9, Step 8).
-  "torch>=2.7,<2.9",
   "huggingface-hub>=0.27",
+  # --- Apple Silicon: FLUX.1-schnell 4-bit via mflux (MLX) ---------------------------------
+  # torch capped <2.9 so the resolver can't over-pick a version with no macOS arm64 wheel (doc 25 §9).
+  "mflux; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "numpy>=2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "torch>=2.7,<2.9; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  # --- Windows / Linux: SDXL-Turbo via diffusers on CUDA ----------------------------------
+  # torch comes from the cu128 index (Blackwell sm_120 needs CUDA 12.8) — see [tool.uv.sources].
+  "torch>=2.7; sys_platform != 'darwin' or platform_machine != 'arm64'",
+  "diffusers>=0.31; sys_platform != 'darwin' or platform_machine != 'arm64'",
+  "transformers>=4.44; sys_platform != 'darwin' or platform_machine != 'arm64'",
+  "accelerate>=0.34; sys_platform != 'darwin' or platform_machine != 'arm64'",
+  "safetensors>=0.4; sys_platform != 'darwin' or platform_machine != 'arm64'",
 ]
+
+# Blackwell (RTX 50, sm_120) needs a CUDA-12.8 torch build; pull it from PyTorch's cu128 index on
+# non-Apple. Apple Silicon gets its arm64 wheel from PyPI (MLX/mflux; torch is CPU-side there).
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 
 [tool.uv]
 package = false

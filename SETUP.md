@@ -17,20 +17,21 @@ everywhere. Three steps swap backend by platform — Apple uses MLX; elsewhere u
 |---|---|---|
 | Alignment (word timings) | mlx-whisper (MLX) | **faster-whisper** (CTranslate2) |
 | VLM checklist (doc 25 §5-D) | Qwen2.5-VL via **mlx-vlm** | Qwen2.5-VL via **Ollama** (or LM Studio) |
-| FLUX generative fallback | FLUX via **mflux** (MLX) | → styled text card (for now) |
+| Generative fallback (abstract beats) | FLUX via **mflux** (MLX) | **SDXL-Turbo** via diffusers (CUDA) |
 
-| Platform | Web + Worker | ML sidecar | VLM check | FLUX gen |
+| Platform | Web + Worker | ML sidecar | VLM check | Image-gen fallback |
 |---|---|---|---|---|
-| **macOS (Apple Silicon)** | ✅ | ✅ full — the target platform | ✅ mlx-vlm | ✅ mflux |
-| **macOS (Intel)** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ❌ → text card |
-| **Windows 10/11** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ❌ → text card |
-| **Linux** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ❌ → text card |
+| **macOS (Apple Silicon)** | ✅ | ✅ full — the target platform | ✅ mlx-vlm | ✅ FLUX (mflux) |
+| **macOS (Intel)** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ❌ → text card (no CUDA) |
+| **Windows 10/11** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ✅ SDXL-Turbo (CUDA GPU) |
+| **Linux** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ✅ SDXL-Turbo (CUDA GPU) |
 
 **Every platform renders a complete video with the full verification cascade** — real footage
 matched by SigLIP, natural TTS, word-synced subtitles, and OCR + identity + VLM checks. Off Apple
-the VLM step talks to a local **Ollama** server (one-time `ollama pull qwen2.5vl:3b`, see §7);
-if Ollama isn't running the gate degrades cleanly rather than failing. FLUX *image generation* is
-still Apple-only today — abstract beats fall back to a styled text card elsewhere.
+the VLM step talks to a local **Ollama** server (one-time `ollama pull qwen2.5vl:3b`, see §7); if
+Ollama isn't running the gate degrades cleanly. The generative fallback (for abstract beats with no
+stock/archive match) runs **FLUX** on Apple and **SDXL-Turbo** on a CUDA GPU elsewhere — without a
+GPU those beats fall back to a styled text card (the pipeline's designed final fallback).
 
 ---
 
@@ -285,9 +286,23 @@ cd ..\..
 ```
 
 Don't run `--vlm` here — that fetches the Apple-only MLX weights. On Windows the VLM step runs
-through **Ollama** instead (§7.4). Skip `services\gen` too (FLUX is Apple-only — abstract beats
-use text cards). And `winget install UB-Mannheim.TesseractOCR` if you didn't in §7.1 (the OCR
-gate needs the `tesseract` binary on PATH, or `TESSERACT_CMD` set — §2).
+through **Ollama** instead (§7.4). And `winget install UB-Mannheim.TesseractOCR` if you didn't in
+§7.1 (the OCR gate needs the `tesseract` binary on PATH, or `TESSERACT_CMD` set — §2).
+
+**Generative fallback (optional, needs an NVIDIA GPU).** Abstract beats with no stock/archive
+match get an SDXL-Turbo image (Apple uses FLUX). This is a separate isolated venv:
+
+```powershell
+cd services\gen
+uv sync                             # installs diffusers + a CUDA-12.8 torch build (Blackwell-ready)
+uv run python -m gen --download     # SDXL-Turbo (~6.5 GB) → data\models
+uv run python -m gen --check        # expect "OK gen ready (diffusers / stabilityai/sdxl-turbo)"
+cd ..\..
+```
+
+If `--check` says *CUDA not available*, your torch isn't seeing the GPU — reinstall the cu128
+build: `uv pip install --python .venv torch --index-url https://download.pytorch.org/whl/cu128`.
+Without a working GPU the fallback degrades cleanly to a text card.
 
 ### 7.4 Set up the VLM checklist (Ollama)
 
