@@ -8,16 +8,16 @@ full spec set.
 
 ## 0. Platform support — read this first
 
-ScriptReel is an **Apple-Silicon-first** local pipeline. The ML sidecar uses **MLX**
-(Apple's array framework) for Whisper alignment and the doc-25 vision cascade, and MLX
-runs **only on Apple-Silicon Macs** (M1/M2/M3/M4).
+ScriptReel is an **Apple-Silicon-first** local pipeline. The ML sidecar uses **MLX** (Apple's
+array framework) for Whisper alignment + the Qwen2.5-VL checklist, and the separate FLUX
+generator (`services/gen`) uses **mflux** (also MLX) — all **Apple-Silicon-only** (M1/M2/M3/M4).
 
-| Platform | Web + Worker | ML sidecar (TTS, embeddings, alignment, OCR/identity) |
-|---|---|---|
-| **macOS (Apple Silicon)** | ✅ supported | ✅ supported — the target platform |
-| **macOS (Intel)** | ✅ | ⚠️ no MLX → alignment + VLM won't run; the rest is CPU-slow |
-| **Windows 10/11** | ✅ | ❌ `uv sync` fails — `mlx`/`mlx-whisper` have no Windows build |
-| **Linux** | ✅ | ❌ same MLX blocker (WSL2 doesn't help — it's x86, not Apple Silicon) |
+| Platform | Web + Worker | ML sidecar (TTS, SigLIP, align, OCR/identity/VLM) | FLUX gen |
+|---|---|---|---|
+| **macOS (Apple Silicon)** | ✅ supported | ✅ supported — the target platform | ✅ |
+| **macOS (Intel)** | ✅ | ⚠️ no MLX → align + VLM won't run; the rest is CPU-slow | ❌ |
+| **Windows 10/11** | ✅ | ❌ `uv sync` fails — `mlx`/`mlx-whisper`/`mlx-vlm` have no Windows build | ❌ |
+| **Linux** | ✅ | ❌ same MLX blocker (WSL2 doesn't help — it's x86, not Apple Silicon) | ❌ |
 
 **What this means in practice:** the Node side (script analysis, provider search, scoring
 logic, the whole UI) is fully cross-platform. The **model inference** is not, today,
@@ -34,8 +34,11 @@ Three local processes + a cloud database:
 
 - **web** — Next.js 15 (UI + thin API), port `3000`.
 - **worker** — Node 22 (the pipeline: providers, FFmpeg, orchestration).
-- **sidecar** — Python 3.12 FastAPI (models only: Kokoro TTS, SigLIP embeddings,
-  mlx-whisper alignment, Pillow text cards, + doc-25 Tesseract/InsightFace/DINOv2), port `8484`.
+- **sidecar** — Python 3.12 FastAPI (models only: Kokoro TTS, SigLIP embeddings, mlx-whisper
+  alignment, Pillow text cards, + doc-25 Tesseract OCR / InsightFace / DINOv2 / Qwen2.5-VL), port `8484`.
+- **gen** — `services/gen`, an *isolated* Python venv for FLUX.1-schnell image generation
+  (doc-25 cascade E); the worker shells out to it. Separate because it needs `numpy≥2` while
+  the sidecar needs `numpy<2`.
 - **Postgres** — Supabase **Cloud** (no local Docker). pg-boss runs the job queue on it.
 
 And **five install layers** — only the first travels cleanly in git:
@@ -43,8 +46,8 @@ And **five install layers** — only the first travels cleanly in git:
 | Layer | Installed by | In git? |
 |---|---|---|
 | JS/Node deps | `pnpm install` | lockfile ✅ (`node_modules` rebuilt) |
-| Python deps | `uv sync` (in `services/ml`) | `uv.lock` ✅ (exact versions) |
-| ML model weights (~3–10 GB) | `make models` + `make identity` | ❌ `data/` is gitignored |
+| Python deps | `uv sync` in `services/ml` (+ `services/gen`) | `uv.lock` ✅ (exact versions) |
+| ML model weights (~3–12 GB) | `make models` / `identity` / `vlm` / `fetch-gen` | ❌ `data/` is gitignored |
 | System binaries (ffmpeg, tesseract…) | Homebrew / winget | ❌ per-machine |
 | Secrets (`.env`) | copy `.env.example`, fill keys | ❌ `.env` is gitignored |
 
@@ -137,28 +140,33 @@ Copy `.env.example` → `.env` (done by `make setup`) and fill it in:
 
 ---
 
-## 5. Download the models
+## 5. Download the models (macOS / Apple Silicon)
 
 Weights are **not** in git (`data/` is gitignored) — fetch them per machine. They land in
-`data/models` (+ `~/.insightface` for the face model), where the sidecar looks.
+`data/models` (+ `~/.insightface` for the face model), where the sidecar looks. Each is
+optional and the pipeline **degrades gracefully** until you fetch it, so install what you need.
 
-**macOS:**
 ```bash
-make models          # Kokoro + SigLIP + Whisper (~3 GB; add --no-flux is default-safe)
-make identity        # doc-25 cascade: DINOv2 + InsightFace buffalo_l (~400 MB)
+make models          # REQUIRED core: Kokoro TTS + SigLIP + Whisper (~3 GB)
+make identity        # doc-25 cascade C: DINOv2 + InsightFace buffalo_l (~400 MB)
+make vlm             # doc-25 cascade D: Qwen2.5-VL-3B 4-bit checklist (~2.2 GB)
+make gen-setup       # doc-25 cascade E: install the ISOLATED FLUX venv (services/gen)
+make fetch-gen       # doc-25 cascade E: FLUX.1-schnell 4-bit for abstract beats (~6.5 GB)
 ```
 
-**Windows** (if/when the sidecar is portable — §7):
-```powershell
-cd services/ml
-uv run python -m scripts.fetch_models            # base models
-uv run python -m scripts.fetch_models --identity # identity models
-```
-
-- `make models` also fetches the optional **FLUX** image model (~6.5 GB, Phase 13). Skip it
-  with `uv run … fetch_models --no-flux`.
+- **`make models`** is the only *required* download (TTS + the SigLIP matching model). Without
+  the others the OCR/identity/VLM gates and the generative fallback simply don't run — the
+  pipeline still produces a video (text-card fallback for abstract beats).
+- The OCR gate also needs the **tesseract binary** (`brew install tesseract`, §2) — no model
+  download, but the gate is skipped until it's on `PATH`.
 - **buffalo_l (InsightFace) is non-commercial-research licensed** — fine for development;
   swap to a permissive face model before any commercial use (doc 25 §6).
+- `services/gen` (FLUX) is a **separate isolated venv** because it needs `numpy≥2`/`torch≥2.7`
+  that conflict with the sidecar's `numpy<2`; the worker shells out to it. Also **Apple-Silicon
+  only** (mflux is MLX-based).
+
+> **Windows/Linux:** none of these can be downloaded, because the sidecar venv itself can't be
+> created (`uv sync` fails on `mlx` — §0/§7). The model download commands run *inside* that venv.
 
 ---
 
@@ -179,36 +187,71 @@ paste a script, and generate.
 
 ---
 
-## 7. Windows & Linux — current limitations (honest state)
+## 7. Windows — step by step (honest state)
 
-The blocker is **MLX**. `services/ml/pyproject.toml` lists `mlx` and `mlx-whisper` as
-unconditional dependencies, and:
+**Read first:** you can install and run the **web UI + worker** on Windows, but you **cannot
+generate a finished video** there. The ML sidecar (`services/ml`) and the FLUX generator
+(`services/gen`) depend on **MLX** — `mlx-whisper` (alignment), `mlx-vlm` (the VLM checklist),
+and `mflux` (FLUX) — which is **Apple-Silicon-only**. `uv sync` fails on Windows, so the
+sidecar venv can't be created, so there's no TTS, no SigLIP embeddings (the matching model),
+no alignment, and none of the OCR/identity/VLM gates. Generation stops at the `score` stage.
 
-- MLX ships wheels **only for Apple Silicon**, so `uv sync` cannot even resolve the
-  environment on Windows/Linux.
-- `services/ml/app/align.py` (forced subtitle alignment) is mlx-whisper.
-- The doc-25 **Step 7** VLM cascade will use Qwen2.5-VL via MLX.
+### 7.1 Install the prerequisites (PowerShell)
 
-**What works today on Windows/Linux:** the web app and worker — script analysis (GPT),
-provider search, the scoring/selection logic, and the UI. Everything that doesn't call the
-sidecar.
+```powershell
+winget install OpenJS.NodeJS.LTS         # Node 22 LTS
+winget install Python.Python.3.12        # Python 3.12 (NOT 3.13)
+winget install astral-sh.uv              # uv
+winget install Git.Git GitHub.GitLFS
+winget install Gyan.FFmpeg               # libass-enabled FFmpeg build
+winget install UB-Mannheim.TesseractOCR  # OCR binary (add its folder to PATH)
+corepack enable pnpm                     # pnpm (ships with Node)
+```
 
-**What does not:** TTS, SigLIP embeddings, Whisper alignment, and the OCR/identity gates —
-i.e. you can't render a finished video without the sidecar.
+Restart the terminal so PATH updates. Verify: `node -v` (v22), `pnpm -v`, `uv --version`,
+`ffmpeg -filters | findstr ass` (must list the `ass`/`subtitles` filters).
 
-**What a real cross-platform port needs** (a code change, not just setup):
-1. Make `mlx`/`mlx-whisper` **optional** via platform markers
-   (`sys_platform == 'darwin' and platform_machine == 'arm64'`).
-2. Add a **non-MLX alignment backend** (e.g. `faster-whisper`) selected at runtime.
-3. Provide a **non-MLX VLM** path for the doc-25 cascade (or let it degrade — the cascade is
-   already built to skip when its model is absent).
-4. Verify Kokoro / SigLIP / InsightFace / DINOv2 on CUDA or CPU (they're torch/onnx — should
-   work, but untested here).
+### 7.2 Set up the project (you've already cloned it)
 
-This is a well-defined task if cross-platform inference becomes a requirement — it just
-hasn't been done because the project targets one machine (an M3 Pro). The degrade-never-die
-design already means a missing model warns instead of crashing, which is most of the way to
-graceful non-Apple behavior.
+```powershell
+cd ScriptReel
+pnpm install                     # JS deps for web + worker — this WORKS on Windows
+copy .env.example .env           # then fill it in (see §4): OPENAI/PEXELS/PIXABAY keys + DATABASE_URL
+pnpm db:migrate                  # push migrations to Supabase Cloud (Node — works)
+pnpm db:types                    # regenerate DB types
+```
+
+### 7.3 Run the parts that work
+
+```powershell
+# Do NOT run `cd services/ml; uv sync` — it fails on mlx (that's expected on Windows).
+pnpm --filter @scriptreel/web dev       # the UI on http://localhost:3000  (works)
+pnpm --filter @scriptreel/worker dev    # the pipeline worker (runs; stalls at `score` — no sidecar)
+```
+
+You can create projects, paste scripts, run **analyze** (GPT/cloud) and **search** (providers),
+and browse the UI. The `/settings` health page will show the **sidecar as down** — that's
+correct on Windows.
+
+### 7.4 To actually generate videos on Windows — the cross-platform port
+
+This is a **code change**, not a setup step, and it hasn't been done because the project
+targets one machine (an M3 Pro). If you want it, ask and I'll scope it:
+
+1. Platform-gate the MLX deps in `services/ml/pyproject.toml`
+   (`mlx-whisper; sys_platform == 'darwin'`, same for `mlx-vlm`) so `uv sync` succeeds on
+   Windows and installs the **non-MLX** models — SigLIP, Kokoro TTS, OCR (tesseract),
+   InsightFace, DINOv2 — which are torch/onnx and DO run on Windows (CPU or CUDA).
+2. Add a non-MLX **alignment** backend (e.g. `faster-whisper`) — or let alignment degrade
+   (word-synced subtitles off; `E_ALIGN` is already a warning, not a failure).
+3. The VLM gate already degrades when its model is absent (`available()` → false → skipped),
+   so on Windows you'd simply lose that one verification layer.
+4. The FLUX generative fallback stays Apple-only (mflux); abstract beats fall to the text card.
+
+Net result of the port: **Windows could generate videos** (with stock/archive footage, TTS,
+and text cards), minus word-synced subtitles + the VLM gate + FLUX. The degrade-never-die
+design already does most of the work — it just needs the dependency markers + a subtitle
+fallback. **The simplest path to a full-quality video today is an Apple-Silicon Mac.**
 
 ---
 
@@ -236,9 +279,14 @@ graceful non-Apple behavior.
 ```bash
 brew install node@22 pnpm uv git-lfs python@3.12 espeak-ng tesseract ffmpeg-full
 git clone <repo> ScriptReel && cd ScriptReel
-make setup                       # deps + .env
+make setup                       # pnpm install + uv sync + .env
 $EDITOR .env                     # add OPENAI/PEXELS/PIXABAY keys + DATABASE_URL
-make models && make identity     # ~3.5 GB of weights
+make models                      # REQUIRED core models (~3 GB)
+make identity && make vlm        # doc-25 verify cascade (~2.6 GB) — optional, degrades if skipped
+make gen-setup && make fetch-gen # doc-25 FLUX generative fallback (~6.5 GB) — optional
 make db                          # migrations + types
 pnpm dev                         # → http://localhost:3000
 ```
+
+*(Only `make models` is required. The cascade models each add a verification/generation layer
+and the pipeline degrades gracefully without them.)*
