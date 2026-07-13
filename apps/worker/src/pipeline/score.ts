@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '@scriptreel/config';
 import {
+  classifyTopic,
   cosine,
   type Era,
   hashObject,
@@ -18,6 +19,7 @@ import {
   planSameSourceMontage,
   planSemanticMontage,
   type Rung,
+  routeTopicSources,
   type ScoreContext,
   type SegmentPlanItem,
   type SelectionBeat,
@@ -94,7 +96,7 @@ export const scoreStage: Stage = {
     );
     return hashObject({
       stage: 'score',
-      logic: 'gen-1', // bump to re-run score when the selection logic changes (doc 23 §7, doc 25 §4/§5/§6/§5-D/§5-E)
+      logic: 'authority-2', // bump to re-run score when the selection logic changes — v2: topic-authority provenance bonus + archive res de-penalize (doc 24 §7)
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),
@@ -166,6 +168,16 @@ export const scoreStage: Stage = {
     let selectionBeats: SelectionBeat[] = beats.map((beat, i) => {
       const descEmbedding = descRes.vectors[i] ?? [];
       const rows = candidatesByBeat[i] ?? [];
+      // Authority routing (doc 24 §7): a candidate is "authoritative" when its source is one this
+      // beat's topic + era route to (topics.ts — the same classifier the search stage used, pure so
+      // it's recomputed here), or the entity resolver. Those earn the provenance bonus in rankBeat,
+      // so an authentic asset outranks a prettier stock stand-in. An archive OFF its topic does not.
+      const topic = classifyTopic(
+        `${beat.visual_description ?? ''} ${beat.key_phrase ?? ''} ${beat.text}`,
+        parseEntities(beat.entities),
+      );
+      const authoritativeSources = new Set<string>(routeTopicSources(topic, beatEra(beat.era)));
+      authoritativeSources.add('wikidata-commons'); // the entity resolver only returns the real thing
       const candidates: SelectionCandidate[] = [];
       for (const c of rows) {
         // Judge a video on its best-matching frame: score every embedded frame and keep
@@ -195,6 +207,7 @@ export const scoreStage: Stage = {
           sim: best.sim,
           thumbEmbedding: best.emb,
           isArchive: isArchiveProvider(c.provider), // cross-check (doc 23 §6)
+          authoritative: authoritativeSources.has(c.provider), // provenance bonus (doc 24 §7)
         });
       }
       return {

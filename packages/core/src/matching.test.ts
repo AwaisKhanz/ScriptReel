@@ -46,6 +46,7 @@ describe('fit functions', () => {
     expect(resFit(1080, 1080)).toBe(1);
     expect(resFit(2000, 1080)).toBe(1);
     expect(resFit(540, 1080)).toBeCloseTo(0.5, 6);
+    expect(resFit(0, 1080)).toBe(1); // unknown geometry (archives) — don't penalize a missing dim
   });
   it('durFit rewards in-window videos and fixes images at 0.8', () => {
     expect(durFit('video', 8, 4)).toBe(1); // 4 ≤ 8 ≤ 16
@@ -174,6 +175,37 @@ describe('named-subject cross-check (doc 23 §6)', () => {
     );
     expect(sel[0]?.chosenId).toBe('arc'); // the actual named subject wins
     expect(sel[0]?.weak).toBe(false);
+  });
+});
+
+describe('authority bonus (doc 24 §7)', () => {
+  const th = { tauHi: 0.28, tauLo: 0.2 };
+  // base ≈ 0.62·sim + 0.28 for the video fixture; AUTHORITY_BONUS = 0.05.
+
+  it('lifts an authoritative source over a slightly-better stock stand-in', () => {
+    // stock sim 0.30 → base 0.466; auth sim 0.25 → base 0.435, +0.05 = 0.485. Without the bonus
+    // stock wins; with it the authentic source wins — the flip we want (doc 24 §7).
+    const beat: SelectionBeat = {
+      beatIdx: 0,
+      beatDurationSec: BEAT_DUR,
+      candidates: [
+        candidate('stock', 0.3, [1, 0, 0]),
+        candidate('auth', 0.25, [0, 1, 0], { authoritative: true }),
+      ],
+    };
+    expect(selectBeats([beat], ctx, th)[0]?.chosenId).toBe('auth');
+  });
+
+  it('does not lift an authoritative source when the sim gap is large (sim still dominates)', () => {
+    const beat: SelectionBeat = {
+      beatIdx: 0,
+      beatDurationSec: BEAT_DUR,
+      candidates: [
+        candidate('stock', 0.6, [1, 0, 0]),
+        candidate('auth', 0.0, [0, 1, 0], { authoritative: true }),
+      ],
+    };
+    expect(selectBeats([beat], ctx, th)[0]?.chosenId).toBe('stock');
   });
 });
 

@@ -1,4 +1,5 @@
 import {
+  AUTHORITY_BONUS,
   DUP_COSINE,
   DUP_PENALTY,
   MONOTONY_PENALTY,
@@ -51,6 +52,11 @@ export interface ScoreContext {
 // resFit: 1 if candidate height ≥ target, else height/target (doc 09).
 export function resFit(height: number, targetHeight: number): number {
   if (targetHeight <= 0) return 1;
+  // Unknown geometry (height ≤ 0) — many archives (NASA/Openverse/Smithsonian) don't report
+  // dimensions. Don't penalize a MISSING field: the asset is re-probed at fetch, and hygiene
+  // already dropped the KNOWN-low case (height > 0 && < 0.6·target). Treating unknown as 0 was a
+  // ~0.07 quality dock that sank authentic archive stills below τ. Neutral (1) instead.
+  if (height <= 0) return 1;
   if (height >= targetHeight) return 1;
   return Math.max(0, height / targetHeight);
 }
@@ -142,6 +148,11 @@ export interface SelectionCandidate {
   // From a variable-quality archive/aggregator source (doc 23 §6). On a named-subject
   // beat these are cross-checked stricter — see acceptTop. Absent ⇒ trusted stock.
   isArchive?: boolean;
+  // From a source AUTHORITATIVE FOR THIS BEAT'S TOPIC (topics.ts routing) or the entity resolver
+  // (wikidata-commons) — earns AUTHORITY_BONUS in rankBeat so an authentic asset outranks a
+  // prettier stock stand-in of similar sim (doc 24 §7). Absent ⇒ generic stock, no bonus. Distinct
+  // from isArchive: an archive off its topic (e.g. NASA on a food beat) is NOT authoritative here.
+  authoritative?: boolean;
   // Watermark / text-overlay penalty from the OCR gate (doc 25 §5); subtracted
   // un-multiplied — an intrinsic defect, not a diversity preference.
   ocrPenalty?: number;
@@ -228,6 +239,10 @@ function rankBeat(
     // VLM gate (doc 25 §5-D): an intrinsic fit defect (era / shot-framing miss), likewise
     // subtracted un-multiplied and independent of selection order.
     score -= c.vlmPenalty ?? 0;
+    // Provenance bonus (doc 24 §7): a source authoritative for this beat's topic (or the entity
+    // resolver) gets a small lift so authentic media outranks a prettier stock stand-in of similar
+    // sim. Added un-multiplied — intrinsic to the candidate, not a selection-order preference.
+    if (c.authoritative) score += AUTHORITY_BONUS;
     return { id: c.id, score };
   });
   scored.sort((a, b) => b.score - a.score);

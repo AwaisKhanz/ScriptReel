@@ -72,6 +72,16 @@ export const SCORE_WEIGHTS = {
 } as const;
 export const QUALITY_WEIGHTS = { res: 0.5, dur: 0.3, fps: 0.2 } as const;
 
+// Provenance / authority bonus (doc 24 §7). Added to a candidate from a source that is
+// authoritative FOR THIS BEAT'S TOPIC (topics.ts routing) or the entity resolver
+// (wikidata-commons), so an authentic/authoritative asset outranks a prettier generic-stock
+// stand-in of similar similarity. Added un-multiplied in rankBeat — intrinsic to the candidate
+// (like the gate penalties), NOT part of baseScore, which is pure media features. Sized a few ×
+// the τ_hi/τ_lo gap so it breaks near-ties without lifting an off-topic or low-sim asset over a
+// clearly-better match (sim still dominates at 0.62, and the verify gates still veto misfits).
+// [CALIBRATE Phase 8] — re-run `pnpm eval:matching` after tuning.
+export const AUTHORITY_BONUS = 0.05;
+
 // Sequential selection penalties (doc 09 §step 2). Applied during greedy selection.
 export const REUSE_PENALTY = 0.15; // same asset already chosen this project
 export const DUP_PENALTY = 0.1; // near-duplicate of the adjacent beat
