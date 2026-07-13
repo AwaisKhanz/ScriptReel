@@ -9,6 +9,14 @@ import { FFMPEG_BIN } from './bin';
 
 // Compose Pass B (visual assembly) + Pass C (subtitles/audio/encode), doc 13.
 
+// Escape a filesystem path for use INSIDE an ffmpeg filter argument (e.g. `subtitles=`).
+// On Windows a raw `C:\dir\subs.ass` breaks the filter parser — the drive `:` reads as the
+// option separator and `\` as an escape. Forward slashes work on Windows too, and escaping
+// `:` makes it literal. On POSIX paths (no `\`, no `:`) this is a no-op.
+function ffFilterPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/:/g, '\\:');
+}
+
 async function ff(args: string[], stage: string, signal?: AbortSignal): Promise<void> {
   try {
     await execa(FFMPEG_BIN, ['-y', '-hide_banner', '-loglevel', 'warning', ...args], {
@@ -119,7 +127,8 @@ export async function encodeFinal(p: PassCParams): Promise<void> {
     const [dw, dh] = draftDims(p.width, p.height);
     vFilters.push(`scale=${dw}:${dh}`);
   }
-  if (p.assPath) vFilters.push(`subtitles=${p.assPath}:fontsdir=${p.fontsDir}`);
+  if (p.assPath)
+    vFilters.push(`subtitles=${ffFilterPath(p.assPath)}:fontsdir=${ffFilterPath(p.fontsDir)}`);
   const videoChain = `[0:v]${vFilters.length ? vFilters.join(',') : 'null'}[v]`;
 
   let audioChain: string;

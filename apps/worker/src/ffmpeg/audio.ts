@@ -18,7 +18,9 @@ async function ff(args: string[], signal?: AbortSignal): Promise<void> {
 }
 
 function escapeConcatPath(path: string): string {
-  return path.replace(/'/g, "'\\''");
+  // concat-demuxer `file '...'`: forward slashes work on Windows too and dodge backslash-as-
+  // escape (no-op on POSIX); then escape any single quote in the path itself.
+  return path.replace(/\\/g, '/').replace(/'/g, "'\\''");
 }
 
 export interface NarrationPaths {
