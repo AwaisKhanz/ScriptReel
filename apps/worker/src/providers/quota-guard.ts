@@ -20,6 +20,15 @@ export class QuotaGuard {
 
   async reserve(provider: ProviderId): Promise<ProviderCredentials> {
     const keys = await this.keysFor(provider);
+    if (keys.length === 0) {
+      // No API key configured for this provider — a clean skip, NOT quota exhaustion. Add one in
+      // Settings to enable it; the search stage just uses the other providers (invariant 7).
+      this.log.warn(
+        { provider },
+        `${provider}: no API key configured — add one in Settings to use it`,
+      );
+      throw new PipelineError(PROVIDER_QUOTA_CODE[provider], 'search', `${provider}: no API key`);
+    }
     const windows = PROVIDER_WINDOWS[provider];
     const now = new Date();
     for (const key of keys) {

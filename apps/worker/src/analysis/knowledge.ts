@@ -48,11 +48,21 @@ const EMPTY: EntityKnowledge = {
   extraTerms: [],
 };
 
-async function getJson(url: URL): Promise<unknown> {
+async function getJson(url: URL, retries = 2): Promise<unknown> {
   const res = await fetch(url, {
     headers: { 'user-agent': UA, 'api-user-agent': UA },
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
+  // Wikidata rate-limits bursts (429) — knowledge expansion fires several calls per entity, so
+  // back off (honoring Retry-After) and retry before giving up. Only then does expansion degrade
+  // to the LLM's own search terms (invariant 7). Mirrors providers/wikidata-commons.ts.
+  if ((res.status === 429 || res.status >= 500) && retries > 0) {
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs =
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1500 * (3 - retries);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return getJson(url, retries - 1);
+  }
   if (!res.ok) throw new Error(`${url.host} → HTTP ${res.status}`);
   return res.json();
 }
