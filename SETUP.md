@@ -208,7 +208,23 @@ winget install UB-Mannheim.TesseractOCR  # OCR binary (add its folder to PATH)
 corepack enable pnpm                     # pnpm (ships with Node)
 ```
 
-Restart the terminal so PATH updates. Verify: `node -v` (v22), `pnpm -v`, `uv --version`,
+**⚠️ Then CLOSE and REOPEN PowerShell** — `uv`, `ffmpeg`, and Node all modify PATH and the
+change doesn't apply to the current shell (this is why `corepack` reports "not recognized").
+
+Two known winget gotchas:
+- **Node version.** `OpenJS.NodeJS.LTS` now installs **Node 24**, but this project targets
+  **Node 22**. Node 24 + Next.js 15 is untested — pin 22 with **nvm-windows** to be safe:
+  ```powershell
+  winget install CoreyButler.NVMforWindows   # then reopen the shell
+  nvm install 22.14.0
+  nvm use 22.14.0
+  ```
+  (If a prior Node install fails with exit code `1603`, it's because one already exists — check
+  `node -v`; if it's ≥22 you're fine, otherwise use nvm-windows above.)
+- **pnpm.** If `corepack enable pnpm` still says "not recognized" after reopening the shell,
+  install it directly: `npm install -g pnpm` (npm ships with Node).
+
+Verify (in a fresh shell): `node -v` (v22.x), `pnpm -v`, `uv --version`,
 `ffmpeg -filters | findstr ass` (must list the `ass`/`subtitles` filters).
 
 ### 7.2 Set up the project (you've already cloned it)
