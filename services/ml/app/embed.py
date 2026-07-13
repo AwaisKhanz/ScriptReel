@@ -52,12 +52,17 @@ async def _ensure_loaded() -> None:
                 if torch.cuda.is_available()
                 else "cpu"
             )
-            # low_cpu_mem_usage=False forces materialized weights. Newer transformers (4.5x,
-            # pulled in with mlx-vlm) otherwise loads on the META device via accelerate, and
-            # the later `.to(_device)` then fails with "Cannot copy out of meta tensor".
-            model = AutoModel.from_pretrained(MODEL_ID, low_cpu_mem_usage=False)
+            # transformers 4.57 initializes weights on the torch META device for fast loading.
+            # low_cpu_mem_usage=False does NOT reliably prevent it — it happens to suppress meta on
+            # macOS but leaves params on meta on Windows, where the later `.to(device)` then dies
+            # with "Cannot copy out of meta tensor; no data!". device_map materializes the weights
+            # on CPU during load (via accelerate), giving REAL tensors we then move to the compute
+            # device — cross-platform, no meta. (CPU is the always-safe materialization target;
+            # device_map={"": "mps"} is flakier, so we materialize on CPU then move.)
+            model = AutoModel.from_pretrained(MODEL_ID, device_map={"": "cpu"})
             model.eval()
-            model.to(_device)
+            if _device != "cpu":
+                model = model.to(_device)
             _model = model
             _processor = AutoProcessor.from_pretrained(MODEL_ID)
         except Exception as exc:  # noqa: BLE001 — surface any load failure as E_MODEL_LOAD
