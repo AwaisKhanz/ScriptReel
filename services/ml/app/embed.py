@@ -52,14 +52,28 @@ async def _ensure_loaded() -> None:
                 if torch.cuda.is_available()
                 else "cpu"
             )
-            # transformers 4.57 initializes weights on the torch META device for fast loading.
-            # low_cpu_mem_usage=False does NOT reliably prevent it — it happens to suppress meta on
-            # macOS but leaves params on meta on Windows, where the later `.to(device)` then dies
-            # with "Cannot copy out of meta tensor; no data!". device_map materializes the weights
-            # on CPU during load (via accelerate), giving REAL tensors we then move to the compute
-            # device — cross-platform, no meta. (CPU is the always-safe materialization target;
-            # device_map={"": "mps"} is flakier, so we materialize on CPU then move.)
-            model = AutoModel.from_pretrained(MODEL_ID, device_map={"": "cpu"})
+            # transformers can leave SigLIP's weights on the torch META device — the checkpoint
+            # never materializes — and the later `.to(device)` then dies with "Cannot copy out of
+            # meta tensor; no data!". On macOS low_cpu_mem_usage=False avoids it, but on some torch
+            # builds (seen on Windows / torch 2.13) it's an INTERMITTENT concurrent-load race inside
+            # the threaded sidecar (transformers#41782) — the same build loads fine most runs. So
+            # load normally, then if ANY weight is on meta, force-materialize from the local
+            # checkpoint: real CPU storage (to_empty), copy the checkpoint tensors, and restore the
+            # non-persistent arange position_ids buffers. Verified bit-exact vs a normal load.
+            model = AutoModel.from_pretrained(MODEL_ID, low_cpu_mem_usage=False)
+            if any(t.is_meta for t in (*model.parameters(), *model.buffers())):
+                from huggingface_hub import snapshot_download
+                from safetensors.torch import load_file
+
+                _log.warning("SigLIP on meta device (transformers#41782 race) — materializing")
+                # already cached (from_pretrained just resolved it) — local_files_only, no network
+                snap = snapshot_download(MODEL_ID, local_files_only=True)
+                weights = load_file(Path(snap) / "model.safetensors")
+                model = model.to_empty(device="cpu")
+                model.load_state_dict(weights, strict=False, assign=False)
+                for name, buf in model.named_buffers():
+                    if name.endswith("position_ids"):
+                        buf.copy_(torch.arange(buf.shape[-1], device=buf.device).expand(buf.shape))
             model.eval()
             if _device != "cpu":
                 model = model.to(_device)

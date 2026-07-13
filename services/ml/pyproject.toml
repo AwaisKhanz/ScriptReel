@@ -9,7 +9,6 @@ dependencies = [
   "torch>=2.5",
   "torchvision>=0.20", # DINOv2 AutoImageProcessor (doc 25 §6) needs it
   "transformers>=4.48,<5", # <5: SigLIP2/DINOv2 code targets 4.x; mlx-vlm would otherwise pull 5.x
-  "accelerate>=0.26", # device_map in embed.py — materializes SigLIP off the meta device (Windows)
   # --- Apple-Silicon only (MLX has no Windows/Linux build) ---------------------------------
   # Gated by platform so `uv sync` SUCCEEDS on Windows/Linux and installs the cross-platform
   # models below. On non-Apple, alignment uses faster-whisper (see align.py); the VLM gate
