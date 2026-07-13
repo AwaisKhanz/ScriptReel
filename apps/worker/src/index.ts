@@ -14,7 +14,7 @@ const log = pino({
   level: 'info',
   // Defence-in-depth: never leak secrets if the env is ever logged (doc 18).
   redact: {
-    paths: ['env.OPENAI_API_KEY', 'env.PEXELS_API_KEY', 'env.PIXABAY_API_KEY', 'env.DATABASE_URL'],
+    paths: ['env.OPENAI_API_KEY', 'env.DATABASE_URL'],
     remove: true,
   },
 });

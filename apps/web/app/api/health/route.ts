@@ -51,18 +51,31 @@ async function checkFfmpeg() {
   }
 }
 
-function checkKeys() {
-  return {
-    ok: Boolean(env.PEXELS_API_KEY && env.PIXABAY_API_KEY && env.OPENAI_API_KEY),
-    pexels: Boolean(env.PEXELS_API_KEY),
-    pixabay: Boolean(env.PIXABAY_API_KEY),
-    openai: Boolean(env.OPENAI_API_KEY),
-  };
+async function checkKeys() {
+  // The only credential the pipeline REQUIRES is the LLM: OpenAI needs a key; Ollama (local)
+  // doesn't. Stock-provider keys live in the DB (Settings → API Keys), are OPTIONAL (the pipeline
+  // degrades to keyless archives) and are shown in the key list below — so they don't gate health.
+  const llmOk = env.LLM_PROVIDER === 'ollama' || Boolean(env.OPENAI_API_KEY);
+  let providerKeys = 0;
+  try {
+    const rows = await withTimeout(
+      sql<{ n: number }[]>`select count(*)::int as n from provider_keys where active = true`,
+      2000,
+    );
+    providerKeys = rows[0]?.n ?? 0;
+  } catch {
+    providerKeys = 0;
+  }
+  return { ok: llmOk, llm: env.LLM_PROVIDER, openai: Boolean(env.OPENAI_API_KEY), providerKeys };
 }
 
 export async function GET() {
-  const [db, sidecar, ffmpeg] = await Promise.all([checkDb(), checkSidecar(), checkFfmpeg()]);
-  const keys = checkKeys();
+  const [db, sidecar, ffmpeg, keys] = await Promise.all([
+    checkDb(),
+    checkSidecar(),
+    checkFfmpeg(),
+    checkKeys(),
+  ]);
   const ok = db.ok && sidecar.ok && ffmpeg.ok && keys.ok;
   return NextResponse.json({ ok, checks: { db, sidecar, ffmpeg, keys } });
 }

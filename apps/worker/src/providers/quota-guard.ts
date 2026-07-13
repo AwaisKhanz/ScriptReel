@@ -1,4 +1,3 @@
-import { env } from '@scriptreel/config';
 import {
   PipelineError,
   PROVIDER_QUOTA_CODE,
@@ -54,19 +53,14 @@ export class QuotaGuard {
     );
   }
 
-  // Pooled DB keys first; else the single .env key (backward compatible); else
-  // anonymous for keyless providers. No credentials → provider unavailable.
+  // Every keyed provider gets its credentials from the pooled DB keys (Settings → API Keys) — one
+  // consistent source, no per-provider .env special-cases. Keyless providers fall to anonymous; a
+  // keyed provider with no key added ⇒ empty ⇒ unavailable (skipped and degraded — invariant 7).
   private async keysFor(
     provider: ProviderId,
   ): Promise<{ id: string; creds: ProviderCredentials }[]> {
     const pooled = await db.activeKeysFor(provider);
     if (pooled.length > 0) return pooled;
-    if (provider === 'pexels' && env.PEXELS_API_KEY) {
-      return [{ id: 'env', creds: { apiKey: env.PEXELS_API_KEY } }];
-    }
-    if (provider === 'pixabay' && env.PIXABAY_API_KEY) {
-      return [{ id: 'env', creds: { apiKey: env.PIXABAY_API_KEY } }];
-    }
     if (
       provider === 'openverse' ||
       provider === 'nasa' ||

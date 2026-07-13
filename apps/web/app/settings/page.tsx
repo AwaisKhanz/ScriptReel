@@ -13,7 +13,7 @@ interface Health {
     db: { ok: boolean };
     sidecar: { ok: boolean; device?: string; models?: Record<string, string> };
     ffmpeg: { ok: boolean; version?: number; libass?: boolean };
-    keys: { ok: boolean; pexels: boolean; pixabay: boolean; openai: boolean };
+    keys: { ok: boolean; llm: string; openai: boolean; providerKeys: number };
   };
 }
 interface Quota {
@@ -110,17 +110,13 @@ export default function SettingsPage() {
               detail={health.data?.checks.ffmpeg.libass ? 'libass ✓' : 'no libass'}
             />
             <HealthCard
-              title="API keys"
+              title="LLM & keys"
               ok={health.data?.checks.keys.ok}
               detail={
                 health.data
-                  ? [
-                      health.data.checks.keys.openai && 'OpenAI',
-                      health.data.checks.keys.pexels && 'Pexels',
-                      health.data.checks.keys.pixabay && 'Pixabay',
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')
+                  ? `LLM: ${health.data.checks.keys.llm} · ${health.data.checks.keys.providerKeys} provider key${
+                      health.data.checks.keys.providerKeys === 1 ? '' : 's'
+                    }`
                   : ''
               }
             />

@@ -42,8 +42,9 @@ const EnvSchema = z.object({
     .default('postgresql://postgres:postgres@127.0.0.1:54322/postgres'),
   NEXT_PUBLIC_SUPABASE_URL: z.string().min(1).default('http://127.0.0.1:54321'),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().default(''),
-  PEXELS_API_KEY: z.string().optional(),
-  PIXABAY_API_KEY: z.string().optional(),
+  // Stock-provider API keys (Pexels, Pixabay, Flickr, …) live in the DB via Settings → API Keys
+  // (provider_keys), NOT here — one consistent source for every keyed provider. See
+  // packages/core/src/provider-auth.ts + apps/worker/src/providers/quota-guard.ts.
   // LLM provider (analyze + knowledge expansion + media-fit verification). `openai` uses the
   // cloud GPT (needs OPENAI_API_KEY); `ollama` uses a LOCAL, OpenAI-API-compatible server (owner
   // re-enabled local LLMs 2026-07-13, having an RTX-class GPU + Ollama). See analysis/llm.ts.

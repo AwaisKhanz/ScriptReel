@@ -10,9 +10,8 @@ describe('loadEnv', () => {
     expect(parsed.OPENAI_MODEL).toBe('gpt-4o-mini');
   });
 
-  it('leaves provider keys optional in Phase 0', () => {
+  it('leaves the OpenAI key optional (stock-provider keys live in the DB, not env)', () => {
     const parsed = loadEnv({});
-    expect(parsed.PEXELS_API_KEY).toBeUndefined();
     expect(parsed.OPENAI_API_KEY).toBeUndefined();
   });
 
