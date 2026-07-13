@@ -8,6 +8,12 @@ inside functions), so no importorskip / availability skip is needed here.
 
 from __future__ import annotations
 
+import asyncio
+from json import dumps as _dumps
+from pathlib import Path
+from unittest.mock import patch
+
+import app.vlm as vlm
 from app.vlm import _checklist_prompt, _parse_checklist
 
 
@@ -85,3 +91,111 @@ def test_checklist_prompt_timeless_era_is_auto_true() -> None:
     prompt = _checklist_prompt("a soaring eagle over mountains", "timeless")
     # A timeless beat must not be penalized on era — the prompt tells the model so.
     assert "era-agnostic" in prompt
+
+
+# --- Non-Apple (Ollama / LM Studio) backend -------------------------------------------------
+# These drive the remote path directly (it's platform-agnostic code) with a mocked server, so
+# they run on the Mac too even though run_vlm() would take the MLX branch here.
+
+
+def _make_image(tmp_path: Path, size: tuple[int, int] = (2000, 1200)) -> str:
+    from PIL import Image
+
+    path = tmp_path / "cand.png"
+    Image.new("RGB", size, (120, 60, 30)).save(path)
+    return str(path)
+
+
+class _FakeResp:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def test_encode_image_data_uri_is_resized_jpeg(tmp_path: Path) -> None:
+    uri = vlm._encode_image_data_uri(_make_image(tmp_path))
+    assert uri.startswith("data:image/jpeg;base64,")
+    assert len(uri) > 100  # real payload, not an empty string
+
+
+def test_run_vlm_remote_builds_openai_payload_and_maps_verdict(tmp_path: Path) -> None:
+    path = _make_image(tmp_path)
+    captured: list[tuple[str, dict]] = []
+
+    class Client:
+        def __init__(self, **_kw: object) -> None: ...
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_a: object) -> bool:
+            return False
+
+        async def post(self, url: str, json: dict | None = None) -> _FakeResp:
+            captured.append((url, json or {}))
+            verdict = {
+                "subject_present": True,
+                "shot_type_matches": True,
+                "era_matches": False,
+                "contradicting_text": False,
+            }
+            return _FakeResp({"choices": [{"message": {"content": _dumps(verdict)}}]})
+
+    with patch("httpx.AsyncClient", return_value=Client()):
+        results, failed = asyncio.run(
+            vlm._run_vlm_remote([{"path": path, "description": "a red wall", "era": "1960s"}])
+        )
+
+    assert failed == []
+    assert results == [
+        {
+            "path": path,
+            "subjectPresent": True,
+            "shotTypeMatches": True,
+            "eraMatches": False,
+            "contradictingText": False,
+        }
+    ]
+    url, payload = captured[0]
+    assert url == "/chat/completions"
+    assert payload["model"] == vlm._REMOTE_MODEL
+    content = payload["messages"][0]["content"]
+    assert content[0]["type"] == "text" and "a red wall" in content[0]["text"]
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_run_vlm_remote_non_json_reply_goes_to_failed(tmp_path: Path) -> None:
+    path = _make_image(tmp_path)
+
+    class Client:
+        def __init__(self, **_kw: object) -> None: ...
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_a: object) -> bool:
+            return False
+
+        async def post(self, _url: str, json: dict | None = None) -> _FakeResp:
+            return _FakeResp({"choices": [{"message": {"content": "I cannot answer."}}]})
+
+    with patch("httpx.AsyncClient", return_value=Client()):
+        results, failed = asyncio.run(
+            vlm._run_vlm_remote([{"path": path, "description": "x", "era": "timeless"}])
+        )
+    assert results == [] and failed == [path]
+
+
+def test_probe_remote_present_absent_and_down() -> None:
+    present = _FakeResp({"data": [{"id": vlm._REMOTE_MODEL}, {"id": "llama3.2"}]})
+    absent = _FakeResp({"data": [{"id": "llama3.2"}]})
+    with patch("httpx.get", return_value=present):
+        assert vlm._probe_remote() is True
+    with patch("httpx.get", return_value=absent):
+        assert vlm._probe_remote() is False
+    with patch("httpx.get", side_effect=OSError("Connection refused")):
+        assert vlm._probe_remote() is False

@@ -18,6 +18,8 @@ import asyncio
 import importlib.util
 import os
 
+from app.models import is_apple_silicon
+
 _lock = asyncio.Lock()
 
 # mlx-whisper default (Apple). faster-whisper uses its own default below (a different, CTranslate2
@@ -86,8 +88,10 @@ def _transcribe_faster(audio_path: str, lang: str) -> list[dict]:
 
 def _transcribe(audio_path: str, language: str) -> list[dict]:
     lang = _whisper_language(language)
-    # Prefer mlx-whisper (Apple) when present; else faster-whisper (Windows/Linux).
-    if importlib.util.find_spec("mlx_whisper") is not None:
+    # Prefer mlx-whisper on Apple Silicon (the only platform MLX loads on); else faster-whisper.
+    # Gate on the PLATFORM, not just find_spec: a stale mlx_whisper left in a Windows venv is
+    # "found" by find_spec yet crashes on import (native MLX DLL). See models.is_apple_silicon.
+    if is_apple_silicon() and importlib.util.find_spec("mlx_whisper") is not None:
         return _transcribe_mlx(audio_path, lang)
     if importlib.util.find_spec("faster_whisper") is not None:
         return _transcribe_faster(audio_path, lang)

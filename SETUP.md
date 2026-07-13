@@ -8,27 +8,29 @@ full spec set.
 
 ## 0. Platform support — read this first
 
-ScriptReel is **Apple-Silicon-first** but **cross-platform**. Two Apple-only enhancement layers
-use **MLX** — the Qwen2.5-VL checklist and FLUX generation — and are platform-gated so they're
-simply absent (and degrade cleanly) elsewhere. Everything else — SigLIP matching, Kokoro TTS,
-alignment (mlx-whisper on Apple, **faster-whisper** elsewhere), OCR, InsightFace, DINOv2 — is
-torch/onnx and runs on **Windows, Linux, and Intel Macs** too.
+ScriptReel is **Apple-Silicon-first** but **cross-platform** — every pipeline step runs on
+Windows, Linux, and Intel Macs using a platform-appropriate backend rather than being skipped.
+Most of it (SigLIP matching, Kokoro TTS, OCR, InsightFace, DINOv2) is torch/onnx and identical
+everywhere. Three steps swap backend by platform — Apple uses MLX; elsewhere uses a native tool:
+
+| Step | Apple Silicon | Windows / Linux / Intel Mac |
+|---|---|---|
+| Alignment (word timings) | mlx-whisper (MLX) | **faster-whisper** (CTranslate2) |
+| VLM checklist (doc 25 §5-D) | Qwen2.5-VL via **mlx-vlm** | Qwen2.5-VL via **Ollama** (or LM Studio) |
+| FLUX generative fallback | FLUX via **mflux** (MLX) | → styled text card (for now) |
 
 | Platform | Web + Worker | ML sidecar | VLM check | FLUX gen |
 |---|---|---|---|---|
-| **macOS (Apple Silicon)** | ✅ | ✅ full — the target platform | ✅ | ✅ |
-| **macOS (Intel)** | ✅ | ✅ core (faster-whisper alignment) | ❌ off | ❌ → text card |
-| **Windows 10/11** | ✅ | ✅ core (faster-whisper alignment) | ❌ off | ❌ → text card |
-| **Linux** | ✅ | ✅ core (faster-whisper alignment) | ❌ off | ❌ → text card |
+| **macOS (Apple Silicon)** | ✅ | ✅ full — the target platform | ✅ mlx-vlm | ✅ mflux |
+| **macOS (Intel)** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ❌ → text card |
+| **Windows 10/11** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ❌ → text card |
+| **Linux** | ✅ | ✅ (faster-whisper) | ✅ Ollama | ❌ → text card |
 
-**"core" = a complete video**: real footage matched by SigLIP, natural TTS, word-synced
-subtitles, OCR + identity verification, and text cards for abstract beats. Only the VLM
-double-check and FLUX-generated images are Apple-only, and both degrade gracefully. See §7.
-
-**What this means in practice:** a teammate on Windows or Linux can run the whole thing and
-render real videos — see **§7** for the exact commands. The only difference from a Mac is the
-two Apple-only layers (VLM check, FLUX gen), which degrade to "already-verified by OCR/identity"
-and "text card" respectively.
+**Every platform renders a complete video with the full verification cascade** — real footage
+matched by SigLIP, natural TTS, word-synced subtitles, and OCR + identity + VLM checks. Off Apple
+the VLM step talks to a local **Ollama** server (one-time `ollama pull qwen2.5vl:3b`, see §7);
+if Ollama isn't running the gate degrades cleanly rather than failing. FLUX *image generation* is
+still Apple-only today — abstract beats fall back to a styled text card elsewhere.
 
 ---
 
@@ -77,8 +79,9 @@ brew install ffmpeg-full        # keg-only, libass-enabled — NOT plain `ffmpeg
 
 ### Windows 10/11 — via winget (+ installers)
 
-> Windows runs the full pipeline (the MLX-only VLM check + FLUX gen are auto-skipped and
-> degrade). These are the prerequisites; the complete Windows walkthrough is **§7**.
+> Windows runs the **full** pipeline. The VLM checklist runs through Ollama (below) instead of
+> MLX; only FLUX image generation is still Apple-only (abstract beats → text card). These are the
+> prerequisites; the complete Windows walkthrough is **§7**.
 
 ```powershell
 winget install OpenJS.NodeJS.LTS        # Node 22 LTS
@@ -87,6 +90,7 @@ winget install astral-sh.uv             # uv (Python package manager)
 winget install Git.Git GitHub.GitLFS
 winget install Gyan.FFmpeg              # a libass-enabled FFmpeg build
 winget install UB-Mannheim.TesseractOCR # Tesseract OCR (see PATH note below)
+winget install Ollama.Ollama            # local VLM server (Qwen2.5-VL) — the VLM checklist step
 corepack enable pnpm                    # pnpm (ships with Node via corepack)
 ```
 
@@ -98,6 +102,11 @@ corepack enable pnpm                    # pnpm (ships with Node via corepack)
   skipped). Fix it either way: tick *"Add to PATH"* during install, **or** set
   `TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe` in `.env`. Verify with
   `tesseract --version`.
+- **Ollama (VLM checklist)**: after install, pull the vision model once —
+  `ollama pull qwen2.5vl:3b`. Ollama auto-starts a server on `http://localhost:11434`; the
+  sidecar finds it automatically (override with `VLM_BASE_URL` / `VLM_REMOTE_MODEL` in `.env`, or
+  point at LM Studio). If Ollama isn't running the VLM gate degrades cleanly — the video still
+  renders, just without the extra double-check.
 - **`make` is not on Windows** — use the raw commands shown in §3/§6 instead of `make …`.
 
 ---
@@ -175,7 +184,9 @@ make fetch-gen       # doc-25 cascade E: FLUX.1-schnell 4-bit for abstract beats
   only** (mflux is MLX-based).
 
 > **Windows/Linux:** use the commands in **§7.3** — `make` isn't available, and the alignment
-> model is faster-whisper instead of mlx-whisper (`make models`/`identity` work; `vlm`/`gen` are Apple-only).
+> model is faster-whisper instead of mlx-whisper. `make models`/`identity` work; the VLM runs via
+> **Ollama** there (not `make vlm`, which fetches the Apple-only MLX weights), and only `gen`
+> (FLUX) is Apple-only.
 
 ---
 
@@ -198,18 +209,19 @@ paste a script, and generate.
 
 ## 7. Windows / Linux — step by step (supported)
 
-**Read first — what works and what doesn't.** Windows/Linux now **generate finished videos**.
-The MLX packages (Apple-only) are platform-gated, so `uv sync` installs the cross-platform
-models instead: **SigLIP** (matching), **Kokoro** (TTS), **faster-whisper** (alignment /
-word-synced subtitles), **OCR** (Tesseract), **InsightFace + DINOv2** (identity). The only two
-things you lose are the Apple-only enhancement layers, and **both degrade cleanly**:
+**Read first — what works and what doesn't.** Windows/Linux **generate finished videos with the
+full verification cascade.** The MLX packages (Apple-only) are platform-gated, so `uv sync`
+installs the cross-platform stack instead: **SigLIP** (matching), **Kokoro** (TTS),
+**faster-whisper** (alignment / word-synced subtitles), **OCR** (Tesseract), **InsightFace +
+DINOv2** (identity), and the **Qwen2.5-VL checklist via Ollama** (§7.4). The one step that stays
+Apple-only:
 
-- **Qwen2.5-VL checklist** (a final verification pass) — off; OCR + identity still verify candidates.
-- **FLUX generation** for abstract beats — off; those beats fall back to a styled **text card**.
+- **FLUX generation** for abstract beats — off; those beats fall back to a styled **text card**
+  (the pipeline's designed final fallback anyway).
 
-So a Windows render = real footage matched by SigLIP, natural TTS, word-synced subtitles, OCR +
-identity verification, and text cards for anything abstract. (On Apple Silicon you additionally
-get the VLM double-check + FLUX-generated images.)
+So a Windows render = real footage matched by SigLIP, natural TTS, word-synced subtitles, and the
+full OCR + identity + VLM verification — identical to a Mac except that abstract beats with no
+match get a text card instead of a FLUX-generated image.
 
 ### 7.1 Install the prerequisites (PowerShell)
 
@@ -257,6 +269,10 @@ copy .env.example .env           # then fill it in (§4): OPENAI/PEXELS/PIXABAY 
 Visual C++ Build Tools** if it errors on a missing compiler: `winget install
 Microsoft.VisualStudio.2022.BuildTools` (select "Desktop development with C++"), then re-run.
 
+> **After every `git pull`, re-run `uv sync`.** It prunes any stale Apple-only MLX packages an
+> earlier install may have left behind (those crash on import on Windows) and picks up new deps
+> like `httpx` for the Ollama VLM backend.
+
 ### 7.3 Download the models
 
 `make` isn't on Windows, so call the fetch script directly (it puts weights in `data\models`):
@@ -268,11 +284,25 @@ uv run python -m scripts.fetch_models --identity   # DINOv2 + InsightFace (~400 
 cd ..\..
 ```
 
-Skip `--vlm` (Qwen2.5-VL needs MLX — the gate stays off) and skip `services\gen` (FLUX is
-Apple-only — abstract beats use text cards). Also `winget install
-UB-Mannheim.TesseractOCR` if you didn't in §7.1 (the OCR gate needs the `tesseract` binary on PATH).
+Don't run `--vlm` here — that fetches the Apple-only MLX weights. On Windows the VLM step runs
+through **Ollama** instead (§7.4). Skip `services\gen` too (FLUX is Apple-only — abstract beats
+use text cards). And `winget install UB-Mannheim.TesseractOCR` if you didn't in §7.1 (the OCR
+gate needs the `tesseract` binary on PATH, or `TESSERACT_CMD` set — §2).
 
-### 7.4 Migrate the DB and run
+### 7.4 Set up the VLM checklist (Ollama)
+
+The doc-25 VLM double-check runs Qwen2.5-VL through a local **Ollama** server on Windows/Linux —
+the same model family the Mac runs via MLX, so no pipeline step is skipped. One-time:
+
+```powershell
+ollama pull qwen2.5vl:3b         # ~3.2 GB; Ollama auto-runs a server on http://localhost:11434
+```
+
+The sidecar finds `localhost:11434` automatically — nothing to configure. To use **LM Studio** or
+a different model instead, set `VLM_BASE_URL` / `VLM_REMOTE_MODEL` in `.env`. If Ollama isn't
+running the VLM gate degrades cleanly (the render still completes, just without the extra check).
+
+### 7.5 Migrate the DB and run
 
 ```powershell
 pnpm db:migrate                  # push migrations to Supabase Cloud
@@ -280,9 +310,9 @@ pnpm db:types
 pnpm dev                         # web :3000 + worker + sidecar (:8484)
 ```
 
-Open <http://localhost:3000/settings> — the sidecar card should be **green** now (SigLIP,
-Kokoro, faster-whisper, OCR, InsightFace, DINOv2 all load; the VLM shows cold, which is
-expected). Create a project, paste a script, and generate a real video.
+Open <http://localhost:3000/settings> — the sidecar card should be **green** (SigLIP, Kokoro,
+faster-whisper, OCR, InsightFace, DINOv2). With Ollama running and `qwen2.5vl:3b` pulled (§7.4),
+the VLM check is live too. Create a project, paste a script, and generate a real video.
 
 > **First render is slower on Windows:** faster-whisper alignment runs on CPU (int8). If it's
 > too slow, set a smaller model — `setx FASTER_WHISPER_MODEL Systran/faster-whisper-tiny` — or,
@@ -303,12 +333,17 @@ expected). Create a project, paste a script, and generate a real video.
 - **Worker dies mid-run / "too many connections"** → the Supabase session pooler caps ~15
   clients; web + worker pools must sum under it. Don't run two workers.
 - **Tesseract "not installed" (OCR gate skipped)** → the binary isn't on `PATH`. The gate
-  degrades silently (by design) until `tesseract --version` works.
+  degrades silently (by design) until `tesseract --version` works, or set `TESSERACT_CMD` (§2).
+- **VLM check unavailable / cold (Windows/Linux)** → start Ollama and pull the model:
+  `ollama pull qwen2.5vl:3b`. The sidecar re-probes every run, so no restart is needed; it
+  degrades cleanly when absent. Set `VLM_BASE_URL` to use LM Studio or a remote server instead.
+- **`mlx.core` DLL / "no Stream(gpu,1)" on Windows** → a stale Apple-only MLX package in the venv;
+  the code no longer selects it, but `uv sync` after a `git pull` removes it for good.
 - **Sidecar stuck at 0% after hours** → a wedged long-lived sidecar; restart `pnpm sidecar`.
 - **`uv sync` fails building torch/onnxruntime on Windows** → install the MSVC C++ Build Tools
   (§7.2), then re-run. (MLX is auto-skipped off Apple Silicon — that's expected, not an error.)
 - **Windows render is slow / no word-synced subtitles** → faster-whisper is CPU int8; use a
-  smaller `FASTER_WHISPER_MODEL` (e.g. `Systran/faster-whisper-tiny`) or a CUDA GPU (§7.4).
+  smaller `FASTER_WHISPER_MODEL` (e.g. `Systran/faster-whisper-tiny`) or a CUDA GPU (§7.5).
 
 ---
 

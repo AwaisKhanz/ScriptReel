@@ -5,12 +5,15 @@ SigLIP candidates here and asks a strict-JSON checklist — subject present? sho
 framing appropriate? era matches? contradicting on-screen text? — so the survivor
 is VLM-confirmed for subject, framing, era, and no contradicting text.
 
-Qwen2.5-VL-3B (4-bit MLX, Apache-2.0) is OPTIONAL and NOT installed by default.
-``available()`` probes the LOCAL HF cache WITHOUT downloading (``local_files_only``)
-so the gate stays inert until ``make fetch-vlm`` — a missing snapshot or a missing
-``mlx_vlm`` caches ``False`` and ``run_vlm`` raises ``VlmError`` (a 500 the worker
-catches) so the VLM pass skips and the render is unchanged (invariant 7 — degrade,
-never die). Nothing here can fail or alter a render when the model is absent.
+Two backends answer the SAME checklist, picked by platform so every OS runs the gate:
+  - **Apple Silicon** → Qwen2.5-VL-3B 4-bit via **mlx-vlm** (load-on-demand, evicted after).
+  - **Windows / Linux** → the same Qwen2.5-VL family via an **OpenAI-compatible local server**
+    (Ollama by default, or LM Studio) — MLX has no Windows/Linux build, so we call out over
+    HTTP instead of forcing an Apple-only library (see ``_run_vlm_remote``).
+``available()`` probes the active backend WITHOUT side effects — the Apple path checks the
+LOCAL HF cache (``local_files_only`` never downloads); the remote path pings the server. When
+the backend isn't ready ``run_vlm`` raises ``VlmError`` (a 500 the worker catches) so the VLM
+pass skips and the render is unchanged (invariant 7 — degrade, never die).
 
 Unlike the resident light models (SigLIP / DINOv2 / InsightFace), the ~2.2 GB Qwen
 weights are LOAD-ON-DEMAND + EVICTED after each batch (doc 25 §6) so the M3 Pro's
@@ -31,9 +34,22 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
+from app.models import is_apple_silicon
+
 _log = logging.getLogger("scriptreel.vlm")
 
 MODEL_ID = os.environ.get("QWEN_VL_MODEL", "mlx-community/Qwen2.5-VL-3B-Instruct-4bit")
+
+# --- Non-Apple VLM backend (Windows / Linux) --------------------------------------------------
+# MLX is Apple-Silicon-only, so off-Apple the SAME checklist is answered by an OpenAI-compatible
+# local server. Ollama by default (`ollama pull qwen2.5vl:3b` → the same Qwen2.5-VL family as the
+# Apple path); point VLM_BASE_URL at LM Studio (http://localhost:1234/v1) or any OpenAI-compatible
+# server to use that instead. This is a real backend, NOT a skip — Windows runs the VLM gate too.
+_REMOTE_BASE_URL = os.environ.get("VLM_BASE_URL", "http://localhost:11434/v1").rstrip("/")
+_REMOTE_MODEL = os.environ.get("VLM_REMOTE_MODEL", "qwen2.5vl:3b")
+_REMOTE_API_KEY = os.environ.get("VLM_API_KEY", "ollama")  # Ollama ignores it; keep it non-empty
+_REMOTE_TIMEOUT = float(os.environ.get("VLM_TIMEOUT_S", "120"))  # local generate can be slow on CPU
+_REMOTE_PROBE_TIMEOUT = 3.0  # availability probe: fail fast when the server isn't up
 _MAX_TOKENS = 128  # a yes/no checklist needs very few tokens; cap so a runaway can't stall
 _MAX_SIDE = 1024  # cap resolution before generate: Qwen2.5-VL runs at native res, so a full-
 #                   size image (e.g. a screenshot) explodes the vision tensor to multiple GB
@@ -60,33 +76,82 @@ class VlmError(Exception):
 
 
 def available() -> bool:
-    """True when mlx-vlm is importable AND the Qwen2.5-VL snapshot is in the LOCAL HF
-    cache. Cached — the probe runs at most once per process. ``local_files_only=True``
-    means a missing snapshot NEVER triggers a surprise download that would silently
-    change a render: it raises, and this caches ``False`` (the gate stays inert until
-    ``make fetch-vlm``). A missing ``mlx_vlm`` likewise ⇒ ``False``."""
+    """True when the platform's VLM backend is ready.
+
+    Apple Silicon → mlx-vlm + the local Qwen snapshot; cached both ways (install/download state
+    is static within a process). Elsewhere → a reachable OpenAI-compatible server holding the
+    model; only a POSITIVE result is cached, so the gate lights up the moment you start Ollama /
+    LM Studio (no sidecar restart needed). A negative result ⇒ ``run_vlm`` raises ``VlmError``
+    (a 500 the worker catches) and the VLM pass is skipped — never a render failure (invariant 7)."""
     global _available_cache
-    if _available_cache is None:
-        try:
-            import importlib.util
+    if _available_cache is True:
+        return True
+    if is_apple_silicon():
+        if _available_cache is None:
+            _available_cache = _probe_mlx()
+        return _available_cache
+    # Remote server can come up at ANY time — re-probe when down (a refused connection fails
+    # instantly), cache only success.
+    if _probe_remote():
+        _available_cache = True
+        return True
+    return False
 
-            # find_spec checks mlx_vlm is INSTALLED without EXECUTING it. Importing mlx_vlm
-            # here would create its module-level GPU `generation_stream` (mlx_vlm/utils.py) on
-            # THIS thread — but available() runs on the event loop / FastAPI pool, while
-            # generate() runs on the dedicated _vlm_executor thread, and that stream is
-            # thread-bound ("no Stream(gpu, 1) in current thread"). So the FIRST real import
-            # must happen inside _run_vlm_sync on the executor thread, never here.
-            if importlib.util.find_spec("mlx_vlm") is None:
-                raise ImportError("mlx_vlm not installed")
 
-            from huggingface_hub import snapshot_download
+def _probe_mlx() -> bool:
+    """Apple path: mlx-vlm INSTALLED (by spec, not import — see below) AND the Qwen snapshot in
+    the local HF cache. ``local_files_only`` never downloads on a probe, so a missing snapshot
+    just ⇒ False (inert until ``make fetch-vlm``)."""
+    import importlib.util
 
-            # local_files_only: raises unless already fetched — never downloads on a probe.
-            snapshot_download(MODEL_ID, local_files_only=True)
-            _available_cache = True
-        except Exception:  # noqa: BLE001 — missing package / snapshot ⇒ unavailable
-            _available_cache = False
-    return _available_cache
+    # find_spec checks mlx_vlm is installed WITHOUT executing it: importing mlx_vlm here creates
+    # its module-level GPU `generation_stream` (mlx_vlm/utils.py) on THIS thread, but generate()
+    # runs on the dedicated _vlm_executor thread and that stream is thread-bound ("no Stream(gpu,
+    # 1) in current thread"). So the first real import must happen inside _run_vlm_sync, never here.
+    if importlib.util.find_spec("mlx_vlm") is None:
+        return False
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot_download(MODEL_ID, local_files_only=True)
+        return True
+    except Exception:  # noqa: BLE001 — snapshot missing ⇒ unavailable (until make fetch-vlm)
+        return False
+
+
+def _probe_remote() -> bool:
+    """Non-Apple path: is the OpenAI-compatible server up and does it hold the configured model?
+    A clear log tells the user exactly what to do when it isn't — the render proceeds either way."""
+    try:
+        import httpx
+    except Exception:  # noqa: BLE001 — httpx is a runtime dep; if somehow absent, degrade
+        return False
+    try:
+        resp = httpx.get(
+            f"{_REMOTE_BASE_URL}/models",
+            timeout=_REMOTE_PROBE_TIMEOUT,
+            headers={"Authorization": f"Bearer {_REMOTE_API_KEY}"},
+        )
+        resp.raise_for_status()
+        ids = {str(m.get("id", "")) for m in resp.json().get("data", [])}
+    except Exception as exc:  # noqa: BLE001 — server not up yet ⇒ skip the gate for now
+        _log.info(
+            "VLM: no OpenAI-compatible server at %s (%s) — start Ollama / LM Studio to enable the "
+            "VLM gate; the render proceeds without it meanwhile",
+            _REMOTE_BASE_URL,
+            exc.__class__.__name__,
+        )
+        return False
+    if _REMOTE_MODEL in ids:
+        return True
+    _log.warning(
+        "VLM: server at %s is up but is missing model %r (has %s) — run `ollama pull %s`",
+        _REMOTE_BASE_URL,
+        _REMOTE_MODEL,
+        sorted(ids)[:8],
+        _REMOTE_MODEL,
+    )
+    return False
 
 
 def _load() -> None:
@@ -271,19 +336,119 @@ def _run_vlm_sync(items: list[dict]) -> tuple[list[dict], list[str]]:
     return results, failed
 
 
+def _encode_image_data_uri(path: str) -> str:
+    """Load → RGB → downscale to _MAX_SIDE → JPEG-base64 into a data URI for the OpenAI-style
+    ``image_url`` field. Mirrors the MLX path's resize so both backends see the same pixels and
+    neither blows up a server on a full-res screenshot."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    from app.models import resize_to_max_side
+
+    with Image.open(path) as raw:
+        capped = resize_to_max_side(raw.convert("RGB"), _MAX_SIDE)
+    buf = io.BytesIO()
+    capped.save(buf, "JPEG", quality=90)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _remote_verdict(path: str, content: str) -> dict | None:
+    """Parse one server reply into the worker's verdict shape (identical to the MLX path).
+    Returns None when the reply carries no JSON object (caller drops it to ``failed``)."""
+    parsed = _parse_checklist(content)
+    if parsed is None:
+        _log.warning("VLM (remote) returned no parseable JSON for %s: %r", path, content[:200])
+        return None
+    return {
+        "path": path,  # always the ORIGINAL path the worker sent
+        "subjectPresent": parsed["subject_present"],
+        "shotTypeMatches": parsed["shot_type_matches"],
+        "eraMatches": parsed["era_matches"],
+        "contradictingText": parsed["contradicting_text"],
+    }
+
+
+async def _run_vlm_remote(items: list[dict]) -> tuple[list[dict], list[str]]:
+    """Windows/Linux path: ask an OpenAI-compatible server (Ollama / LM Studio) the SAME checklist
+    the MLX path asks, one candidate at a time (the batch is tiny — top-k). ``response_format`` asks
+    for JSON, and ``_parse_checklist`` still salvages a JSON object from prose if the server ignores
+    it. A per-item failure lands in ``failed`` and never sinks the batch (mirrors the MLX path)."""
+    import httpx
+
+    results: list[dict] = []
+    failed: list[str] = []
+    async with httpx.AsyncClient(
+        base_url=_REMOTE_BASE_URL,
+        timeout=_REMOTE_TIMEOUT,
+        headers={"Authorization": f"Bearer {_REMOTE_API_KEY}"},
+    ) as client:
+        for item in items:
+            path = str(item.get("path", ""))
+            try:
+                question = _checklist_prompt(
+                    str(item.get("description", "")), str(item.get("era", "timeless"))
+                )
+                payload = {
+                    "model": _REMOTE_MODEL,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": question},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": _encode_image_data_uri(path)},
+                                },
+                            ],
+                        }
+                    ],
+                    "temperature": 0,
+                    "max_tokens": _MAX_TOKENS,
+                    "response_format": {"type": "json_object"},
+                }
+                resp = await client.post("/chat/completions", json=payload)
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                verdict = _remote_verdict(path, str(content))
+                if verdict is None:
+                    failed.append(path)
+                else:
+                    results.append(verdict)
+            except Exception:  # noqa: BLE001 — one bad item never sinks the batch
+                _log.warning("VLM (remote) checklist failed for %s", path, exc_info=True)
+                failed.append(path)
+    return results, failed
+
+
+def _unavailable_message() -> str:
+    """Platform-specific ``E_VLM_UNAVAILABLE`` guidance so each OS tells the user the RIGHT fix."""
+    if is_apple_silicon():
+        return (
+            "E_VLM_UNAVAILABLE: Qwen2.5-VL not installed — cd services/ml && uv sync && "
+            "make fetch-vlm"
+        )
+    return (
+        f"E_VLM_UNAVAILABLE: no VLM server at {_REMOTE_BASE_URL} serving {_REMOTE_MODEL!r} — "
+        f"install Ollama and run `ollama pull {_REMOTE_MODEL}` (or set VLM_BASE_URL to your "
+        "LM Studio / OpenAI-compatible server)"
+    )
+
+
 async def run_vlm(items: list[dict]) -> tuple[list[dict], list[str]]:
     """Run the VLM checklist over ``items`` (each ``{path, description, era}``), returning
-    ``(results, failed)``. Probe availability before threading — a missing model is a 500
-    the worker catches, not work. The heavy, load-on-demand batch is serialised under a
-    lock so two never resident at once."""
+    ``(results, failed)``. Availability is probed first — an unready backend is a 500 the worker
+    catches, not work. Dispatches by platform: Apple Silicon runs mlx-vlm on the dedicated,
+    thread-pinned executor (serialised so two ~2.2 GB loads never coexist); elsewhere it calls the
+    OpenAI-compatible server over async HTTP (no thread pinning needed)."""
     if not available():
-        raise VlmError(
-            "E_VLM_UNAVAILABLE: Qwen2.5-VL not installed — "
-            "cd services/ml && uv sync && make fetch-vlm"
-        )
+        raise VlmError(_unavailable_message())
     if not items:
         return [], []
-    # NOT asyncio.to_thread (shared pool — torch-MPS contaminates it, see _vlm_executor).
-    async with _infer_lock:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(_vlm_executor, _run_vlm_sync, items)
+    if is_apple_silicon():
+        # NOT asyncio.to_thread (shared pool — torch-MPS contaminates it, see _vlm_executor).
+        async with _infer_lock:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(_vlm_executor, _run_vlm_sync, items)
+    return await _run_vlm_remote(items)

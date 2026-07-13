@@ -8,10 +8,24 @@ behind the worker-side TtsEngine / Embedder / Aligner interfaces (doc 03, doc 14
 from __future__ import annotations
 
 import importlib.util
+import platform
+import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PilImage
+
+
+def is_apple_silicon() -> bool:
+    """True only on Apple-Silicon Macs (darwin + arm64) — the ONLY platform MLX runs on.
+
+    MLX ships arm64-mac wheels exclusively; on Windows/Linux/Intel-Mac ``import mlx.core`` fails
+    at the native DLL load *even when the pip package is present* (e.g. a stale venv that still
+    has the Apple-only packages). Backend selectors must gate on THIS, not on
+    ``find_spec('mlx_*')`` — a spec is findable for a present-but-unimportable package, so
+    find_spec alone would pick the MLX path and crash. With this gate align.py falls back to
+    faster-whisper and the VLM gate degrades cleanly (invariant 7 — degrade, never die)."""
+    return sys.platform == "darwin" and platform.machine() == "arm64"
 
 
 def resize_to_max_side(image: PilImage, max_side: int) -> PilImage:

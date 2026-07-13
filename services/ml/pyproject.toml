@@ -33,12 +33,12 @@ dependencies = [
   "onnxruntime>=1.19",
   "numpy<2",
   "huggingface-hub>=0.27",
+  "httpx>=0.27", # OpenAI-compatible VLM backend off Apple (Ollama / LM Studio); see app/vlm.py
 ]
 
 [dependency-groups]
 dev = [
   "pytest>=8",
-  "httpx>=0.27",
 ]
 
 [tool.uv]
