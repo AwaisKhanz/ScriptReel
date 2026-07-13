@@ -27,12 +27,14 @@ export function estimateBeats(script: string): number {
 }
 
 export function fileUrl(absoluteOrRelPath: string): string {
-  // Map a stored absolute path under DATA_DIR/repo to the /api/files route.
-  const marker = ['/data/projects/', '/data/cache/', '/assets/music/'].find((m) =>
-    absoluteOrRelPath.includes(m),
-  );
+  // Map a stored absolute path under DATA_DIR/repo to the /api/files route. Stored paths use the
+  // OS separator, so on Windows they're backslashed (C:\…\data\projects\…). Normalize to forward
+  // slashes FIRST — otherwise the markers never match, fileUrl returns the raw C:\ path, and the
+  // browser blocks it as a `file://` URL ("Not allowed to load local resources").
+  const p = absoluteOrRelPath.replace(/\\/g, '/');
+  const marker = ['/data/projects/', '/data/cache/', '/assets/music/'].find((m) => p.includes(m));
   if (!marker) return absoluteOrRelPath;
-  const idx = absoluteOrRelPath.indexOf(marker);
-  const rel = absoluteOrRelPath.slice(idx + (marker.startsWith('/data/') ? '/data/'.length : 1));
+  const idx = p.indexOf(marker);
+  const rel = p.slice(idx + (marker.startsWith('/data/') ? '/data/'.length : 1));
   return `/api/files/${rel}`;
 }
