@@ -146,6 +146,15 @@ export const PROVIDER_PROBE: Record<ProviderId, ProbeSpec> = {
     resetKind: 'epoch',
     window: 'hour',
   },
+  // Keyless archive: no per-key limit; a cheap images call confirms reachability. Not shown in
+  // the key manager (no credential fields).
+  wellcome: {
+    url: 'https://api.wellcomecollection.org/catalogue/v2/images?query=nature&pageSize=1',
+    method: 'GET',
+    limitSource: 'none',
+    resetKind: null,
+    window: null,
+  },
 };
 
 function toInt(raw: string | null): number | null {

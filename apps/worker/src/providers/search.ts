@@ -21,6 +21,7 @@ import type { QuotaGuard } from './quota-guard';
 import { readSearchCache, writeSearchCache } from './search-cache';
 import { SmithsonianProvider } from './smithsonian';
 import { UsgsProvider } from './usgs';
+import { WellcomeProvider } from './wellcome';
 import { WikidataCommonsProvider } from './wikidata-commons';
 import { WikimediaProvider } from './wikimedia';
 
@@ -54,6 +55,7 @@ export class SearchClient {
       flickr: new FlickrProvider(),
       europeana: new EuropeanaProvider(),
       smithsonian: new SmithsonianProvider(),
+      wellcome: new WellcomeProvider(),
     };
   }
 
@@ -100,7 +102,8 @@ export class SearchClient {
           err.code === 'E_QUOTA_LIBRARY_OF_CONGRESS' ||
           err.code === 'E_QUOTA_FLICKR' ||
           err.code === 'E_QUOTA_EUROPEANA' ||
-          err.code === 'E_QUOTA_SMITHSONIAN')
+          err.code === 'E_QUOTA_SMITHSONIAN' ||
+          err.code === 'E_QUOTA_WELLCOME')
       ) {
         this.log.warn({ providerId, code: err.code }, 'quota exhausted — skipping request');
         return { candidates: [], cacheHit: false };

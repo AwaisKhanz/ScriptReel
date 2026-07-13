@@ -13,6 +13,7 @@ import {
   PIXABAY_MINUTE_BUDGET,
   SMITHSONIAN_HOUR_BUDGET,
   USGS_HOUR_BUDGET,
+  WELLCOME_HOUR_BUDGET,
   WIKIDATA_HOUR_BUDGET,
   WIKIMEDIA_HOUR_BUDGET,
 } from './constants';
@@ -38,7 +39,8 @@ export type ProviderId =
   | 'library-of-congress'
   | 'flickr'
   | 'europeana'
-  | 'smithsonian';
+  | 'smithsonian'
+  | 'wellcome';
 export type MediaKind = 'video' | 'image';
 export type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -246,6 +248,7 @@ export const QUOTA_BUDGETS: readonly QuotaBudget[] = [
   { key: 'flickr:hour', unit: 'hour', budget: FLICKR_HOUR_BUDGET },
   { key: 'europeana:hour', unit: 'hour', budget: EUROPEANA_HOUR_BUDGET },
   { key: 'smithsonian:hour', unit: 'hour', budget: SMITHSONIAN_HOUR_BUDGET },
+  { key: 'wellcome:hour', unit: 'hour', budget: WELLCOME_HOUR_BUDGET },
 ];
 
 // Per-KEY budget windows a provider must satisfy to serve one request (doc 23). With
@@ -274,6 +277,7 @@ export const PROVIDER_WINDOWS: Record<ProviderId, readonly QuotaBudget[]> = {
   flickr: [{ key: 'flickr:hour', unit: 'hour', budget: FLICKR_HOUR_BUDGET }],
   europeana: [{ key: 'europeana:hour', unit: 'hour', budget: EUROPEANA_HOUR_BUDGET }],
   smithsonian: [{ key: 'smithsonian:hour', unit: 'hour', budget: SMITHSONIAN_HOUR_BUDGET }],
+  wellcome: [{ key: 'wellcome:hour', unit: 'hour', budget: WELLCOME_HOUR_BUDGET }],
 };
 
 // provider_usage key for one key's window, e.g. "pexels:hour#<keyId>" (doc 23).
@@ -296,6 +300,7 @@ export const PROVIDER_QUOTA_CODE = {
   flickr: 'E_QUOTA_FLICKR',
   europeana: 'E_QUOTA_EUROPEANA',
   smithsonian: 'E_QUOTA_SMITHSONIAN',
+  wellcome: 'E_QUOTA_WELLCOME',
 } as const;
 
 // Copyright-free archive/aggregator sources (doc 23). Curated stock (Pexels/Pixabay)
@@ -315,6 +320,7 @@ const ARCHIVE_PROVIDER_SET: ReadonlySet<string> = new Set([
   'flickr',
   'europeana',
   'smithsonian',
+  'wellcome',
 ]);
 export function isArchiveProvider(provider: string): boolean {
   return ARCHIVE_PROVIDER_SET.has(provider);
@@ -336,6 +342,7 @@ export const ARCHIVE_KIND: Readonly<Partial<Record<ProviderId, MediaKind>>> = {
   flickr: 'image',
   europeana: 'image',
   smithsonian: 'image',
+  wellcome: 'image',
 };
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock

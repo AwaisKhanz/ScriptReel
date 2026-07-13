@@ -70,9 +70,10 @@ export class QuotaGuard {
       provider === 'internet-archive' ||
       provider === 'inaturalist' ||
       provider === 'usgs' ||
-      provider === 'library-of-congress'
+      provider === 'library-of-congress' ||
+      provider === 'wellcome'
     ) {
-      return [{ id: 'anon', creds: {} }]; // Openverse anon / NASA + Wikimedia + Wikidata + Met + IA + iNaturalist + USGS + LoC keyless
+      return [{ id: 'anon', creds: {} }]; // Openverse anon / NASA + Wikimedia + Wikidata + Met + IA + iNaturalist + USGS + LoC + Wellcome keyless
     }
     return [];
   }

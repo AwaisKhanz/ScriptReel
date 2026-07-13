@@ -54,6 +54,7 @@ export const LIBRARY_OF_CONGRESS_HOUR_BUDGET = 1_000; // Library of Congress, ke
 export const FLICKR_HOUR_BUDGET = 1_000; // Flickr, keyed, self-imposed polite ceiling
 export const EUROPEANA_HOUR_BUDGET = 1_000; // Europeana, keyed, self-imposed polite ceiling
 export const SMITHSONIAN_HOUR_BUDGET = 1_000; // Smithsonian Open Access, keyed, self-imposed polite ceiling
+export const WELLCOME_HOUR_BUDGET = 1_000; // Wellcome Collection, keyless, self-imposed polite ceiling
 export const RESEARCH_RESERVE = 30; // kept free for storyboard re-search
 export const SEARCH_CACHE_TTL_H = 24; // Pixabay requires ≥24 h caching
 export const PER_PAGE_VIDEO = 20;

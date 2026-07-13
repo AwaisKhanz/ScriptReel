@@ -82,6 +82,9 @@ export const PROVIDER_CREDENTIALS: Record<ProviderId, CredentialField[]> = {
       hint: 'Free instant api.data.gov key (api.data.gov/signup) — one key covers Smithsonian Open Access.',
     },
   ],
+  // Keyless: the Wellcome Collection catalogue API takes no key. Empty ⇒ never shown in the key
+  // manager, never addable.
+  wellcome: [],
 };
 
 // Providers that accept pooled credentials (i.e. declare ≥1 field) — the single source

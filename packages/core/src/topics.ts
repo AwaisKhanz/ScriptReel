@@ -41,7 +41,7 @@ export type Topic =
 // is just editing this table + the ProviderId union.
 export const TOPIC_SOURCES: Readonly<Record<Topic, readonly ProviderId[]>> = {
   space: ['nasa', 'wikimedia'],
-  medicine: ['wikimedia'], // + open-i / wellcome (Phase 3)
+  medicine: ['wellcome', 'wikimedia'], // Wellcome = the medical/anatomy authority (Phase 3)
   ocean: ['usgs', 'inaturalist', 'wikimedia'], // + noaa (Phase 3)
   weather: ['nasa', 'usgs', 'wikimedia'], // + noaa (Phase 3)
   nature: ['inaturalist', 'usgs', 'wikimedia', 'flickr'],

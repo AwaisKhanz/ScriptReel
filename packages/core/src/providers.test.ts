@@ -193,6 +193,7 @@ describe('quota windows', () => {
       'pixabay:minute',
       'smithsonian:hour',
       'usgs:hour',
+      'wellcome:hour',
       'wikidata-commons:hour',
       'wikimedia:hour',
     ]);
