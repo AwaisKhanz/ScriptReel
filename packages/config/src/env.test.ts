@@ -16,8 +16,9 @@ describe('loadEnv', () => {
     expect(parsed.OPENAI_API_KEY).toBeUndefined();
   });
 
-  it('rejects a non-OpenAI LLM provider (no local LLM)', () => {
-    expect(() => loadEnv({ LLM_PROVIDER: 'ollama' })).toThrow(/Invalid environment/);
+  it('accepts openai + ollama LLM providers, rejects unknown ones', () => {
+    expect(loadEnv({ LLM_PROVIDER: 'ollama' }).LLM_PROVIDER).toBe('ollama');
+    expect(loadEnv({ LLM_PROVIDER: 'openai' }).LLM_PROVIDER).toBe('openai');
     expect(() => loadEnv({ LLM_PROVIDER: 'gemini' })).toThrow(/Invalid environment/);
   });
 });

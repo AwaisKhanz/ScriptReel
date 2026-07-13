@@ -302,6 +302,13 @@ The sidecar finds `localhost:11434` automatically — nothing to configure. To u
 a different model instead, set `VLM_BASE_URL` / `VLM_REMOTE_MODEL` in `.env`. If Ollama isn't
 running the VLM gate degrades cleanly (the render still completes, just without the extra check).
 
+> **Optional — run the LLM steps locally too.** Analyze, knowledge expansion, and media-fit
+> verification default to OpenAI, but can run on Ollama instead: pull the models
+> (`ollama pull qwen3:14b` for text + reuse `qwen2.5vl` for vision) and set `LLM_PROVIDER=ollama`
+> in `.env` (defaults: `OLLAMA_MODEL=qwen3:14b`, `OLLAMA_VISION_MODEL=qwen2.5vl:7b`). Fully local,
+> no OpenAI key needed. Reasoning models (deepseek-r1) are a poor fit — they're noisy for the
+> structured JSON the analyzer needs.
+
 ### 7.5 Migrate the DB and run
 
 ```powershell

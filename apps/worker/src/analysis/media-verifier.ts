@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
-import { env } from '@scriptreel/config';
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import pLimit from 'p-limit';
 import type { Logger } from 'pino';
+import { extractJsonObject, getLlm, jsonFormat } from './llm';
 
 // Media-fit verification (doc 23 §6): before a montage plan is final, each planned
 // shot's thumbnail is shown to the vision model with the exact phrase it is supposed
@@ -66,16 +66,13 @@ async function verifyBatch(
           { role: 'system', content: SYSTEM },
           { role: 'user', content },
         ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: { name: 'media_fit', strict: true, schema: RESPONSE_SCHEMA },
-        },
+        response_format: jsonFormat('media_fit', RESPONSE_SCHEMA),
       },
       { timeout: REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) },
     );
     const raw = completion.choices[0]?.message?.content;
     if (!raw) return accept;
-    const parsed = JSON.parse(raw) as { fits?: unknown };
+    const parsed = JSON.parse(extractJsonObject(raw)) as { fits?: unknown };
     const fits = Array.isArray(parsed.fits) ? parsed.fits : null;
     if (!fits || fits.length !== items.length) return accept;
     return fits.map((f) => f !== false); // anything non-false counts as a pass
@@ -93,9 +90,10 @@ export async function verifyMediaFit(
   signal?: AbortSignal,
 ): Promise<boolean[]> {
   if (items.length === 0) return [];
-  if (!env.OPENAI_API_KEY) return items.map(() => true);
-  const client = new OpenAI({ apiKey: env.OPENAI_API_KEY, maxRetries: 1 });
-  const model = env.OPENAI_MODEL;
+  const llm = getLlm();
+  if (!llm.available) return items.map(() => true);
+  const client = llm.client;
+  const model = llm.visionModel; // must be able to see images (OpenAI: gpt-4o; Ollama: qwen2.5vl)
 
   const batches: FitItem[][] = [];
   for (let i = 0; i < items.length; i += BATCH_SIZE) {

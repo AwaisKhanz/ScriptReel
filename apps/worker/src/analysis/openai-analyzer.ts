@@ -1,4 +1,3 @@
-import { env } from '@scriptreel/config';
 import {
   type AnalysisResult,
   AnalysisResultSchema,
@@ -8,8 +7,9 @@ import {
   PipelineError,
   type ScriptAnalyzer,
 } from '@scriptreel/core';
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import type { Logger } from 'pino';
+import { extractJsonObject, getLlm, jsonFormat } from './llm';
 
 const MAX_CHUNK_WORDS = 1200;
 
@@ -194,12 +194,18 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
   private readonly log: Logger;
 
   constructor(log: Logger) {
-    const apiKey = env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new PipelineError('E_ENV', 'analyze', 'OPENAI_API_KEY is not set');
+    // Provider (OpenAI cloud or local Ollama) resolved centrally — this analyzer is provider-
+    // agnostic since both speak the OpenAI chat API.
+    const llm = getLlm();
+    if (!llm.available) {
+      throw new PipelineError(
+        'E_ENV',
+        'analyze',
+        'no LLM configured — set OPENAI_API_KEY, or LLM_PROVIDER=ollama for a local model',
+      );
     }
-    this.client = new OpenAI({ apiKey, maxRetries: 3 }); // SDK backs off on 429/5xx
-    this.model = env.OPENAI_MODEL;
+    this.client = llm.client;
+    this.model = llm.textModel;
     this.log = log;
   }
 
@@ -253,17 +259,14 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
           { role: 'system', content: buildSystemPrompt(input.pacing) },
           { role: 'user', content: user },
         ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: { name: 'analysis', strict: true, schema: RESPONSE_JSON_SCHEMA },
-        },
+        response_format: jsonFormat('analysis', RESPONSE_JSON_SCHEMA),
       });
     } catch (err) {
       const status = (err as { status?: number }).status;
       throw new PipelineError(
         'E_LLM_QUOTA',
         'analyze',
-        `openai request failed (status ${status ?? 'n/a'})`,
+        `LLM request failed (${this.model}, status ${status ?? 'n/a'})`,
         {
           cause: err,
         },
@@ -281,7 +284,8 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
 
     let json: unknown;
     try {
-      json = JSON.parse(content);
+      // extractJsonObject strips any <think> block / stray prose a local model may emit.
+      json = JSON.parse(extractJsonObject(content));
     } catch {
       throw new PipelineError('E_LLM_SCHEMA', 'analyze', 'response was not valid JSON');
     }

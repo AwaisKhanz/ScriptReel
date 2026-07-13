@@ -50,5 +50,5 @@ Three local processes: **web** (Next.js 15 — UI + thin API routes), **worker**
 - `xfade` requires identical geometry/fps/pixel format on both inputs; offsets are computed in `buildTimeline`, not improvised in the filtergraph.
 - libass `\k` sweeps `SecondaryColour → PrimaryColour` — for the `pop` preset the accent is *Primary*.
 - Pexels: 200 req/h. Pixabay: 100 req/60 s and responses **must** be cached 24 h.
-- LLM is **OpenAI GPT only** — no local LLM (owner directive 2026-07-10). Set `OPENAI_API_KEY`; `LLM_PROVIDER=openai`, default `OPENAI_MODEL=gpt-4o-mini`. No Docker; DB is Supabase Cloud.
+- LLM is provider-swappable via `LLM_PROVIDER` (`openai` | `ollama`), resolved in `apps/worker/src/analysis/llm.ts` — the analyzer/media-verifier speak the OpenAI chat API, which both providers serve. **openai** (default): set `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`). **ollama** (local, re-enabled 2026-07-13, supersedes the 2026-07-10 OpenAI-only directive): `OLLAMA_MODEL` (text: analyze + knowledge, default `qwen3:14b`) + `OLLAMA_VISION_MODEL` (media-fit, default `qwen2.5vl:7b`); reasoning models like deepseek-r1 are a poor fit for the structured JSON. No Docker; DB is Supabase Cloud.
 - SigLIP cosine thresholds are model-specific. Never copy `τ` values across model versions; re-run `pnpm eval:matching`.

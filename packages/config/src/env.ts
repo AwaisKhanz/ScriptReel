@@ -44,11 +44,17 @@ const EnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().default(''),
   PEXELS_API_KEY: z.string().optional(),
   PIXABAY_API_KEY: z.string().optional(),
-  // LLM: OpenAI GPT only — no local LLM (decided 2026-07-10; supersedes doc 07's
-  // Gemini/Ollama analyzers). OPENAI_API_KEY is required from Phase 2 onward.
-  LLM_PROVIDER: z.enum(['openai']).default('openai'),
+  // LLM provider (analyze + knowledge expansion + media-fit verification). `openai` uses the
+  // cloud GPT (needs OPENAI_API_KEY); `ollama` uses a LOCAL, OpenAI-API-compatible server (owner
+  // re-enabled local LLMs 2026-07-13, having an RTX-class GPU + Ollama). See analysis/llm.ts.
+  LLM_PROVIDER: z.enum(['openai', 'ollama']).default('openai'),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().min(1).default('gpt-4o-mini'),
+  // Local LLM via Ollama (active when LLM_PROVIDER=ollama). Text model drives analyze + knowledge
+  // expansion; the vision model drives media-fit verification (it must be able to see images).
+  OLLAMA_BASE_URL: z.string().min(1).default('http://localhost:11434/v1'),
+  OLLAMA_MODEL: z.string().min(1).default('qwen3:14b'),
+  OLLAMA_VISION_MODEL: z.string().min(1).default('qwen2.5vl:7b'),
   FFMPEG_PATH: z.string().optional(),
   // Video encoder override. Default is platform-aware (VideoToolbox on Apple, libx264 elsewhere);
   // set e.g. `h264_nvenc` on an NVIDIA box for GPU encoding (see apps/worker/src/ffmpeg/encoder.ts).

@@ -9,6 +9,7 @@ import {
   getClaims,
   searchEntities,
 } from '../providers/wikidata-commons';
+import { extractJsonObject, getLlm, jsonFormat } from './llm';
 
 // Knowledge expansion (doc 25 §2a): before searching, deepen what we know about a
 // visualizable entity — aliases + related entities (extra query terms), dates (→ derived
@@ -253,11 +254,79 @@ export async function resolveReferenceImage(
 
 // Expand one entity. Returns EMPTY on any failure (invariant 7). The caller memoizes by
 // canonical name so a repeated entity across beats is fetched once.
+// LLM knowledge expander (active when LLM_PROVIDER=ollama). Produces the same EntityKnowledge
+// shape from the local text model instead of Wikidata — no 429 rate limits, covers any entity,
+// stays fully local. The model enriches for VISUAL search and is told never to invent facts; any
+// failure degrades to EMPTY (search still has the LLM's own query terms — invariant 7).
+const LlmExpansion = z.object({
+  aliases: z.array(z.string()),
+  relatedTerms: z.array(z.string()),
+  era: z.enum(['modern', 'historical', 'timeless']),
+  extraTerms: z.array(z.string()),
+});
+const LLM_EXPANSION_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['aliases', 'relatedTerms', 'era', 'extraTerms'],
+  properties: {
+    aliases: { type: 'array', items: { type: 'string' } },
+    relatedTerms: { type: 'array', items: { type: 'string' } },
+    era: { type: 'string', enum: ['modern', 'historical', 'timeless'] },
+    extraTerms: { type: 'array', items: { type: 'string' } },
+  },
+};
+
+async function expandEntityLlm(
+  canonical: string,
+  instanceOf: string,
+  log: Logger,
+): Promise<EntityKnowledge> {
+  try {
+    const llm = getLlm();
+    const system =
+      'You enrich a named entity for STOCK-FOOTAGE search. Reply with ONLY a JSON object. Include ' +
+      'only things you are confident are correct — empty arrays are fine; never invent facts.';
+    const kind = instanceOf ? ` (a ${instanceOf})` : '';
+    const user =
+      `Entity: "${canonical}"${kind}.\n` +
+      'Return JSON with: aliases (≤4 common alternative names); relatedTerms (≤5 closely-associated ' +
+      'real things that make good visual search terms — its field, place, era, notable ' +
+      'associations); era ("historical" if it predates ~1900, "modern" if contemporary, "timeless" ' +
+      'if era-agnostic); extraTerms (≤3 extra concrete VISUAL search terms).';
+    const completion = await llm.client.chat.completions.create({
+      model: llm.textModel,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      response_format: jsonFormat('entity_knowledge', LLM_EXPANSION_SCHEMA),
+    });
+    const content = completion.choices[0]?.message?.content;
+    if (!content) return EMPTY;
+    const parsed = LlmExpansion.safeParse(JSON.parse(extractJsonObject(content)));
+    if (!parsed.success) return EMPTY;
+    const d = parsed.data;
+    return {
+      qid: null,
+      aliases: d.aliases.slice(0, MAX_ALIASES),
+      relatedTerms: d.relatedTerms.slice(0, MAX_RELATED),
+      era: d.era === 'timeless' ? null : d.era,
+      extraTerms: d.extraTerms.slice(0, MAX_EXTRA_TERMS),
+    };
+  } catch (err) {
+    log.warn({ err, canonical }, 'LLM knowledge expansion failed — using the LLM query terms only');
+    return EMPTY;
+  }
+}
+
 export async function expandEntity(
   canonical: string,
   instanceOf: string,
   log: Logger,
 ): Promise<EntityKnowledge> {
+  // Local-LLM path (no Wikidata) when configured; otherwise the factual Wikidata graph.
+  if (getLlm().provider === 'ollama') return expandEntityLlm(canonical, instanceOf, log);
   try {
     const resolved = await resolveVerifiedClaims(canonical, instanceOf);
     if (!resolved) return EMPTY;
