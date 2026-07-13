@@ -1,18 +1,30 @@
-"""Forced alignment via mlx-whisper (doc 11 / doc 14).
+"""Forced alignment (doc 11 / doc 14).
 
-We already know the exact script; whisper is used only to discover word timings,
-which the worker maps onto the known tokens. Wrong whisper words don't matter —
-wrong timings do. The script text is NOT passed as a prompt (it biases timings).
+We already know the exact script; whisper is used only to discover word timings, which the
+worker maps onto the known tokens. Wrong whisper words don't matter — wrong timings do. The
+script text is NOT passed as a prompt (it biases timings).
+
+Two backends, picked by availability (see pyproject platform markers):
+  - Apple Silicon → **mlx-whisper** (MLX, fast).
+  - Windows / Linux → **faster-whisper** (CTranslate2, cross-platform).
+Both return the same ``[{word, start, end}]`` shape. If neither is installed, alignment fails
+with ``E_ALIGN`` — a warning, not a render failure (invariant 7): subtitles fall back to
+even word spacing.
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 
 _lock = asyncio.Lock()
 
+# mlx-whisper default (Apple). faster-whisper uses its own default below (a different, CTranslate2
+# model format) — both env-overridable so a machine can pick a smaller/larger model.
 DEFAULT_MODEL = "mlx-community/whisper-large-v3-turbo"
+DEFAULT_FASTER_MODEL = "Systran/faster-whisper-base"  # CTranslate2 repo `make models` fetches;
+#                       alignment needs good TIMINGS, not transcription quality (base is plenty)
 
 
 class AlignError(Exception):
@@ -25,7 +37,8 @@ def _whisper_language(language: str) -> str:
     return language.split("-")[0].lower()
 
 
-def _transcribe(audio_path: str, language: str) -> list[dict]:
+def _transcribe_mlx(audio_path: str, lang: str) -> list[dict]:
+    """Apple-Silicon path — mlx-whisper."""
     import mlx_whisper
 
     model = os.environ.get("WHISPER_MODEL", DEFAULT_MODEL)
@@ -33,7 +46,7 @@ def _transcribe(audio_path: str, language: str) -> list[dict]:
         audio_path,
         path_or_hf_repo=model,
         word_timestamps=True,
-        language=_whisper_language(language),
+        language=lang,
         condition_on_previous_text=False,
     )
     words: list[dict] = []
@@ -44,6 +57,41 @@ def _transcribe(audio_path: str, language: str) -> list[dict]:
                 continue
             words.append({"word": token, "start": float(word["start"]), "end": float(word["end"])})
     return words
+
+
+def _transcribe_faster(audio_path: str, lang: str) -> list[dict]:
+    """Cross-platform path — faster-whisper (CTranslate2). CPU/int8 runs everywhere; the model
+    auto-downloads to the HF cache on first use (or via `make models` on Windows)."""
+    from faster_whisper import WhisperModel
+
+    model_name = os.environ.get("FASTER_WHISPER_MODEL", DEFAULT_FASTER_MODEL)
+    device = os.environ.get("FASTER_WHISPER_DEVICE", "cpu")
+    compute = os.environ.get("FASTER_WHISPER_COMPUTE", "int8")
+    model = WhisperModel(model_name, device=device, compute_type=compute)
+    segments, _info = model.transcribe(
+        audio_path,
+        word_timestamps=True,
+        language=lang,
+        condition_on_previous_text=False,
+    )
+    words: list[dict] = []
+    for segment in segments:
+        for word in segment.words or []:
+            token = str(word.word).strip()
+            if not token:
+                continue
+            words.append({"word": token, "start": float(word.start), "end": float(word.end)})
+    return words
+
+
+def _transcribe(audio_path: str, language: str) -> list[dict]:
+    lang = _whisper_language(language)
+    # Prefer mlx-whisper (Apple) when present; else faster-whisper (Windows/Linux).
+    if importlib.util.find_spec("mlx_whisper") is not None:
+        return _transcribe_mlx(audio_path, lang)
+    if importlib.util.find_spec("faster_whisper") is not None:
+        return _transcribe_faster(audio_path, lang)
+    raise RuntimeError("no whisper backend installed (mlx-whisper on Apple, faster-whisper elsewhere)")
 
 
 async def align(audio_path: str, language: str, _text: str) -> list[dict]:

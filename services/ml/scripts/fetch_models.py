@@ -27,14 +27,33 @@ from pathlib import Path
 # data/models — silently can't find them. setdefault still honors an explicit HF_HOME.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 os.environ.setdefault("HF_HOME", str(_REPO_ROOT / "data" / "models"))
+if sys.platform == "win32":
+    # Windows blocks symlinks without admin / Developer Mode (WinError 1314); tell
+    # huggingface_hub to COPY blobs into snapshots instead. A little more disk, always works.
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 
-# (repo id, human label, approx size, note)
+# (repo id, human label, approx size, note). Kokoro + SigLIP are cross-platform (torch); the
+# alignment model differs by platform — mlx-whisper on Apple, faster-whisper (CTranslate2)
+# elsewhere — mirroring the pyproject markers + align.py backend selection.
+_IS_APPLE = sys.platform == "darwin"
 MODELS = [
     ("hexgrad/Kokoro-82M", "Kokoro-82M (TTS)", "~330 MB", ""),
     ("google/siglip2-base-patch16-224", "SigLIP 2 base (matching)", "~800 MB", ""),
-    ("mlx-community/whisper-large-v3-turbo", "Whisper large-v3-turbo (alignment)", "~1.6 GB", ""),
-    ("mlx-community/whisper-small-mlx", "Whisper small (alignment fallback)", "~480 MB", ""),
 ]
+if _IS_APPLE:
+    MODELS += [
+        ("mlx-community/whisper-large-v3-turbo", "Whisper large-v3-turbo (alignment, MLX)", "~1.6 GB", ""),
+        ("mlx-community/whisper-small-mlx", "Whisper small (alignment fallback, MLX)", "~480 MB", ""),
+    ]
+else:
+    MODELS += [
+        (
+            os.environ.get("FASTER_WHISPER_MODEL", "Systran/faster-whisper-base"),
+            "faster-whisper base (alignment, CTranslate2)",
+            "~145 MB",
+            "Windows/Linux",
+        ),
+    ]
 FLUX = (
     "dhairyashil/FLUX.1-schnell-mflux-4bit",
     "FLUX.1-schnell 4-bit",

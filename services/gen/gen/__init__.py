@@ -9,6 +9,7 @@ gen ...` as a subprocess, exactly like it shells out to ffmpeg.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 # HF_HOME → the repo's data/models (mirror services/ml/app/main.py), set at import — before
@@ -16,3 +17,7 @@ from pathlib import Path
 # `make fetch-gen` lands them where this service looks. setdefault honors an explicit HF_HOME.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 os.environ.setdefault("HF_HOME", str(_REPO_ROOT / "data" / "models"))
+if sys.platform == "win32":
+    # Windows blocks symlinks without admin / Developer Mode (WinError 1314); tell
+    # huggingface_hub to COPY blobs into snapshots instead. A little more disk, always works.
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")

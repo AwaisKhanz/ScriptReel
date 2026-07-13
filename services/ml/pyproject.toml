@@ -9,9 +9,21 @@ dependencies = [
   "torch>=2.5",
   "torchvision>=0.20", # DINOv2 AutoImageProcessor (doc 25 §6) needs it
   "transformers>=4.48,<5", # <5: SigLIP2/DINOv2 code targets 4.x; mlx-vlm would otherwise pull 5.x
-  "mlx>=0.22",
-  "mlx-whisper>=0.4",
-  "mlx-vlm>=0.1.15,<0.2", # Qwen2.5-VL VLM checklist (doc 25 §5-D, step 7). Pinned to the 0.1.x line: keeps numpy<2 and minimizes transformers/mlx bumps (>=0.6 needs numpy>=2 + transformers>=4.53 + mlx-audio)
+  # --- Apple-Silicon only (MLX has no Windows/Linux build) ---------------------------------
+  # Gated by platform so `uv sync` SUCCEEDS on Windows/Linux and installs the cross-platform
+  # models below. On non-Apple, alignment uses faster-whisper (see align.py); the VLM gate
+  # degrades (vlm.available() → false). MLX is Apple's array framework — arm64-mac wheels only.
+  # Marker is Apple Silicon SPECIFICALLY (darwin+arm64) — `sys_platform=='darwin'` alone is also
+  # true on Intel Macs, where MLX has no wheel. Intel Macs therefore use the faster-whisper path.
+  "mlx>=0.22; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "mlx-vlm>=0.1.15,<0.2; sys_platform == 'darwin' and platform_machine == 'arm64'", # Qwen2.5-VL (doc 25 §5-D). 0.1.x keeps numpy<2
+  # numba is a transitive of mlx-whisper on Apple; pinned so the resolver can't backtrack to
+  # the ancient numba 0.53.1 (llvmlite 0.36) that fails to build on py3.12. Not needed off-Apple.
+  "numba>=0.60; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  # --- Cross-platform alignment backend (everything except Apple Silicon) ------------------
+  "faster-whisper>=1.0; sys_platform != 'darwin' or platform_machine != 'arm64'", # CTranslate2 word-timestamps (align.py)
+  # --- Cross-platform models (torch / onnx — run everywhere) -------------------------------
   "kokoro>=0.9",
   "misaki[en]>=0.9",
   "soundfile>=0.12",
@@ -20,9 +32,6 @@ dependencies = [
   "insightface>=0.7",
   "onnxruntime>=1.19",
   "numpy<2",
-  # Transitive of mlx-whisper + mlx-vlm; pinned so the resolver can't backtrack to the
-  # ancient numba 0.53.1 (llvmlite 0.36) that fails to build on Python 3.12 (step 7).
-  "numba>=0.60",
   "huggingface-hub>=0.27",
 ]
 

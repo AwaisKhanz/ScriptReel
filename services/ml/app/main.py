@@ -13,6 +13,10 @@ from pathlib import Path
 # HF_HOME → DATA_DIR/models (doc 14), set before any model library is imported.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 os.environ.setdefault("HF_HOME", str(_REPO_ROOT / "data" / "models"))
+if platform.system() == "Windows":
+    # Windows blocks symlinks without admin / Developer Mode (WinError 1314); tell
+    # huggingface_hub to COPY blobs into snapshots instead. A little more disk, always works.
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 
 from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
