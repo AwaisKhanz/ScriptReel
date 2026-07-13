@@ -1,8 +1,9 @@
 import {
   CATEGORY_DEFAULT_WANT,
   CATEGORY_SOURCES,
-  classifyDomain,
+  classifyTopic,
   type EntitySearchContext,
+  type Era,
   hashObject,
   invariant,
   isLicenseAllowed,
@@ -19,6 +20,7 @@ import {
   passesHygiene,
   planTier1Requests,
   type RawCandidate,
+  routeTopicSources,
   type SearchQuery,
   targetHeightForAspect,
 } from '@scriptreel/core';
@@ -48,10 +50,11 @@ export const searchStage: Stage = {
     const beats = await db.getBeats(ctx.projectId);
     return hashObject({
       stage: 'search',
-      logic: 'entity-3', // bump when request planning changes — v3: knowledge-expansion query terms (doc 25 §2a)
+      logic: 'topic-4', // bump when request planning changes — v4: unified topic/era source routing (topics.ts)
       queries: beats.map((b) => b.queries),
       shots: beats.map((b) => parseShots(b.shots)), // entity shot plan drives routing (doc 24)
       entities: beats.map((b) => parseEntities(b.entities)),
+      era: beats.map((b) => b.era), // topic routing now leads historical beats with archival sources
       aspect: ctx.settings.aspect,
       mediaPreference: ctx.settings.mediaPreference,
     });
@@ -125,20 +128,26 @@ export const searchStage: Stage = {
     const searchBeat = async (beat: db.BeatRow): Promise<void> => {
       if (ctx.signal.aborted) throw new PipelineError('E_CANCELLED', 'search', 'cancelled');
       const queries = beat.queries as { literal?: string[] } | null;
-      // Domain-route archive providers (doc 23 §5) from the beat's analysis fields.
-      const domain = classifyDomain(
+      const entities = parseEntities(beat.entities);
+      // Unified topic/era routing (topics.ts): classify the beat from its text AND its typed
+      // entities, then fan out to the few specialized sources its topic + era warrant — instead
+      // of "always stock + maybe an archive" (doc 24 §5 authoritative-first, doc 25 §2/§4).
+      const topic = classifyTopic(
         `${beat.visual_description ?? ''} ${beat.key_phrase ?? ''} ${beat.text}`,
+        entities,
       );
-      const plan = planTier1Requests(queries?.literal ?? [], mediaPreference, domain);
+      const era: Era = beat.era === 'historical' || beat.era === 'modern' ? beat.era : 'timeless';
+      const sources = routeTopicSources(topic, era);
+      const plan = planTier1Requests(queries?.literal ?? [], mediaPreference, sources);
+      // Terminal visibility of the routing decision per beat (doc 16 — surface every step).
+      ctx.log.info({ beat: beat.idx, topic, era, sources }, 'search/route');
 
       // Per-shot entity routing (doc 24 §5): each shot resolves its named entity to
       // AUTHORITATIVE media first (Wikidata→Commons for the real thing / flag / map, NASA
       // for space), then a stock request on the shot phrase supplies generic texture and a
       // fallback. Generic / non-visualizable shots get stock only. The 40-cap + round-robin
       // keep the pool balanced and quota bounded.
-      const entityByCanonical = new Map(
-        parseEntities(beat.entities).map((e) => [e.canonical.toLowerCase(), e]),
-      );
+      const entityByCanonical = new Map(entities.map((e) => [e.canonical.toLowerCase(), e]));
       parseShots(beat.shots).forEach((shot, mi) => {
         const entity = shot.entity ? entityByCanonical.get(shot.entity.toLowerCase()) : undefined;
         const want =

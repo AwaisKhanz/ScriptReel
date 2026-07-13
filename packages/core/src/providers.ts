@@ -16,7 +16,6 @@ import {
   WIKIDATA_HOUR_BUDGET,
   WIKIMEDIA_HOUR_BUDGET,
 } from './constants';
-import type { Domain } from './domain';
 import { sha1Hex } from './hash';
 import type { RequestAuth } from './provider-auth';
 import type { SubtitleAspect } from './subtitles/presets';
@@ -182,7 +181,7 @@ export interface PlannedRequest {
 export function planTier1Requests(
   literal: readonly string[],
   mediaPreference: 'videos' | 'mixed' | 'photos',
-  domain: Domain = 'generic',
+  sources: readonly ProviderId[] = [],
 ): PlannedRequest[] {
   const l0 = literal[0] ?? '';
   const l1 = literal[1] ?? l0;
@@ -198,13 +197,15 @@ export function planTier1Requests(
   if (mediaPreference === 'photos') {
     requests.push({ provider: 'pexels', kind: 'image', query: l1 });
   }
-  // Domain-routed archives (doc 23 §5, doc 25 §2), gated by their OWN media kind so image
-  // archives (nasa/wikimedia/met) fire for mixed/photos and video archives (internet-archive)
-  // fire for mixed/videos. Runs regardless of the image branch above.
-  for (const a of ARCHIVE_PROVIDERS) {
-    if (!a.domains.includes(domain)) continue;
-    const wanted = a.kind === 'video' ? mediaPreference !== 'photos' : mediaPreference !== 'videos';
-    if (wanted) requests.push({ provider: a.id, kind: a.kind, query: l0 });
+  // Topic/era-routed specialized archives (see topics.ts::routeTopicSources — the caller resolves
+  // which sources a beat warrants). Each fires on the beat literal, gated by its OWN media kind so
+  // image archives (nasa/wikimedia/met) serve mixed/photos and the video archive (internet-archive)
+  // serves mixed/videos. An id with no archive kind (a base/stock provider) is ignored here.
+  for (const id of sources) {
+    const kind = ARCHIVE_KIND[id];
+    if (!kind) continue;
+    const wanted = kind === 'video' ? mediaPreference !== 'photos' : mediaPreference !== 'videos';
+    if (wanted) requests.push({ provider: id, kind, query: l0 });
   }
   return requests.filter((r) => r.query.length > 0);
 }
@@ -319,46 +320,23 @@ export function isArchiveProvider(provider: string): boolean {
   return ARCHIVE_PROVIDER_SET.has(provider);
 }
 
-// Domain-specific archive providers (doc 23 §5): fired only for beats whose domain
-// they cover, so they add signal without polluting generic beats. Universal
-// providers (pexels/pixabay/openverse) always run.
-export const ARCHIVE_PROVIDERS: {
-  id: ProviderId;
-  kind: MediaKind;
-  domains: readonly Domain[];
-}[] = [
-  { id: 'nasa', kind: 'image', domains: ['space', 'science', 'nature'] },
-  // Wikimedia Commons is the universal named-subject archive (people, places,
-  // events, works) — route it to every identifiable domain, leaving generic mood
-  // beats and cityscapes to the stock providers.
-  {
-    id: 'wikimedia',
-    kind: 'image',
-    domains: ['space', 'nature', 'science', 'history', 'art', 'people', 'tech'],
-  },
-  // The Met Open Access (doc 25 §2): CC0 artworks/artifacts — route to the domains
-  // where museum objects are the real subject (paintings, sculpture, historical relics).
-  { id: 'met', kind: 'image', domains: ['art', 'history'] },
-  // Internet Archive (doc 25 §2): keyless PD/CC archival VIDEO footage — the first video
-  // archive. Routed to the domains where historical/archival motion is the real subject.
-  { id: 'internet-archive', kind: 'video', domains: ['history', 'science', 'people', 'art'] },
-  // iNaturalist (doc 25 §2): keyless CC0/CC-BY nature observation photos — species,
-  // habitats, wildlife.
-  { id: 'inaturalist', kind: 'image', domains: ['nature'] },
-  // USGS ScienceBase (doc 25 §2): keyless public-domain federal science imagery — geology,
-  // hydrology, terrain.
-  { id: 'usgs', kind: 'image', domains: ['science', 'nature'] },
-  // Library of Congress (doc 25 §2): keyless "no known restrictions" historical photos,
-  // portraits, cityscapes, and prints.
-  { id: 'library-of-congress', kind: 'image', domains: ['history', 'people', 'urban', 'art'] },
-  // Flickr (doc 25 §2): keyed CC0/CC-BY/PD community photography — people, streets, nature.
-  { id: 'flickr', kind: 'image', domains: ['people', 'urban', 'nature'] },
-  // Europeana (doc 25 §2): keyed open cultural-heritage images — European history and art.
-  { id: 'europeana', kind: 'image', domains: ['history', 'art'] },
-  // Smithsonian Open Access (doc 25 §2): keyed CC0 museum collections spanning history,
-  // art, science, and natural history.
-  { id: 'smithsonian', kind: 'image', domains: ['history', 'art', 'science', 'nature'] },
-];
+// The media kind each specialized/archive source serves. Most are image-only; Internet Archive
+// is the one video archive. `planTier1Requests` reads this to fire a topic-routed source only for
+// the beat's media preference (image archives on mixed/photos, the video archive on mixed/videos).
+// WHICH archives a beat gets is decided by topic + era (topics.ts); this is just their capability.
+// The universal base providers (pexels/pixabay/openverse) are planned directly and aren't here.
+export const ARCHIVE_KIND: Readonly<Partial<Record<ProviderId, MediaKind>>> = {
+  nasa: 'image',
+  wikimedia: 'image',
+  met: 'image',
+  'internet-archive': 'video',
+  inaturalist: 'image',
+  usgs: 'image',
+  'library-of-congress': 'image',
+  flickr: 'image',
+  europeana: 'image',
+  smithsonian: 'image',
+};
 
 // UTC-truncated window start for a bucket. Deterministic in its argument (no clock
 // read) so it stays pure and testable; callers pass `new Date()`.

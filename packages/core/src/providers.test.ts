@@ -83,68 +83,40 @@ describe('planTier1Requests', () => {
     ]);
   });
 
-  it('routes a matching domain to its archive provider (NASA on space)', () => {
-    const space = planTier1Requests(literal, 'mixed', 'space').map(
+  // The topic/era → sources mapping is tested in topics.test.ts; here we verify planTier1Requests
+  // fires whatever resolved `sources` it's handed, correctly kind-gated by the beat's media pref.
+  it('fires passed image archives on mixed, gated out on videos-only', () => {
+    const mixed = planTier1Requests(literal, 'mixed', ['nasa', 'wikimedia']).map(
       (r) => `${r.provider}:${r.kind}`,
     );
-    expect(space).toContain('nasa:image');
-    // generic beats never fire the archive
-    const generic = planTier1Requests(literal, 'mixed', 'generic').map((r) => r.provider);
-    expect(generic).not.toContain('nasa');
-    // videos-only never fires image archives either
-    expect(planTier1Requests(literal, 'videos', 'space').map((r) => r.provider)).not.toContain(
+    expect(mixed).toContain('nasa:image');
+    expect(mixed).toContain('wikimedia:image');
+    // videos-only never fires image archives
+    expect(planTier1Requests(literal, 'videos', ['nasa']).map((r) => r.provider)).not.toContain(
       'nasa',
     );
+    // no sources ⇒ base plan only
+    expect(planTier1Requests(literal, 'mixed', []).map((r) => r.provider)).not.toContain('nasa');
   });
 
-  it('routes named-subject domains to Wikimedia, but not generic/urban (doc 23)', () => {
-    const history = planTier1Requests(literal, 'mixed', 'history').map((r) => r.provider);
-    expect(history).toContain('wikimedia');
-    const people = planTier1Requests(literal, 'mixed', 'people').map((r) => r.provider);
-    expect(people).toContain('wikimedia');
-    // stock-covered domains keep Wikimedia out of the fan-out
-    expect(planTier1Requests(literal, 'mixed', 'urban').map((r) => r.provider)).not.toContain(
-      'wikimedia',
-    );
-    expect(planTier1Requests(literal, 'mixed', 'generic').map((r) => r.provider)).not.toContain(
-      'wikimedia',
-    );
+  it('fires the Internet Archive video archive on mixed/videos, not photos', () => {
+    expect(
+      planTier1Requests(['x'], 'mixed', ['internet-archive']).map((r) => r.provider),
+    ).toContain('internet-archive');
+    expect(
+      planTier1Requests(['x'], 'videos', ['internet-archive']).map((r) => r.provider),
+    ).toContain('internet-archive');
+    // photos-only never fires a video archive
+    expect(
+      planTier1Requests(['x'], 'photos', ['internet-archive']).map((r) => r.provider),
+    ).not.toContain('internet-archive');
   });
 
-  it('routes art/history to the Met archive, but not unrelated domains (doc 25)', () => {
-    expect(planTier1Requests(['x'], 'mixed', 'art').map((r) => r.provider)).toContain('met');
-    expect(planTier1Requests(['x'], 'mixed', 'urban').map((r) => r.provider)).not.toContain('met');
-  });
-
-  it('routes covered domains to the Internet Archive video archive on mixed, not photos (doc 25)', () => {
-    // Video archive: fires for a covered domain when videos are wanted (mixed).
-    expect(planTier1Requests(['x'], 'mixed', 'history').map((r) => r.provider)).toContain(
-      'internet-archive',
-    );
-    // Photos-only never fires a video archive.
-    expect(planTier1Requests(['x'], 'photos', 'history').map((r) => r.provider)).not.toContain(
-      'internet-archive',
-    );
-    // Domain miss: never fires on an uncovered domain.
-    expect(planTier1Requests(['x'], 'mixed', 'urban').map((r) => r.provider)).not.toContain(
-      'internet-archive',
-    );
-  });
-
-  it('routes the doc-25 group-B image archives by domain (doc 25)', () => {
-    expect(planTier1Requests(['x'], 'mixed', 'nature').map((r) => r.provider)).toContain(
-      'inaturalist',
-    );
-    expect(planTier1Requests(['x'], 'mixed', 'science').map((r) => r.provider)).toContain('usgs');
-    const history = planTier1Requests(['x'], 'mixed', 'history').map((r) => r.provider);
-    expect(history).toContain('library-of-congress');
-    expect(history).toContain('europeana');
-    expect(history).toContain('smithsonian');
-    expect(planTier1Requests(['x'], 'mixed', 'people').map((r) => r.provider)).toContain('flickr');
-    // Negative: europeana covers only history/art, never urban.
-    expect(planTier1Requests(['x'], 'mixed', 'urban').map((r) => r.provider)).not.toContain(
-      'europeana',
-    );
+  it('ignores ids that are not specialized archives (base/stock providers)', () => {
+    // pexels/pixabay/openverse are the base plan, not archives — passing them adds nothing.
+    const plan = planTier1Requests(literal, 'mixed', ['pexels', 'openverse']);
+    const base = planTier1Requests(literal, 'mixed', []);
+    expect(plan).toEqual(base);
   });
 
   it('falls back to literal[0] when literal[1] is missing, and drops empty queries', () => {
