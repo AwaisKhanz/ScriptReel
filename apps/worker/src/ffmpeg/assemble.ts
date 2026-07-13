@@ -7,10 +7,13 @@ import { getEncodeArgs } from './encoder';
 
 // Escape a filesystem path for use INSIDE an ffmpeg filter argument (e.g. `subtitles=`).
 // On Windows a raw `C:\dir\subs.ass` breaks the filter parser — the drive `:` reads as the
-// option separator and `\` as an escape. Forward slashes work on Windows too, and escaping
-// `:` makes it literal. On POSIX paths (no `\`, no `:`) this is a no-op.
+// option separator and `\` as an escape. Forward slashes work on Windows too. The drive `:` must
+// stay a literal, but ffmpeg unescapes `-filter_complex` in TWO passes (filtergraph split, then
+// per-filter option split): a single `\:` is consumed by the first pass, so the second pass splits
+// on the now-bare `:` ("No option name near …"). Doubling the backslash (`\\:`) leaves one escape
+// standing for each pass. On POSIX paths (no `\`, no `:`) both replaces are a no-op.
 function ffFilterPath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/:/g, '\\:');
+  return p.replace(/\\/g, '/').replace(/:/g, '\\\\:');
 }
 
 async function ff(args: string[], stage: string, signal?: AbortSignal): Promise<void> {
