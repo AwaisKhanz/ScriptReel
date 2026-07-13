@@ -50,6 +50,9 @@ const EnvSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().min(1).default('gpt-4o-mini'),
   FFMPEG_PATH: z.string().optional(),
+  // Video encoder override. Default is platform-aware (VideoToolbox on Apple, libx264 elsewhere);
+  // set e.g. `h264_nvenc` on an NVIDIA box for GPU encoding (see apps/worker/src/ffmpeg/encoder.ts).
+  VIDEO_ENCODER: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

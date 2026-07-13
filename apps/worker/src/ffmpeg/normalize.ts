@@ -4,16 +4,16 @@ import {
   NORMALIZE_BITRATE,
   NORMALIZE_FILTER_TAIL,
   PipelineError,
-  VIDEO_CODEC_HW,
 } from '@scriptreel/core';
 import { execa } from 'execa';
 import { FFMPEG_BIN } from './bin';
+import { hwEncodeArgs } from './encoder';
 
 // Pass A per-beat normalization (doc 13): every source becomes a uniform W×H, 30 fps,
 // yuv420p, SAR 1, silent clip of length L_i. Video is scaled/cropped/looped/held;
 // stills get a Ken Burns move (pre-scaled 2× to kill zoompan jitter).
 
-const ENCODE = ['-c:v', VIDEO_CODEC_HW, '-b:v', NORMALIZE_BITRATE, '-allow_sw', '1'] as const;
+const ENCODE = hwEncodeArgs(NORMALIZE_BITRATE); // platform HW/SW encoder (see ffmpeg/encoder.ts)
 
 async function ff(args: string[], outPath: string, signal?: AbortSignal): Promise<void> {
   try {
