@@ -291,6 +291,16 @@ export const scoreStage: Stage = {
       }
     }
 
+    ctx.log.info(
+      {
+        shortlisted: shortlistPaths.length,
+        penalized: ocrPenalized,
+        vetoed: ocrVetoed,
+        skipped: ocrSkipped,
+      },
+      ocrSkipped ? 'score/gate OCR — skipped (Tesseract unavailable)' : 'score/gate OCR',
+    );
+
     // 2c) Reference-identity gate (doc 25 §6, cascade C). For a beat naming a specific
     // person / landmark / artwork, compare its SigLIP top-5 (the same shortlist the OCR
     // gate used) to the entity's Wikidata reference image with a LOCAL model — veto a
@@ -315,6 +325,13 @@ export const scoreStage: Stage = {
     const identityVetoed = identityResult.vetoed;
     const identitySkipped = identityResult.skipped;
 
+    ctx.log.info(
+      { penalized: identityPenalized, vetoed: identityVetoed, skipped: identitySkipped },
+      identitySkipped
+        ? 'score/gate identity — skipped (models unavailable)'
+        : 'score/gate identity',
+    );
+
     // 2d) VLM checklist gate (doc 25 §5-D, cascade D). Run Qwen2.5-VL on each beat's top-3
     // by sim and ask a strict four-bool checklist — subject present? shot framing? era?
     // contradicting on-screen text? — vetoing no-subject / contradicting-text candidates
@@ -338,6 +355,11 @@ export const scoreStage: Stage = {
     const vlmPenalized = vlmResult.penalized;
     const vlmVetoed = vlmResult.vetoed;
     const vlmSkipped = vlmResult.skipped;
+
+    ctx.log.info(
+      { penalized: vlmPenalized, vetoed: vlmVetoed, skipped: vlmSkipped },
+      vlmSkipped ? 'score/gate VLM — skipped (Qwen2.5-VL unavailable)' : 'score/gate VLM',
+    );
 
     // 3) Greedy selection + global variety pass (doc 09 §3, §5).
     report(55, 'selecting best asset per beat');
@@ -553,6 +575,16 @@ export const scoreStage: Stage = {
     );
 
     report(100, `${chosenCount}/${beats.length} beats resolved`);
+    ctx.log.info(
+      {
+        beats: beats.length,
+        resolved: chosenCount,
+        weak: weakCount,
+        montage: montageCount,
+        rungs: rungCounts, // primary / broaden / conceptual / mood / generated / textcard split
+      },
+      'score/selection',
+    );
     return {
       artifacts: ['stages/score/selection.json'],
       warnings,
