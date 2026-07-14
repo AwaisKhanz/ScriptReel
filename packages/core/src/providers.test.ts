@@ -6,6 +6,7 @@ import {
   orientationForAspect,
   passesHygiene,
   planTier1Requests,
+  providerLabel,
   QUOTA_BUDGETS,
   type RawCandidate,
   searchCacheKey,
@@ -141,6 +142,18 @@ describe('planTier1Requests', () => {
       { provider: 'pixabay', kind: 'video', query: 'only' },
     ]);
     expect(planTier1Requests([], 'mixed')).toEqual([]);
+  });
+});
+
+describe('providerLabel', () => {
+  it('maps provider ids to friendly names and covers ladder / unknown sources', () => {
+    expect(providerLabel('library-of-congress')).toBe('Library of Congress');
+    expect(providerLabel('wellcome')).toBe('Wellcome Collection');
+    expect(providerLabel('wikidata-commons')).toBe('Wikimedia Commons');
+    expect(providerLabel('nasa')).toBe('NASA');
+    expect(providerLabel('generated')).toBe('AI image');
+    expect(providerLabel('textcard')).toBe('Text card');
+    expect(providerLabel('something-else')).toBe('something-else');
   });
 });
 

@@ -333,6 +333,35 @@ export function isArchiveProvider(provider: string): boolean {
   return ARCHIVE_PROVIDER_SET.has(provider);
 }
 
+// Human-friendly display names for a candidate's source (UI badges + credits) — so the
+// storyboard reads "Library of Congress", not "library-of-congress". providerLabel() also
+// covers the non-provider ladder sources (generated / textcard) and any unknown string.
+export const PROVIDER_LABEL: Readonly<Record<ProviderId, string>> = {
+  pexels: 'Pexels',
+  pixabay: 'Pixabay',
+  openverse: 'Openverse',
+  nasa: 'NASA',
+  wikimedia: 'Wikimedia Commons',
+  'wikidata-commons': 'Wikimedia Commons',
+  met: 'The Met',
+  'internet-archive': 'Internet Archive',
+  inaturalist: 'iNaturalist',
+  usgs: 'USGS',
+  'library-of-congress': 'Library of Congress',
+  flickr: 'Flickr',
+  europeana: 'Europeana',
+  smithsonian: 'Smithsonian',
+  wellcome: 'Wellcome Collection',
+};
+
+export function providerLabel(provider: string): string {
+  const known = (PROVIDER_LABEL as Record<string, string>)[provider];
+  if (known) return known;
+  if (provider === 'generated') return 'AI image';
+  if (provider === 'textcard') return 'Text card';
+  return provider;
+}
+
 // The media kind each specialized/archive source serves. Most are image-only; Internet Archive
 // is the one video archive. `planTier1Requests` reads this to fire a topic-routed source only for
 // the beat's media preference (image archives on mixed/photos, the video archive on mixed/videos).

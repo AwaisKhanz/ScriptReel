@@ -1,6 +1,6 @@
 'use client';
 
-import { TAU_HI, TAU_LO } from '@scriptreel/core';
+import { isArchiveProvider, providerLabel, TAU_HI, TAU_LO } from '@scriptreel/core';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -324,10 +324,13 @@ function BeatCard({
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-fg-subtle">
           {beat.emotion && <Badge tone="neutral">{beat.emotion}</Badge>}
           {beat.estSeconds != null && <span>{beat.estSeconds.toFixed(1)}s beat</span>}
-          {montage ? (
-            <span>· {montage.length} shots</span>
-          ) : (
-            chosen?.provider && !beat.forcedTextcard && <span>· {chosen.provider}</span>
+          {montage && <span>· {montage.length} shots</span>}
+          {chosen?.provider && !beat.forcedTextcard && (
+            // Authoritative/archive sources get the accent tone so a glance down the storyboard
+            // shows where the redesign is winning (NASA/LoC/Wellcome/… vs generic stock).
+            <Badge tone={isArchiveProvider(chosen.provider) ? 'accent' : 'neutral'}>
+              {providerLabel(chosen.provider)}
+            </Badge>
           )}
         </div>
         <div className="mt-auto flex gap-1.5 pt-1">
