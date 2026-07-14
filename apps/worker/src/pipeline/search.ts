@@ -50,7 +50,7 @@ export const searchStage: Stage = {
     const beats = await db.getBeats(ctx.projectId);
     return hashObject({
       stage: 'search',
-      logic: 'topic-5', // bump when request planning changes — v5: archives query the beat's named subject (entity.searchTerms)
+      logic: 'topic-6', // bump when request planning changes — v6: related-entity Wikimedia query (knowledge.relatedTerms)
       queries: beats.map((b) => b.queries),
       shots: beats.map((b) => parseShots(b.shots)), // entity shot plan drives routing (doc 24)
       entities: beats.map((b) => parseEntities(b.entities)),
@@ -197,6 +197,12 @@ export const searchStage: Stage = {
               const kq = term ? normalizeSearchQuery(term) : '';
               if (kq) plan.push({ provider: 'pixabay', kind: 'image', query: kq });
             }
+            // A RELATED entity (Wikidata/LLM: creator, part-of, location, key figure — e.g. Apollo
+            // 11 → "Saturn V", Einstein → "theory of relativity") searched on Wikimedia adds an
+            // authentic DOCUMENTARY angle on the subject, not just stock texture. Previously computed
+            // and dropped; one bounded query per entity (requestCache dedupes repeats).
+            const related = k.relatedTerms[0] ? normalizeSearchQuery(k.relatedTerms[0]) : '';
+            if (related) plan.push({ provider: 'wikimedia', kind: 'image', query: related });
           }
         }
 
