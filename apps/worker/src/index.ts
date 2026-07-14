@@ -5,6 +5,7 @@ import {
   PIPELINE_QUEUE,
   PipelinePayloadSchema,
 } from '@scriptreel/core';
+import * as db from '@scriptreel/db';
 import PgBoss from 'pg-boss';
 import pino from 'pino';
 import { runPipeline } from './handler';
@@ -68,7 +69,37 @@ async function main(): Promise<void> {
     'worker up — pg-boss queues registered',
   );
 
+  // Self-heal orphaned jobs. A project can end up marked queued/running in the DB with NO live
+  // pg-boss job — a send that was deduped on its singletonKey (a lingering prior job), a job that
+  // failed off the retry ladder, or one lost when a worker died. Nothing else recovers it (the
+  // generate route 409s an already-active project, so the user can't re-trigger it either), so it
+  // sits "Queued" forever, even across restarts. Re-send each stuck project on startup and on an
+  // interval: the singletonKey makes it a no-op when a live job already exists, and recreates the
+  // job when the queue lost it; idempotent stages then skip the work already done.
+  const reconcile = async (reason: string): Promise<void> => {
+    try {
+      const stuck = await db.getStuckProjects(60);
+      if (stuck.length === 0) return;
+      let requeued = 0;
+      for (const p of stuck) {
+        const id = await boss.send(
+          PIPELINE_QUEUE,
+          { projectId: p.id, mode: 'full' },
+          { singletonKey: p.id },
+        );
+        if (id) requeued += 1;
+      }
+      log.info({ reason, stuck: stuck.length, requeued }, 'reconciled stuck pipeline jobs');
+    } catch (err) {
+      log.error({ err }, 'reconcile failed');
+    }
+  };
+  await reconcile('startup');
+  const reconcileTimer = setInterval(() => void reconcile('periodic'), 5 * 60 * 1000);
+  reconcileTimer.unref(); // don't keep the process alive for the timer alone
+
   const shutdown = (signal: NodeJS.Signals): void => {
+    clearInterval(reconcileTimer);
     log.info({ signal }, 'worker shutting down');
     void boss
       .stop({ graceful: true })

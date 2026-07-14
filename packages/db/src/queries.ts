@@ -92,6 +92,21 @@ export async function setProjectStatus(id: string, status: ProjectStatus): Promi
   await sql`update projects set status = ${status}, updated_at = now() where id = ${id}`;
 }
 
+// Projects the DB thinks are active (queued/running) but which may have no live pg-boss job —
+// the worker's reconciler re-enqueues them so a lost/deduped job can't leave a project stuck
+// forever. `olderThanSeconds` skips freshly-queued projects the worker is about to pick up
+// normally; `awaiting_review` is a deliberate pause, `failed`/`done`/`draft` are terminal — none
+// are touched.
+export async function getStuckProjects(
+  olderThanSeconds = 60,
+): Promise<{ id: string; status: ProjectStatus }[]> {
+  const rows = await sql<{ id: string; status: ProjectStatus }[]>`
+    select id, status from projects
+    where status in ('queued', 'running')
+      and updated_at < now() - (${olderThanSeconds}::int * interval '1 second')`;
+  return [...rows];
+}
+
 // Delete a project row; beats/candidates/pipeline_runs/renders cascade (FK on delete
 // cascade, migration 0001). The caller removes DATA_DIR/projects/{id} (doc 15).
 export async function deleteProject(id: string): Promise<boolean> {
