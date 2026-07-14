@@ -2,6 +2,7 @@ import { env } from '@scriptreel/config';
 import {
   BEAT_RESEARCH_QUEUE,
   BeatResearchPayloadSchema,
+  type JobMode,
   PIPELINE_QUEUE,
   PipelinePayloadSchema,
 } from '@scriptreel/core';
@@ -82,9 +83,24 @@ async function main(): Promise<void> {
       if (stuck.length === 0) return;
       let requeued = 0;
       for (const p of stuck) {
+        // Resume from where the project actually was, not from the top. If the brain + fetch are
+        // already done, only the render (align/compose) remains → `continue`. Re-running `full`
+        // would needlessly redo analyze/search/score AND, with review enabled, bounce the user back
+        // to a storyboard they already approved (a paused full is `awaiting_review`, which we don't
+        // touch — so a queued/running project past fetch is a post-approval continue).
+        const runs = await db.getPipelineRuns(p.id);
+        const isDone = (stage: string): boolean => {
+          const status = runs.find((r) => r.stage === stage)?.status;
+          return status === 'done' || status === 'skipped';
+        };
+        const mode: JobMode =
+          ['analyze', 'search', 'score', 'tts', 'fetch'].every(isDone) &&
+          (!isDone('align') || !isDone('compose'))
+            ? 'continue'
+            : 'full';
         const id = await boss.send(
           PIPELINE_QUEUE,
-          { projectId: p.id, mode: 'full' },
+          { projectId: p.id, mode },
           { singletonKey: p.id },
         );
         if (id) requeued += 1;
