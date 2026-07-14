@@ -191,9 +191,12 @@ export function dinoEmbed(paths: string[], signal?: AbortSignal): Promise<EmbedI
 // VLM checklist gate (doc 25 §5-D, cascade D). Qwen2.5-VL judges each item's image
 // against the beat's description + era, returning four bools per readable image; images
 // it couldn't read / parse land in `failed`. The model is ~2.2 GB and loaded on demand,
-// so the timeout is a generous 5 min (weights load + inference). A missing model throws
-// E_VLM_UNAVAILABLE (or E_SIDECAR_DOWN / timeout) — the VLM pass catches that, skips the
-// whole gate, and leaves selection unchanged (invariant 7).
+// and the remote (Ollama) path processes the batch SERIALLY, each item bounded by the
+// sidecar's VLM_TIMEOUT_S (default 120 s). This client timeout must exceed the worst case
+// (VLM_TOP_K=3 × 120 s = 360 s) or a slow model trips E_SIDECAR_DOWN mid-batch and wastes
+// the work — so it is 7 min (weights load + 3 serial items + margin). A missing model
+// throws E_VLM_UNAVAILABLE (or E_SIDECAR_DOWN / timeout) — the VLM pass catches that, skips
+// the whole gate, and leaves selection unchanged (invariant 7).
 const VlmChecklistSchema = z.object({
   path: z.string(),
   subjectPresent: z.boolean(),
@@ -216,7 +219,7 @@ export interface VlmItem {
 }
 
 export function vlm(items: VlmItem[], signal?: AbortSignal): Promise<VlmResponse> {
-  return postSidecar('/vlm', { items }, VlmResponseSchema, signal, 300_000);
+  return postSidecar('/vlm', { items }, VlmResponseSchema, signal, 420_000);
 }
 
 // OCR gate (doc 25 §5): Tesseract reads burned-in text/coverage for a beat's SigLIP

@@ -1,7 +1,7 @@
-import { env } from '@scriptreel/config';
 import { hashObject, invariant } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import { getAnalyzer } from '../analysis/factory';
+import { getLlm } from '../analysis/llm';
 import { runAnalysisWithReprompt } from '../analysis/run-analysis';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
 import { writeStageJson } from './manifest';
@@ -28,6 +28,7 @@ export const analyzeStage: Stage = {
 
     report(10, 'calling the model');
     const analyzer = getAnalyzer(ctx.log);
+    const llm = getLlm(); // record the provider/model that actually ran (openai vs ollama)
     const { post, raw } = await runAnalysisWithReprompt(analyzer, {
       input: {
         script: project.script,
@@ -43,8 +44,8 @@ export const analyzeStage: Stage = {
     await db.setProjectLanguage(ctx.projectId, post.language);
     await db.replaceBeats(ctx.projectId, post.beats);
     await writeStageJson(ctx.projectId, 'analyze', 'beats.json', {
-      analyzer: 'openai',
-      model: env.OPENAI_MODEL,
+      analyzer: llm.provider,
+      model: llm.textModel,
       reconstruction: post.reconstruction,
       language: post.language,
       musicMood: post.musicMood,
@@ -55,8 +56,8 @@ export const analyzeStage: Stage = {
     return {
       artifacts: ['beats.json'],
       meta: {
-        analyzer: 'openai',
-        model: env.OPENAI_MODEL,
+        analyzer: llm.provider,
+        model: llm.textModel,
         beatCount: post.beats.length,
         reconstruction: post.reconstruction,
         language: post.language,

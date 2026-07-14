@@ -22,6 +22,8 @@ the heavy forward passes; the availability probe interleaves.
 from __future__ import annotations
 
 import asyncio
+import os
+from importlib.util import find_spec
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +59,21 @@ def available() -> bool:
         except Exception:  # noqa: BLE001 — missing package / pack / import failure ⇒ unavailable
             _available_cache = False
     return _available_cache
+
+
+def installed() -> bool:
+    """Cheap presence probe for /health only: InsightFace importable AND the ``buffalo_l`` pack
+    already on disk. Unlike ``available()`` it NEVER constructs the model and NEVER downloads —
+    the pack is non-commercial (doc 25 §6), so a bare /health poll must not pull ~300 MB or
+    resident-load. The identity gate still calls ``available()`` (lazy load on first real use);
+    this only changes what /health reports."""
+    try:
+        if find_spec("insightface") is None:
+            return False
+        root = os.environ.get("INSIGHTFACE_HOME") or str(Path.home() / ".insightface")
+        return (Path(root) / "models" / "buffalo_l").is_dir()
+    except Exception:  # noqa: BLE001 — any probe failure ⇒ report cold
+        return False
 
 
 def _cache_path(path: str) -> Path:

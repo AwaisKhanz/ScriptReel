@@ -79,6 +79,23 @@ def available() -> bool:
     return _available_cache
 
 
+def installed() -> bool:
+    """Cheap presence probe for /health only: transformers importable AND the DINOv2 snapshot
+    already in the HF cache. Unlike ``available()`` it NEVER loads the model into memory — a bare
+    /health poll shouldn't resident-load ~88 MB. The identity gate still calls ``available()``
+    (lazy local_files_only load on first real use); this only changes what /health reports."""
+    try:
+        from importlib.util import find_spec
+
+        if find_spec("transformers") is None:
+            return False
+        from huggingface_hub import try_to_load_from_cache
+
+        return isinstance(try_to_load_from_cache(MODEL_ID, "config.json"), str)
+    except Exception:  # noqa: BLE001 — any probe failure ⇒ report cold
+        return False
+
+
 def _cache_path(path: str) -> Path:
     return Path(path + _CACHE_SUFFIX)
 

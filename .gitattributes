@@ -1,0 +1,23 @@
+# Normalize line endings to LF in the repo AND in every working tree — Windows included.
+# Without this, git's core.autocrlf checks files out as CRLF on Windows, which makes biome
+# (LF-only) flag every file and the husky pre-commit `pnpm check` fail. Forcing eol=lf keeps
+# lint/format/tests identical on macOS, Linux, and Windows.
+* text=auto eol=lf
+
+# Binary assets — never normalize or diff their bytes.
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.wav   binary
+*.mp3   binary
+*.mp4   binary
+*.mov   binary
+*.zip   binary
+*.pdf   binary

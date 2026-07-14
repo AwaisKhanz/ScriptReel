@@ -10,8 +10,48 @@ import os
 import platform
 from pathlib import Path
 
-# HF_HOME → DATA_DIR/models (doc 14), set before any model library is imported.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _load_repo_env() -> None:
+    """Load the repo-root ``.env`` into ``os.environ`` (setdefault — a real process env var always
+    wins). The sidecar is launched by ``uv run uvicorn``, which does NOT read ``.env`` and inherits
+    none of the TS worker's dotenv-loaded config, so vars the docs/`.env` target at the sidecar —
+    ``TESSERACT_CMD`` (Windows, SETUP.md §7), ``FASTER_WHISPER_DEVICE``/``_MODEL``, ``VLM_*``,
+    ``SIGLIP_MODEL``/``DINO_MODEL`` — otherwise never reach us and it silently runs on defaults
+    (CPU alignment, the small VLM). Minimal ``KEY=value`` parse, no dependency; any parse hiccup is
+    swallowed so a malformed line never blocks startup (invariant 7). Must run before HF_HOME and
+    any model import so an ``.env``-provided override is in place first."""
+    try:
+        env_path = _REPO_ROOT / ".env"
+        if not env_path.is_file():
+            return
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, rest = line.partition("=")
+            key = key.strip()
+            if not key:
+                continue
+            rest = rest.strip()
+            # Match dotenv (what Node's .env parser gives the TS worker): a quoted value keeps
+            # everything inside the quotes (incl. '#'); an unquoted value ends at the first '#'
+            # (inline comment) and is then trimmed. Getting this wrong would set e.g.
+            # FASTER_WHISPER_DEVICE='cuda   # ...' instead of 'cuda'.
+            if len(rest) >= 2 and rest[0] in "\"'`" and rest[-1] == rest[0]:
+                value = rest[1:-1]
+            else:
+                hash_at = rest.find("#")
+                value = (rest if hash_at < 0 else rest[:hash_at]).strip()
+            os.environ.setdefault(key, value)
+    except Exception:  # noqa: BLE001 — never let env loading crash the sidecar
+        pass
+
+
+_load_repo_env()
+
+# HF_HOME → DATA_DIR/models (doc 14), set before any model library is imported.
 os.environ.setdefault("HF_HOME", str(_REPO_ROOT / "data" / "models"))
 
 
@@ -139,8 +179,8 @@ def health() -> HealthResponse:
             "kokoro": "loaded" if loaded else "cold",
             "siglip": "loaded" if embed.is_loaded() else "cold",
             "ocr": "ready" if ocr.available() else "cold",
-            "insightface": "ready" if face.available() else "cold",
-            "dinov2": "ready" if dino.available() else "cold",
+            "insightface": "ready" if face.installed() else "cold",
+            "dinov2": "ready" if dino.installed() else "cold",
             "vlm": "ready" if vlm.available() else "cold",
         },
         versions={"python": platform.python_version(), "hf_home": os.environ.get("HF_HOME", "")},
