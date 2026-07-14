@@ -157,3 +157,47 @@ export const VLM_SKIP_MARGIN = 0.05; // [CALIBRATE] doc 25 §5-D (owned by Step 
 export const VLM_ERA_PENALTY = 0.12; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — score docked when the era doesn't match (subtracted un-multiplied)
 export const VLM_SHOT_PENALTY = 0.06; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — score docked for poor shot framing (subtracted un-multiplied)
 export const VLM_MAX_PENALTY = 0.2; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — cap on the combined VLM penalty
+
+// Snapshot of every calibration constant that changes score-stage OUTPUT. The score stage folds
+// this into its inputsHash so re-tuning any value here automatically invalidates the cached
+// selection — without it a τ change silently does nothing on an already-scored project (you'd have
+// to remember to bump the stage's `logic` string). Keep new score/gate/montage constants in sync
+// here; it only affects cache keying, never the scoring math.
+export const SCORE_CALIBRATION = {
+  SCORE_WEIGHTS,
+  QUALITY_WEIGHTS,
+  AUTHORITY_BONUS,
+  REUSE_PENALTY,
+  DUP_PENALTY,
+  MONOTONY_PENALTY,
+  DUP_COSINE,
+  TAU_HI,
+  TAU_LO,
+  TAU_MOOD,
+  MONTAGE_TARGET_SEG_SEC,
+  MONTAGE_MAX_SEGMENTS,
+  MONTAGE_MIN_SEG_SEC,
+  MONTAGE_DIVERSITY_COSINE,
+  MONTAGE_DIVERSITY_RELAXED,
+  MONTAGE_MIX_RANK,
+  MONTAGE_SAME_SOURCE_FACTOR,
+  OCR_TOP_K,
+  OCR_MIN_CONF,
+  OCR_COVERAGE_FLOOR,
+  OCR_COVERAGE_CEIL,
+  OCR_COVERAGE_VETO,
+  OCR_WATERMARK_PENALTY,
+  OCR_COVERAGE_PENALTY,
+  OCR_MAX_PENALTY,
+  OCR_ERA_MODERN_YEAR,
+  IDENTITY_FACE_TAU,
+  IDENTITY_DINO_TAU,
+  IDENTITY_MISMATCH_PENALTY,
+  IDENTITY_FACE_CATEGORIES,
+  IDENTITY_DINO_CATEGORIES,
+  VLM_TOP_K,
+  VLM_SKIP_MARGIN,
+  VLM_ERA_PENALTY,
+  VLM_SHOT_PENALTY,
+  VLM_MAX_PENALTY,
+} as const;

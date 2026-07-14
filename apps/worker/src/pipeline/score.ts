@@ -20,6 +20,7 @@ import {
   planSemanticMontage,
   type Rung,
   routeTopicSources,
+  SCORE_CALIBRATION,
   type ScoreContext,
   type SegmentPlanItem,
   type SelectionBeat,
@@ -97,6 +98,7 @@ export const scoreStage: Stage = {
     return hashObject({
       stage: 'score',
       logic: 'verify-3', // bump to re-run score when the selection logic changes — v3: OCR-gate ladder candidates + ladder scoreOf mirrors rankBeat (doc 25 §5)
+      calibration: SCORE_CALIBRATION, // re-tuning any score/gate/montage τ auto-invalidates this stage
       descriptions: beats.map((b) => b.visual_description ?? b.text),
       moments: beats.map((b) => parseMoments(b.visual_moments)),
       estSeconds: beats.map((b) => Number(b.est_seconds ?? 0)),

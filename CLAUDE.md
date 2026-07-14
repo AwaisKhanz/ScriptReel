@@ -19,7 +19,7 @@ Prereqs and model downloads: `docs/19-SETUP-MACOS.md`. The DB is Supabase **Clou
 
 ## Architecture in one paragraph
 
-Three local processes: **web** (Next.js 15 — UI + thin API routes), **worker** (Node 22 — the pipeline, providers, FFmpeg), **sidecar** (Python 3.12 FastAPI — models only: Kokoro TTS, SigLIP 2 embeddings, mlx-whisper alignment, Pillow text cards, optional FLUX). Postgres via Supabase **Cloud** (no local Docker); pg-boss for jobs; media and renders on disk under `DATA_DIR`. Stages: `analyze → search → score → [review gate] → tts → align → fetch → compose`.
+Three local processes: **web** (Next.js 15 — UI + thin API routes), **worker** (Node 22 — the pipeline, providers, FFmpeg), **sidecar** (Python 3.12 FastAPI — models only: Kokoro TTS, SigLIP 2 embeddings, mlx-whisper alignment, Pillow text cards, optional FLUX). Postgres via Supabase **Cloud** (no local Docker); pg-boss for jobs; media and renders on disk under `DATA_DIR`. Stages: `analyze → [search → score ∥ tts] → fetch → [review gate] → align → compose` (search→score and tts run concurrently; fetch runs **before** the review gate so the storyboard previews the real stitched clip).
 
 ## Non-negotiable invariants
 
