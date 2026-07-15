@@ -477,7 +477,11 @@ export async function appendCandidatesForBeat(
          ${c.height ?? null}, ${c.duration ?? null}, ${c.thumbPath ?? null}, ${c.remoteUrl ?? null},
          ${c.pageUrl ?? null}, ${c.author ?? null}, ${c.license ?? null}, ${c.score ?? null},
          ${c.rank ?? null}, ${sql.json((c.meta ?? null) as JsonValue)})
-      on conflict (beat_id, provider, provider_id) do nothing
+      on conflict (beat_id, provider, provider_id) do update set
+        kind = excluded.kind, width = excluded.width, height = excluded.height,
+        duration = excluded.duration, thumb_path = excluded.thumb_path,
+        remote_url = excluded.remote_url, page_url = excluded.page_url,
+        author = excluded.author, license = excluded.license, meta = excluded.meta
       returning *`;
     if (rows[0]) inserted.push(rows[0]);
   }
