@@ -15,6 +15,7 @@ import { useMemo, useRef, useState } from 'react';
 import { AspectToggle, Field, Pills, Slider } from '../../../components/controls';
 import { SubtitlePreviewCanvas } from '../../../components/SubtitlePreviewCanvas';
 import { Badge, Button, Card, Spinner } from '../../../components/ui';
+import { apiError } from '../../../lib/api';
 import { estimateBeats, estimateNarrationSec, fmtDuration } from '../../../lib/format';
 
 interface Voice {
@@ -156,11 +157,11 @@ export default function WizardPage() {
           settings: { ...s, musicTrackId: s.musicTrackId || undefined },
         }),
       });
+      if (!create.ok) throw await apiError(create, 'create failed');
       const body = await create.json();
-      if (!create.ok) throw new Error(body.error ?? 'create failed');
       const id = body.project.id as string;
       const gen = await fetch(`/api/projects/${id}/generate`, { method: 'POST' });
-      if (!gen.ok) throw new Error((await gen.json()).error ?? 'generate failed');
+      if (!gen.ok) throw await apiError(gen, 'generate failed');
       router.push(`/projects/${id}`);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
