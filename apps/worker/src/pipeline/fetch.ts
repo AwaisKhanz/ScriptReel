@@ -278,10 +278,24 @@ export const fetchStage: Stage = {
         return { kind: spec.kind === 'generated' ? 'generated' : 'textcard', path: local };
       } catch (err) {
         if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
-        warnings.push(
-          `E_DOWNLOAD: beat ${beatIdx} (${spec.provider}:${spec.providerId}) — falling back`,
-        );
         ctx.log.warn({ err, beat: beatIdx }, 'download failed');
+        // Never DROP a chosen beat. compose builds a clip path for EVERY chosen beat
+        // (getChosenMedia) and narration is the clock, so a dropped beat leaves an uncovered
+        // narration span and surfaces as `E_FFMPEG: clips/{idx}.mp4 no such file` at Pass B —
+        // failing the whole render (this is the intermittent "sometimes" compose failure).
+        // Degrade to the beat's thumbnail (a Ken Burns still): lower-res but ALWAYS on disk from
+        // the search stage, so every beat still gets a clip (invariant 7 — degrade, never die).
+        // Montage EXTRAS (beatIdx < 0) may still drop — the montage guarantee ladder covers a
+        // missing alternate.
+        if (beatIdx >= 0 && spec.thumbPath) {
+          warnings.push(
+            `E_DOWNLOAD: beat ${beatIdx} (${spec.provider}:${spec.providerId}) — using thumbnail`,
+          );
+          return { kind: 'image', path: spec.thumbPath };
+        }
+        warnings.push(
+          `E_DOWNLOAD: beat ${beatIdx} (${spec.provider}:${spec.providerId}) — dropped`,
+        );
         return null;
       }
     };
