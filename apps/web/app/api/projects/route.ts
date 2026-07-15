@@ -18,7 +18,7 @@ const CreateSchema = z.object({
   script: z
     .string()
     .min(50, 'script must be at least 50 characters')
-    .max(6000, 'script must be ≤ 6000 characters'),
+    .max(50000, 'script must be ≤ 50,000 characters'),
   title: z.string().max(200).optional(),
   // Settings are re-validated by db.createProject (parseSettings over defaults).
   settings: z.record(z.string(), z.unknown()).optional(),

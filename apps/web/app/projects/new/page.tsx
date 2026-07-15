@@ -127,7 +127,7 @@ export default function WizardPage() {
   const narration = useMemo(() => estimateNarrationSec(script, s.speed), [script, s.speed]);
   const beats = useMemo(() => estimateBeats(script), [script]);
   const words = script.trim().split(/\s+/).filter(Boolean).length;
-  const scriptValid = script.length >= 50 && script.length <= 6000;
+  const scriptValid = script.length >= 50 && script.length <= 50000;
 
   const langVoices = (voices.data?.voices ?? []).filter((v) => v.language === voiceLang);
   const voiceName = voices.data?.voices.find((v) => v.id === s.voice)?.displayName ?? s.voice;
@@ -228,7 +228,7 @@ export default function WizardPage() {
                 className="w-full rounded-lg border border-border bg-bg px-3.5 py-2.5 text-sm outline-none transition-colors focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
               />
             </Field>
-            <Field label="Script" hint="50–6,000 characters, plain text">
+            <Field label="Script" hint="50–50,000 characters, plain text">
               <textarea
                 value={script}
                 onChange={(e) => setScript(e.target.value)}
@@ -238,8 +238,8 @@ export default function WizardPage() {
               />
             </Field>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle">
-              <span className={script.length > 6000 ? 'text-danger' : ''}>
-                {script.length.toLocaleString()} / 6,000 chars
+              <span className={script.length > 50000 ? 'text-danger' : ''}>
+                {script.length.toLocaleString()} / 50,000 chars
               </span>
               <span>·</span>
               <span>{words} words</span>
