@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import type OpenAI from 'openai';
 import pLimit from 'p-limit';
 import type { Logger } from 'pino';
-import { extractJsonObject, getLlm, jsonFormat } from './llm';
+import { extractJsonObject, getLlm, jsonFormat, type LlmProvider } from './llm';
 
 // Media-fit verification (doc 23 §6): before a montage plan is final, each planned
 // shot's thumbnail is shown to the vision model with the exact phrase it is supposed
@@ -10,9 +10,28 @@ import { extractJsonObject, getLlm, jsonFormat } from './llm';
 // thumbs, low detail, batched) and it degrades to ACCEPT on any error/timeout —
 // verification may never break a render (invariant 7).
 
-const BATCH_SIZE = 8;
-const BATCH_PARALLELISM = 3;
-const REQUEST_TIMEOUT_MS = 30_000;
+// Batching/timeout per provider — a hosted API and a local model are not the same machine, and the
+// binding limit is different for each. Hosted: throughput. Local: the CONTEXT WINDOW.
+//
+// The old values (8 images × 3 concurrent × 30s) are hosted-API values, and on Ollama they made
+// this gate dead on arrival — every batch failed, every run, so it degraded to accept-everything
+// and verified nothing. Measured here, not guessed:
+//   - a 4-image request is 4326 prompt tokens against Ollama's 4096 default context; the server
+//     rejects it outright ("exceeds the available context size"). 8 images is ~8k — double the
+//     window. The request was never servable, at any timeout.
+//   - Ollama also serves ONE model at a time, so three "parallel" requests queue behind each other
+//     while sharing one 30s deadline. That is why all three used to die within 123ms of each other.
+// An image costs ~1000 tokens at detail:'low', so 2 per request (~2.3k + prompt) fits 4096 with
+// room to spare. Serialised, because the queue exists whether or not we pretend otherwise, and a
+// timeout that survives a cold q8 8B load on a GPU that is already busy with the sidecar.
+//
+// Raising OLLAMA_CONTEXT_LENGTH would allow bigger batches, but the default has to work: the
+// OpenAI-compatible endpoint gives no way to set num_ctx per request, so the code cannot negotiate
+// it — it can only fit inside it.
+const LIMITS: Record<LlmProvider, { batchSize: number; parallelism: number; timeoutMs: number }> = {
+  openai: { batchSize: 8, parallelism: 3, timeoutMs: 30_000 },
+  ollama: { batchSize: 2, parallelism: 1, timeoutMs: 180_000 },
+};
 
 export interface FitItem {
   thumbPath: string; // local thumbnail (videos: a representative frame)
@@ -44,7 +63,8 @@ async function verifyBatch(
   model: string,
   items: readonly FitItem[],
   log: Logger,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<boolean[]> {
   const accept = items.map(() => true);
   try {
@@ -68,7 +88,7 @@ async function verifyBatch(
         ],
         response_format: jsonFormat('media_fit', RESPONSE_SCHEMA),
       },
-      { timeout: REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) },
+      { timeout: timeoutMs, ...(signal ? { signal } : {}) },
     );
     const raw = completion.choices[0]?.message?.content;
     if (!raw) return accept;
@@ -95,13 +115,17 @@ export async function verifyMediaFit(
   const client = llm.client;
   const model = llm.visionModel; // must be able to see images (OpenAI: gpt-4o; Ollama: qwen2.5vl)
 
+  const limits = LIMITS[llm.provider];
+
   const batches: FitItem[][] = [];
-  for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    batches.push(items.slice(i, i + BATCH_SIZE));
+  for (let i = 0; i < items.length; i += limits.batchSize) {
+    batches.push(items.slice(i, i + limits.batchSize));
   }
-  const limit = pLimit(BATCH_PARALLELISM);
+  const limit = pLimit(limits.parallelism);
   const results = await Promise.all(
-    batches.map((batch) => limit(() => verifyBatch(client, model, batch, log, signal))),
+    batches.map((batch) =>
+      limit(() => verifyBatch(client, model, batch, log, signal, limits.timeoutMs)),
+    ),
   );
   return results.flat();
 }
