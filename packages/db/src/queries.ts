@@ -192,11 +192,24 @@ export async function markRunProgress(
   // older (lower) write after a newer one — never let it regress the bar, and only
   // take the detail that belongs to the winning (>=) progress. markRunRunning still
   // hard-resets to 0 on retry.
+  //
+  // Also beat `projects.updated_at`, in the same round trip. getStuckProjects treats a
+  // running project whose updated_at is older than 60s as dead and re-sends it — but that column
+  // was only ever touched by STATUS changes, and progress lives in pipeline_runs (which has no
+  // updated_at at all). So nothing in the system timestamped forward progress, and any stage
+  // legitimately taking over a minute — score, routinely, and much longer when the media-fit VLM
+  // times out and degrades per beat — was declared stuck and re-queued every 5 minutes. Each
+  // duplicate restarted scoring from the top and blew the same deadline, so the project could never
+  // converge: the observed "it always sits at Score & match". A heartbeat is what distinguishes
+  // "working hard" from "died holding the lock", and this is the only place that knows.
   await sql`
-    update pipeline_runs set
-      detail = case when ${pct} >= progress then ${detail ?? null} else detail end,
-      progress = greatest(progress, ${pct})
-    where project_id = ${projectId} and stage = ${stage}`;
+    with bump as (
+      update pipeline_runs set
+        detail = case when ${pct} >= progress then ${detail ?? null} else detail end,
+        progress = greatest(progress, ${pct})
+      where project_id = ${projectId} and stage = ${stage}
+    )
+    update projects set updated_at = now() where id = ${projectId}`;
 }
 
 export async function markRunDone(projectId: string, stage: PipelineStage): Promise<void> {

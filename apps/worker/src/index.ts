@@ -79,7 +79,11 @@ async function main(): Promise<void> {
   // job when the queue lost it; idempotent stages then skip the work already done.
   const reconcile = async (reason: string): Promise<void> => {
     try {
-      const stuck = await db.getStuckProjects(60);
+      // 60s was only ever safe because nothing heartbeat it — every running project looked stuck
+      // after a minute. setStageProgress now beats projects.updated_at, so this measures real
+      // silence. Keep it well clear of the gap between two progress reports: score reports per
+      // beat, and one beat can sit behind a media-fit VLM timeout.
+      const stuck = await db.getStuckProjects(10 * 60);
       if (stuck.length === 0) return;
       let requeued = 0;
       for (const p of stuck) {
