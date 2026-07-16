@@ -16,6 +16,30 @@ import type { MediaKind } from './providers';
 
 // Cosine similarity. Vectors from the sidecar are L2-normalized, so this is a dot
 // product, but we divide by norms anyway to stay correct for any input.
+// Contrastive normalisation (retrieval redesign §1.1):
+//
+//   spec(I, T) = cos(I, T) − mean_j cos(I, D_j)
+//
+// where D is the fixed SPEC_DISTRACTORS bank. SigLIP's sigmoid loss makes cos(I,T) an ABSOLUTE
+// score, so a photogenic image scores well against anything — the raw cosine conflates "matches
+// this beat" with "is generically embeddable". Subtracting the image's mean similarity to generic
+// prompts cancels that per-image bias, leaving how SPECIFICALLY it matches this beat.
+//
+// Pure: the caller supplies embeddings (the sidecar makes them, this module only does maths —
+// invariant 8). An empty bank degrades to the raw cosine, so a caller that can't embed the
+// distractors still works unchanged.
+export function contrastiveSpec(
+  imageEmb: readonly number[],
+  textEmb: readonly number[],
+  distractorEmbs: readonly (readonly number[])[],
+): number {
+  const raw = cosine(imageEmb, textEmb);
+  if (distractorEmbs.length === 0) return raw;
+  let sum = 0;
+  for (const d of distractorEmbs) sum += cosine(imageEmb, d);
+  return raw - sum / distractorEmbs.length;
+}
+
 export function cosine(a: readonly number[], b: readonly number[]): number {
   const n = Math.min(a.length, b.length);
   let dot = 0;

@@ -158,6 +158,45 @@ export const VLM_ERA_PENALTY = 0.12; // [CALIBRATE] doc 25 §5-D (owned by Step 
 export const VLM_SHOT_PENALTY = 0.06; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — score docked for poor shot framing (subtracted un-multiplied)
 export const VLM_MAX_PENALTY = 0.2; // [CALIBRATE] doc 25 §5-D (owned by Step 7) — cap on the combined VLM penalty
 
+// Contrastive-normalisation distractor bank (retrieval redesign §1.1).
+//
+// SigLIP is trained with a SIGMOID loss, so its pair scores are absolute and uncalibrated rather
+// than a distribution over candidates: a photogenic image scores respectably against ANY prompt.
+// That is measurably the core scoring bug here — `pnpm eval:matching` puts good vs bad only ~0.03
+// apart with a rank-1 margin of ~0.011, while the selector applies penalties of 0.05–0.25 (5–20x
+// the margin), so a single lever outvotes the semantic signal.
+//
+// spec(I,T) = cos(I,T) − mean_j cos(I,D_j) subtracts an image's mean similarity to these generic
+// prompts, measuring how SPECIFICALLY it matches this beat instead of how embeddable it is in
+// general. Deliberately broad and mutually spread so no single entry aligns with a real beat's
+// subject; embedded once and reused (they never change).
+export const SPEC_DISTRACTORS: readonly string[] = [
+  'a photograph',
+  'a video frame',
+  'a landscape',
+  'a person',
+  'a person indoors',
+  'a close-up of an object',
+  'an aerial view',
+  'a city street',
+  'nature',
+  'an abstract pattern',
+  'a texture',
+  'a building',
+  'an animal',
+  'food on a plate',
+  'a machine',
+  'a document',
+  'a crowd of people',
+  'the sky',
+  'water',
+  'a plant',
+  'an empty interior room',
+  'a vehicle',
+  'a hand',
+  'a screen or display',
+];
+
 // Snapshot of every calibration constant that changes score-stage OUTPUT. The score stage folds
 // this into its inputsHash so re-tuning any value here automatically invalidates the cached
 // selection — without it a τ change silently does nothing on an already-scored project (you'd have

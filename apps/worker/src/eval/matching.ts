@@ -1,7 +1,14 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { rootDir } from '@scriptreel/config';
-import { baseScore, type CandidateFeatures, cosine, type ScoreContext } from '@scriptreel/core';
+import {
+  baseScore,
+  type CandidateFeatures,
+  contrastiveSpec,
+  cosine,
+  type ScoreContext,
+  SPEC_DISTRACTORS,
+} from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import { z } from 'zod';
 import { embedImage, embedText } from '../sidecar/client';
@@ -30,6 +37,7 @@ const NOMINAL_BEAT_SEC = 5;
 interface Scored extends Label {
   score: number;
   sim: number;
+  spec: number; // contrastive-normalised sim (redesign §1.1) — the Phase 1 candidate axis
 }
 
 function labelsPath(): string {
@@ -112,14 +120,17 @@ function cohensD(good: number[], bad: number[]): number {
 // Per-beat rank-1 margin (top1 − top2). This IS the `spec_margin` δ the redesign proposes as the
 // accept rule in place of an absolute τ, so it's the number to watch when contrastive
 // normalisation lands: the margin should widen even if precision@1 stays pinned at 100%.
-function margins(scored: Scored[]): { beat: string; margin: number; topGood: boolean }[] {
+function margins(
+  scored: Scored[],
+  axisOf: (s: Scored) => number,
+): { beat: string; margin: number; topGood: boolean }[] {
   const out: { beat: string; margin: number; topGood: boolean }[] = [];
   for (const beat of [...new Set(scored.map((s) => s.beat))]) {
-    const group = scored.filter((s) => s.beat === beat).sort((a, b) => b.score - a.score);
+    const group = scored.filter((s) => s.beat === beat).sort((a, b) => axisOf(b) - axisOf(a));
     const t1 = group[0];
     const t2 = group[1];
     if (!t1 || !t2) continue;
-    out.push({ beat, margin: t1.score - t2.score, topGood: t1.label === 'good' });
+    out.push({ beat, margin: axisOf(t1) - axisOf(t2), topGood: t1.label === 'good' });
   }
   return out;
 }
@@ -158,6 +169,8 @@ async function main(): Promise<void> {
   );
   const descRes = await embedText(descriptions);
   const descByText = new Map(descriptions.map((t, i) => [t, descRes.vectors[i] ?? []]));
+  // The distractor bank is fixed and beat-independent — embed once (redesign §1.1).
+  const distractorEmbs = (await embedText([...SPEC_DISTRACTORS])).vectors;
   const thumbByPath = new Map<string, number[]>();
   for (let i = 0; i < thumbPaths.length; i += 64) {
     const batch = thumbPaths.slice(i, i + 64);
@@ -172,6 +185,7 @@ async function main(): Promise<void> {
     const abs = isAbsolute(l.thumbPath) ? l.thumbPath : resolve(rootDir, l.thumbPath);
     const thumbEmb = thumbByPath.get(abs) ?? [];
     const sim = cosine(descEmb, thumbEmb);
+    const spec = contrastiveSpec(thumbEmb, descEmb, distractorEmbs);
     const features: CandidateFeatures = {
       kind: l.kind,
       isIllustration: false,
@@ -180,7 +194,7 @@ async function main(): Promise<void> {
       durationSec: l.duration,
       fps: null,
     };
-    return { ...l, sim, score: baseScore(sim, features, CTX, NOMINAL_BEAT_SEC).base };
+    return { ...l, sim, spec, score: baseScore(sim, features, CTX, NOMINAL_BEAT_SEC).base };
   });
 
   const good = scored.filter((s) => s.label === 'good');
@@ -238,8 +252,9 @@ async function main(): Promise<void> {
     good.map((s) => s.score),
     bad.map((s) => s.score),
   );
-  const mg = margins(scored);
-  const marginVals = mg.map((m) => m.margin).sort((a, b) => a - b);
+  const marginVals = margins(scored, (s) => s.score)
+    .map((m) => m.margin)
+    .sort((a, b) => a - b);
   const medianMargin = marginVals[Math.floor(marginVals.length / 2)] ?? 0;
   console.log('\nseparability (threshold-free — what a calibration fix moves):');
   console.log(`  ROC-AUC base score = ${fmt(aucScore)}   (0.5 = coin flip, 1.0 = perfect)`);
@@ -248,6 +263,55 @@ async function main(): Promise<void> {
   console.log('\nrank-1 margin, top1−top2 (the §1.1 spec_margin δ):');
   console.log(
     `  mean=${mean(marginVals).toFixed(4)}  median=${medianMargin.toFixed(4)}  min=${min(marginVals).toFixed(4)}  max=${max(marginVals).toFixed(4)}`,
+  );
+
+  // ---- Phase 1 experiment: does contrastive normalisation actually separate better? ----
+  // Compared on the SAME pairs, rank-based, so the differing absolute scale of sim vs spec is
+  // irrelevant to AUC. This is the decision: adopt spec only if it beats the raw cosine here.
+  const aucSpec = rocAuc(scored, (s) => s.spec);
+  // Baseline must be sim, NOT the base score: spec replaces the raw cosine, so comparing it to a
+  // score that also carries the quality/orient terms would not be like-for-like.
+  const dSim = cohensD(
+    good.map((s) => s.sim),
+    bad.map((s) => s.sim),
+  );
+  const dSpec = cohensD(
+    good.map((s) => s.spec),
+    bad.map((s) => s.spec),
+  );
+  const simMarginVals = margins(scored, (s) => s.sim)
+    .map((m) => m.margin)
+    .sort((a, b) => a - b);
+  const specMarginVals = margins(scored, (s) => s.spec)
+    .map((m) => m.margin)
+    .sort((a, b) => a - b);
+  const simTop1Good = margins(scored, (s) => s.sim).filter((m) => m.topGood).length;
+  const specTop1Good = margins(scored, (s) => s.spec).filter((m) => m.topGood).length;
+  const beatsWithPair = margins(scored, (s) => s.sim).length;
+  console.log('\n── §1.1 contrastive normalisation: spec = cos(I,T) − mean_j cos(I,D_j) ──');
+  console.log(`  distractor bank    = ${SPEC_DISTRACTORS.length} prompts`);
+  console.log(`  ROC-AUC raw sim    = ${fmt(aucSim)}`);
+  console.log(`  ROC-AUC spec       = ${fmt(aucSpec)}   ${verdict(aucSim, aucSpec)}`);
+  console.log(`  Cohen's d  sim→spec= ${dSim.toFixed(3)} → ${dSpec.toFixed(3)}`);
+  console.log(
+    `  margin min sim→spec= ${min(simMarginVals).toFixed(4)} → ${min(specMarginVals).toFixed(4)}   (worst-case top1−top2)`,
+  );
+  console.log(
+    `  margin/σ   sim→spec= ${marginOverSigma(
+      simMarginVals,
+      scored.map((s) => s.sim),
+    ).toFixed(3)} → ${marginOverSigma(
+      specMarginVals,
+      scored.map((s) => s.spec),
+    ).toFixed(3)}   (scale-free: median margin ÷ axis σ)`,
+  );
+  console.log(
+    `  top-1 good sim→spec = ${simTop1Good}/${beatsWithPair} → ${specTop1Good}/${beatsWithPair}`,
+  );
+  // Honesty guard: with 16 good / 14 bad the AUC standard error is ~0.09, so a delta smaller
+  // than that is indicative, not proven. Growing the fixture is what turns this into a decision.
+  console.log(
+    `  ⚠ n=${scored.length} (${good.length}/${bad.length}) → AUC s.e. ≈ ±${(Math.sqrt(0.85 * 0.15) / Math.sqrt(Math.min(good.length, bad.length))).toFixed(3)}: treat a small delta as indicative only`,
   );
 
   console.log('\noperating points (base-score space):');
@@ -273,6 +337,21 @@ const variance = (xs: number[]): number => {
 const min = (xs: number[]): number => (xs.length ? Math.min(...xs) : 0);
 const max = (xs: number[]): number => (xs.length ? Math.max(...xs) : 0);
 const fmt = (x: number | null): string => (x == null ? 'n/a (never reaches target)' : x.toFixed(3));
+// sim and spec live on different scales, so raw margins aren't comparable. Dividing the median
+// margin by the axis's own spread makes the comparison scale-free: "how many σ separates rank 1
+// from rank 2?" — which is what the §1.1 accept rule actually needs.
+const marginOverSigma = (marginVals: number[], axisVals: number[]): number => {
+  const sd = Math.sqrt(variance(axisVals));
+  const median = marginVals[Math.floor(marginVals.length / 2)] ?? 0;
+  return sd > 0 ? median / sd : 0;
+};
+// Plain-language call on the A/B, so the run itself says whether §1.1 earns its place.
+const verdict = (before: number | null, after: number | null): string => {
+  if (before == null || after == null) return '';
+  const d = after - before;
+  const tag = d > 0.02 ? 'BETTER' : d < -0.02 ? 'WORSE' : 'no real change';
+  return `(${d >= 0 ? '+' : ''}${d.toFixed(3)} vs raw sim → ${tag})`;
+};
 
 main().catch((err) => {
   console.error(err);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   baseScore,
   type CandidateFeatures,
+  contrastiveSpec,
   cosine,
   durFit,
   fpsFit,
@@ -292,5 +293,39 @@ describe('varietyPass', () => {
     const varied = varietyPass(beats, first, ctx, th);
     const annCount = varied.filter((s) => s.chosenId?.startsWith('ann')).length;
     expect(annCount).toBeLessThan(3);
+  });
+});
+
+describe('contrastiveSpec (redesign §1.1)', () => {
+  // Orthogonal basis: dim0 is the beat's subject, dims 1-2 are generic distractor concepts,
+  // dim3 is unrelated content (lets an image sit at cos 0.7 to the subject and 0 to the bank).
+  const text = [1, 0, 0, 0];
+  const bank = [
+    [0, 1, 0, 0],
+    [0, 0, 1, 0],
+  ];
+
+  it('degrades to the raw cosine when the bank is empty', () => {
+    const img = [0.8, 0.5, 0.5, 0];
+    expect(contrastiveSpec(img, text, [])).toBeCloseTo(cosine(img, text), 10);
+  });
+
+  it('subtracts the image mean similarity to the bank', () => {
+    const img = [0.8, 0.5, 0.5, 0];
+    const expected =
+      cosine(img, text) - (cosine(img, bank[0] as number[]) + cosine(img, bank[1] as number[])) / 2;
+    expect(contrastiveSpec(img, text, bank)).toBeCloseTo(expected, 10);
+  });
+
+  // The whole point: a "photogenic" image that is broadly similar to everything can out-score a
+  // genuinely specific match on the RAW cosine. spec cancels that per-image bias and flips it.
+  it('ranks a specific match over a generically-similar one that wins on raw cosine', () => {
+    const specific = [0.7, 0, 0, Math.sqrt(1 - 0.49)]; // cos→text 0.70, cos→bank 0
+    const generic = [0.8, 0.5, 0.5, 0]; // cos→text ~0.75, but ~0.47 to everything
+
+    expect(cosine(generic, text)).toBeGreaterThan(cosine(specific, text)); // raw prefers generic
+    expect(contrastiveSpec(specific, text, bank)).toBeGreaterThan(
+      contrastiveSpec(generic, text, bank),
+    ); // spec prefers the specific one
   });
 });
