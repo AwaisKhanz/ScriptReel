@@ -48,7 +48,15 @@ MODEL_ID = os.environ.get("QWEN_VL_MODEL", "mlx-community/Qwen2.5-VL-3B-Instruct
 _REMOTE_BASE_URL = os.environ.get("VLM_BASE_URL", "http://localhost:11434/v1").rstrip("/")
 _REMOTE_MODEL = os.environ.get("VLM_REMOTE_MODEL", "qwen2.5vl:3b")
 _REMOTE_API_KEY = os.environ.get("VLM_API_KEY", "ollama")  # Ollama ignores it; keep it non-empty
-_REMOTE_TIMEOUT = float(os.environ.get("VLM_TIMEOUT_S", "120"))  # local generate can be slow on CPU
+# The first call after another model was resident pays a full EVICT + LOAD, not just inference.
+# On a 16 GB card the sidecar (~4 GB) + an analyze text model (~9 GB) + a q8 8B vision model (~9 GB)
+# is ~22 GB of demand, so Ollama unloads one to fit the other and a single image can exceed two
+# minutes — measured: httpx.ReadTimeout on image #1 of a fresh run, with the server healthy.
+# It degrades to "checklist failed → accept" (invariant 7), which is the quiet way this gate stops
+# verifying anything. 300 s covers a cold swap; it does not slow the happy path, where a warm model
+# answers in seconds. The real cure is less VRAM pressure (a q4 vision model, OLLAMA_KEEP_ALIVE),
+# but the default must not depend on tuning the user has not done.
+_REMOTE_TIMEOUT = float(os.environ.get("VLM_TIMEOUT_S", "300"))
 _REMOTE_PROBE_TIMEOUT = 3.0  # availability probe: fail fast when the server isn't up
 _MAX_TOKENS = 128  # a yes/no checklist needs very few tokens; cap so a runaway can't stall
 _MAX_SIDE = 1024  # cap resolution before generate: Qwen2.5-VL runs at native res, so a full-
