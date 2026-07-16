@@ -31,7 +31,11 @@ Sequential penalties (computed during greedy selection, beat order):
 
 Constants `[CALIBRATE in Phase 6]` against the golden set; SigLIP cosine ranges are model-specific, so calibrate empirically: score 30 hand-labeled (good/bad) beat–thumb pairs, set `τ_hi` at the 90%-precision point and `τ_lo` at 70%.
 
-**Calibrated 2026-07-11** (`siglip2-base-patch16-224`, 30 pairs from G1–G3, `pnpm eval:matching`): `τ_hi = 0.322`, `τ_lo = 0.314`, in **base-score space** (not raw cosine). precision@1 = 100% on the eval set (gate ≥ 55%). Scores compress near ~0.30 because the non-sim quality/orient terms are ≈constant for HD stock video, so the discriminating signal is the SigLIP cosine riding on that offset — re-fit both `packages/core/src/constants.ts` and this line whenever the model or the score formula changes.
+**Re-calibrated 2026-07-16** (`siglip2-base-patch16-224`, **222 pairs / 30 beats**, `pnpm eval:matching`): `τ_hi = 0.360`, `τ_lo = 0.314`, in **base-score space** (not raw cosine). Scores compress near ~0.30 because the non-sim quality/orient terms are ≈constant for HD stock video, so the discriminating signal is the SigLIP cosine riding on that offset — re-fit both `packages/core/src/constants.ts` and this line whenever the model or the score formula changes.
+
+> The previous values (`τ_hi = 0.322`, `τ_lo = 0.314`, calibrated 2026-07-11) were fitted to **30 pairs from G1–G3** and did not survive more data: that same 30-pair subset still reproduces `0.322/0.314` exactly, while on 222 pairs a score of 0.322 delivers **78.8%** precision on stock-servable beats and **63.7%** overall — not the 90% the confident tier claims. Its reported "precision@1 = 100%" was the metric saturating (every beat in that set contained a good candidate, so the abstain path was never exercised), not evidence of calibration. `τ_lo` is deliberately left at 0.314: its measured @70% point is 0.300, but lowering it would *accept more* marginal candidates, which is not the demonstrated defect.
+>
+> **Caveat:** 192 of the 222 labels are AI-judged (`labeledBy` in `fixtures/eval/labels.jsonl`) and the beat mix is hand-picked — 0.360 is a better estimate than 0.322, not ground truth. Per the redesign's §3.13 the real label source is the review gate.
 
 ```
 for each beat in order:

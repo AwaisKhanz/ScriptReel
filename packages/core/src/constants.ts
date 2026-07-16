@@ -116,7 +116,18 @@ export const MONTAGE_SAME_SOURCE_FACTOR = 1.25;
 // point (`pnpm eval:matching`, precision@1 = 100%). Re-run and re-fit on any model
 // or formula change (doc 09 §step 3, doc 21). Scores compress near ~0.30 because the
 // non-sim quality/orient terms are ~constant for HD stock video.
-export const TAU_HI = 0.322; // [CALIBRATE Phase 6] choose outright
+// [CALIBRATE] Re-fitted 2026-07-16 on 222 pairs / 30 beats (was 0.322, fitted to just 30 pairs
+// from G1–G3 — and that 30-pair subset still reproduces 0.322 exactly, which is what overfitting
+// looks like). At 0.322 the real precision is 78.8% on stock-servable beats and 63.7% across the
+// whole set — not the 90% the tier claims. The honest @90% point on the servable subset is 0.360.
+// Model-specific (siglip2-base-patch16-224, base-score space); re-run `pnpm eval:matching` after
+// any model or formula change.
+// CAVEAT: 192/222 of those labels are AI-judged (see labels.jsonl `labeledBy`) and the beat mix is
+// hand-picked, so treat 0.360 as a better estimate than 0.322 — not as ground truth.
+// τ_lo deliberately NOT lowered to its measured @70% (0.300): that would ACCEPT more marginal
+// candidates, which is not the defect we demonstrated. Raising τ_hi only tightens, and still
+// widens the band from 0.008 → 0.046.
+export const TAU_HI = 0.36; // [CALIBRATE Phase 6] choose outright (@90% precision, servable subset)
 export const TAU_LO = 0.314; // [CALIBRATE Phase 6] choose but flag 'weak'
 export const TAU_MOOD = 0.28; // [CALIBRATE Phase 7] mood-tier accept < τ_lo
 

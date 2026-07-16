@@ -261,7 +261,7 @@ model isn't installed, that gate is skipped and selection continues.
 
 ### 4d · Choose — thresholds & the named-subject rule
 Beats are walked in order (so the run can avoid reusing an asset or repeating a look):
-- Top candidate **≥ τ_hi (0.322)** → chosen, confident.
+- Top candidate **≥ τ_hi (0.360)** → chosen, confident.
 - Between **τ_lo (0.314)** and τ_hi → chosen but flagged “weak”.
 - Below τ_lo → nothing good enough → hand to the fallback ladder.
 - **Named-subject rule:** on a beat about a specific person/place, a *confident archive* match (the
