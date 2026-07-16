@@ -186,11 +186,17 @@ RULES — VISUAL DESIGN
    for a bold on-screen card.
 9. Detect \`language\` of the script (en-US, en-GB, es, fr, hi, it, pt-BR, ja, zh) and
    an overall \`musicMood\`.
-10. \`entities\` — read the WHOLE script, then for each beat list the concrete, on-screen
-   things it names (skip pronouns, connectives, and pure abstractions). For each:
-   - \`surface\`: as written in the narration ("the Dead Sea").
-   - \`canonical\`: the real, disambiguated English name ("Dead Sea", "Jordan", "Elon
-     Musk", "React") — this is what we look up in Wikidata, so get it exactly right.
+10. \`entities\` — read the WHOLE script, then for each beat list EVERY concrete, on-screen
+   thing it names (skip pronouns, connectives, and pure abstractions).
+   EVERYDAY THINGS COUNT, not just famous ones. "grapes", "watermelon", "almond butter",
+   "a stethoscope" are all entities — if a camera could point at it and the beat names it,
+   list it. Do NOT restrict this to proper nouns or to subjects notable enough for an
+   encyclopedia: a beat naming five fruits has FIVE entities, one per fruit. Be exhaustive
+   — a missed entity is a shot the editor cannot plan. For each:
+   - \`surface\`: as written in the narration ("the Dead Sea", "ripe bananas with brown spots").
+   - \`canonical\`: the disambiguated English name. For a proper noun ("Dead Sea", "Jordan",
+     "Elon Musk", "React") this is what we look up in Wikidata, so get it exactly right;
+     for an everyday thing it is just its plain English name ("grapes", "almond butter").
    - \`category\`: one of person, country, region, city, landmark, lake, ocean, mountain,
      river, nature, animal, planet, astro, building, vehicle, company, brand, product,
      software, artwork, book, film, event, concept, object, symbol, flag.
@@ -502,6 +508,29 @@ function splitAtBoundary(text: string): [string, string] | null {
 
 // Split any beat > SPLIT_MAX_SEC at the boundary nearest its midpoint; the second
 // half demotes its literal queries to the conceptual/mood tier (doc 07 §post-pass 4).
+// Which of a parent beat's shots belong to this half of a split, by what the half actually SAYS.
+//
+// A split reshapes the sentence, so the parent's plan does not apply wholesale to either half — but
+// it is not worthless either: "grapes and watermelon on table" belongs to whichever half contains
+// the word "grapes". Blanking both halves threw away a correct plan and left every child sharing the
+// parent's one visualDescription, so N consecutive beats fetched the SAME asset. Measured on a real
+// gpt-4o run: it designed 3 shots for the five-fruit sentence (grapes+watermelon / bananas / dried
+// fruits+mangoes); the sentence split into 4 beats and all 4 shipped `shots: []` with an identical
+// description — one video where the model had planned a montage.
+//
+// Match on the shot's `entity` when it has one (a canonical name is the stable key), else on the
+// content words of its `phrase`. Short words are skipped so "of"/"on"/"the" cannot match everything.
+// A shot naming nothing in either half is dropped rather than guessed at — a wrong shot is worse
+// than a generic one, since the ladder can still find something for a bare visualDescription.
+function shotsForHalf(shots: readonly Shot[], half: string): Shot[] {
+  const hay = half.toLowerCase();
+  return shots.filter((s) => {
+    const needle = (s.entity || s.phrase).toLowerCase();
+    const words = needle.split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+    return words.length > 0 && words.some((w) => hay.includes(w));
+  });
+}
+
 export function splitLongBeats(
   beats: ProcessedBeat[],
   language: string,
@@ -521,18 +550,20 @@ export function splitLongBeats(
         next.push(beat);
         continue;
       }
+      const headShots = shotsForHalf(beat.shots, split[0]);
       next.push({
         ...beat,
         text: split[0],
-        shots: [], // split reshapes the sentence — the shot plan no longer aligns
-        visualMoments: [],
+        shots: headShots, // the parent's shots this half actually names (see shotsForHalf)
+        visualMoments: deriveMoments(headShots),
         estSeconds: estimateSeconds(split[0], language, speed),
       });
+      const tailShots = shotsForHalf(beat.shots, split[1]);
       next.push({
         ...beat,
         text: split[1],
-        shots: [],
-        visualMoments: [],
+        shots: tailShots,
+        visualMoments: deriveMoments(tailShots),
         estSeconds: estimateSeconds(split[1], language, speed),
         queries: { ...beat.queries, literal: [beat.queries.conceptual, beat.queries.mood] },
       });

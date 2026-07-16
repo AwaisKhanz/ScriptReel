@@ -206,3 +206,59 @@ describe('postProcessAnalysis', () => {
     expect(reconstructionMatches(script, out.beats)).toBe(true);
   });
 });
+
+// A long beat's shot plan must survive the split. Regression for a real gpt-4o run: it designed 3
+// shots for the five-fruit sentence, splitLongBeats cut that sentence into 4 beats, and every child
+// shipped `shots: []` with the parent's single visualDescription — so four consecutive beats fetched
+// one asset where the model had planned a montage.
+describe('splitLongBeats — shot inheritance', () => {
+  const fiveFruits =
+    'There are five fruits you need to rethink: grapes are tiny balloons of concentrated sugar with very little fiber; watermelon is a high Glycemic Index fruit that acts as a naked carbohydrate; ripe bananas with brown spots have converted their starch into sugar; dried fruits like raisins and dates are concentrated sugar bombs; and mangoes contain up to 45 grams of sugar per fruit with very little fiber to balance it out.';
+
+  const beat = () => ({
+    text: fiveFruits,
+    visualDescription: 'variety of fruits on table',
+    keyPhrase: 'Rethink these five fruits',
+    emotion: 'serious' as const,
+    shotType: 'wide' as const,
+    era: 'modern' as const,
+    entities: [],
+    queries: {
+      literal: ['high sugar fruits', 'fruit bowl'],
+      conceptual: 'high sugar fruits',
+      mood: 'cautionary',
+    },
+    shots: [
+      { phrase: 'grapes close up', entity: 'grapes', want: 'scene' as const, weight: 1 },
+      {
+        phrase: 'ripe bananas with brown spots',
+        entity: 'bananas',
+        want: 'scene' as const,
+        weight: 1,
+      },
+      { phrase: 'mango on counter', entity: 'mango', want: 'scene' as const, weight: 1 },
+    ],
+    visualMoments: ['grapes close up', 'ripe bananas with brown spots', 'mango on counter'],
+    estSeconds: 0,
+  });
+
+  it('gives each half the shots its own text names, instead of blanking both', () => {
+    const out = splitLongBeats([beat()], 'en-US', 1);
+    expect(out.length).toBeGreaterThan(1);
+
+    // Every shot must land on a beat whose text actually mentions it — that is the whole contract.
+    for (const b of out) {
+      for (const s of b.shots) {
+        expect(b.text.toLowerCase()).toContain(s.entity.toLowerCase());
+      }
+    }
+    // And the plan must not evaporate: the model's shots survive the split somewhere.
+    const kept = out.flatMap((b) => b.shots.map((s) => s.entity));
+    expect(kept).toContain('grapes');
+    expect(kept).toContain('mango');
+    // visualMoments are derived from shots, so they must travel with them (montage planning reads these).
+    const withShots = out.filter((b) => b.shots.length > 0);
+    expect(withShots.length).toBeGreaterThan(0);
+    for (const b of withShots) expect(b.visualMoments).toEqual(b.shots.map((s) => s.phrase));
+  });
+});
