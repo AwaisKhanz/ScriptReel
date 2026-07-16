@@ -161,9 +161,17 @@ RULES — SEGMENTATION
 1. Beats must reproduce the input script EXACTLY when their \`text\` fields are
    concatenated in order. Never rewrite, translate, drop, or add words. Preserve
    punctuation. Only leading/trailing whitespace between beats may be normalized.
-2. {PACING_RULE}
-3. A beat is ONE visual idea. Merge short sentences that share an image. Split long
-   sentences at natural clause boundaries when the imagery changes.
+2. {PACING_RULE} This is a HARD budget, not a suggestion. A beat that runs past it will be
+   cut mechanically downstream, at a word offset with no regard for meaning — so any beat
+   you leave oversized is a beat you have handed to a blunt instrument. Segment it yourself.
+3. A beat is ONE visual idea. Merge short sentences that share an image.
+   A SENTENCE IS NOT A BEAT. One grammatical sentence that names several distinct subjects
+   is several visual ideas, and must become several beats — split it at its clause or
+   semicolon boundaries, one beat per subject. "There are five fruits you need to rethink:
+   grapes …; watermelon …; bananas …; raisins …; and mangoes …" is FIVE beats, not one:
+   each fruit is its own shot and its own moment on screen. Grouping them as one beat with
+   a single "variety of fruits" visual throws the whole list on screen as one picture.
+   Rule 2 wins over any instinct to keep a sentence intact.
 
 RULES — VISUAL DESIGN
 4. \`visualDescription\` is ALWAYS ENGLISH, ≤ 20 words, and FILMABLE: describe a shot a
