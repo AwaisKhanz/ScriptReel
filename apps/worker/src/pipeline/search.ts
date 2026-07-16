@@ -252,8 +252,9 @@ export const searchStage: Stage = {
         if (kept.length >= MAX_CANDIDATES_PER_BEAT) break;
       }
 
-      // Thumbnails (max 4 parallel); a failed thumb drops that candidate (doc 08). Videos
-      // resolve to up to 3 spread preview frames (doc 25 §4) — primary is the representative.
+      // Thumbnails (max 4 parallel); a failed thumb drops that candidate (doc 08). Videos resolve
+      // to spread preview frames (doc 25 §4) — 3 for Pexels' short clips, up to 24 for Internet
+      // Archive's long reels — and primary is the representative.
       const withThumbs = await Promise.all(
         kept.map((candidate) =>
           limit(async () => {

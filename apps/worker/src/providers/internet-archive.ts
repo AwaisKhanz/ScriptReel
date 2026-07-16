@@ -25,6 +25,9 @@ const ITEM_PARALLELISM = 4;
 const MAX_BYTES = 300_000_000; // skip the giant original — cap the download at ~300 MB
 const MIN_BYTES = 200_000; // skip degenerate/placeholder clips (~200 KB floor)
 const DURATION_FALLBACK_SEC = 60; // unparseable length → a value that clears hygiene (≥ 2 s)
+// IA derives a thumbnail strip (format 'Thumbnail') for every movie item — ~23 frames sampled
+// across the reel, ~6 KB each. Cap the fan-out; beyond this a longer strip buys little.
+const MAX_STRIP_FRAMES = 24;
 
 // IA fields can arrive as a scalar or a single-element array; normalize to the first string.
 function firstString(v: string | readonly string[] | null | undefined): string {
@@ -126,6 +129,34 @@ function buildSearchUrl(query: string, rows: number): URL {
   return url;
 }
 
+// Every frame of IA's derived thumbnail strip, oldest → newest, as absolute download URLs.
+//
+// Why every frame rather than pexels.ts's 3-at-10/50/90: IA is the only long-form source (measured
+// 2026-07-16: median result 19.4 min, 48% over 20 min), and `IA_THUMB` is a single auto-generated
+// ITEM ICON, not a content frame. Measured on AboutBan1935 (Prelinger, 11.1 min), raw SigLIP cosine
+// against a fixed sentence:
+//     "tropical banana plantation"  item icon -0.011  ·  strip max-pool +0.151
+// The reel genuinely contains the shot; the icon scores it below zero, so it can never be selected.
+// Sub-sampling does not fix this and is not monotone — the matching shot sat at strip index 11, so
+// 3 frames (0/11/22) hit +0.147 while 8 uniform frames stepped over it and got +0.066. On another
+// sentence 3 frames scored +0.034 where the full strip got +0.093. There is no sample size that is
+// reliably lucky, so max-pool the whole strip: ~23 × 6 KB ≈ 138 KB per candidate, keyless, and the
+// embeddings are cached on disk permanently (embed.py), so it is paid once per asset ever.
+//
+// The names are zero-padded frame numbers (`<id>.thumbs/<id>_000030.jpg`), so a lexicographic sort
+// is chronological.
+export function stripFrameUrls(identifier: string, files: readonly IaFile[]): string[] {
+  const names = files
+    .filter((f) => f.format === 'Thumbnail' && f.name.includes('.thumbs/'))
+    .map((f) => f.name)
+    .sort();
+  if (names.length === 0) return []; // no strip → ensureFrames degrades to the single thumb
+  const step = Math.ceil(names.length / MAX_STRIP_FRAMES);
+  return names
+    .filter((_, i) => i % step === 0)
+    .map((n) => `${IA_DOWNLOAD}/${identifier}/${encodeURIComponent(n)}`);
+}
+
 async function resolveItem(doc: IaSearchDoc): Promise<RawCandidate | null> {
   try {
     const parsed = IaMetadata.safeParse(await getJson(new URL(`${IA_METADATA}/${doc.identifier}`)));
@@ -141,6 +172,7 @@ async function resolveItem(doc: IaSearchDoc): Promise<RawCandidate | null> {
       height: 0,
       duration: parseDurationSec(file.length),
       thumbUrl: `${IA_THUMB}/${doc.identifier}`,
+      frameUrls: stripFrameUrls(doc.identifier, parsed.data.files ?? []),
       downloadUrl: `${IA_DOWNLOAD}/${doc.identifier}/${encodeURIComponent(file.name)}`,
       pageUrl: `${IA_DETAILS}/${doc.identifier}`,
       author: firstString(meta?.creator) || 'Internet Archive',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type IaFile, parseDurationSec, pickVideoFile } from './internet-archive';
+import { type IaFile, parseDurationSec, pickVideoFile, stripFrameUrls } from './internet-archive';
 
 function file(name: string, size?: string, length?: string): IaFile {
   return { name, size, length };
@@ -68,5 +68,50 @@ describe('parseDurationSec', () => {
     expect(parseDurationSec('')).toBe(60);
     expect(parseDurationSec(null)).toBe(60);
     expect(parseDurationSec(undefined)).toBe(60);
+  });
+});
+
+describe('stripFrameUrls', () => {
+  const thumb = (name: string): IaFile => ({ name, format: 'Thumbnail' });
+
+  it('returns [] when the item has no derived strip', () => {
+    expect(stripFrameUrls('x', [])).toEqual([]);
+    expect(stripFrameUrls('x', [file('x.mp4', '1000', '60')])).toEqual([]);
+  });
+
+  it('ignores Thumbnail entries outside the .thumbs/ directory', () => {
+    // IA also tags the item's poster image 'Thumbnail'; only the strip is per-frame.
+    expect(stripFrameUrls('x', [thumb('__ia_thumb.jpg')])).toEqual([]);
+  });
+
+  it('builds download URLs in chronological order', () => {
+    const urls = stripFrameUrls('AboutBan1935', [
+      thumb('AboutBan1935.thumbs/AboutBan1935_000060.jpg'),
+      thumb('AboutBan1935.thumbs/AboutBan1935_000001.jpg'),
+      thumb('AboutBan1935.thumbs/AboutBan1935_000030.jpg'),
+    ]);
+    expect(urls).toEqual([
+      'https://archive.org/download/AboutBan1935/AboutBan1935.thumbs%2FAboutBan1935_000001.jpg',
+      'https://archive.org/download/AboutBan1935/AboutBan1935.thumbs%2FAboutBan1935_000030.jpg',
+      'https://archive.org/download/AboutBan1935/AboutBan1935.thumbs%2FAboutBan1935_000060.jpg',
+    ]);
+  });
+
+  it('keeps every frame of a typical strip (~23) — sub-sampling a long reel is a lottery', () => {
+    const files = Array.from({ length: 23 }, (_, i) =>
+      thumb(`r.thumbs/r_${String(i).padStart(6, '0')}.jpg`),
+    );
+    expect(stripFrameUrls('r', files)).toHaveLength(23);
+  });
+
+  it('caps the fan-out on an unusually long strip, spread across the reel', () => {
+    const files = Array.from({ length: 100 }, (_, i) =>
+      thumb(`r.thumbs/r_${String(i).padStart(6, '0')}.jpg`),
+    );
+    const urls = stripFrameUrls('r', files);
+    // stride = ceil(100/24) = 5 → indices 0,5,…,95: 20 frames under the cap, spanning the reel.
+    expect(urls).toHaveLength(20);
+    expect(urls[0]).toContain('r_000000.jpg');
+    expect(urls[urls.length - 1]).toContain('r_000095.jpg');
   });
 });

@@ -90,10 +90,27 @@ real `User-Agent`; treat it as the flakiest source.
 BY-SA / NC / ND / unknown). So Flickr / iNat / Commons must filter to the allowed CC subset, and
 **ESA main content (CC-BY-SA IGO) is rejected** — only ESA-Hubble / ESO (CC-BY) is usable.
 
-**Multi-frame video candidates:** a video candidate is represented by **3 frames at 10 % / 50 % /
-90 %** of its duration, not one thumbnail — so scoring and verification judge the whole clip, not one
-lucky still. Changes thumbnailing (search), candidate storage, and every downstream step that embeds
-a "thumb" (it now embeds/serves the best of the 3, or all 3).
+**Multi-frame video candidates:** a video candidate is represented by **several frames** rather than
+one thumbnail — so scoring and verification judge the whole clip, not one lucky still. Changes
+thumbnailing (search), candidate storage, and every downstream step that embeds a "thumb" (it now
+embeds/serves the best of the frames). The frame count is **per-source**, because clip length is:
+
+- **Pexels** — **3 frames at 10 % / 50 % / 90 %** of the clip (`pickSpreadFrames`), taken from the
+  `video_pictures` its API returns. Its clips are short (fixture median 16 s), so 3 samples cover them.
+- **Internet Archive** — **every frame of IA's derived thumbnail strip**, capped at 24
+  (`stripFrameUrls`). IA is the only long-form source, and 3 is not enough there.
+
+**Measured 2026-07-16**, and the reason the two policies differ. IA's search returns a median result
+of **19.4 min** (48 % over 20 min), and its `services/img` thumbnail is an auto-generated *item icon*,
+not a content frame. On AboutBan1935 (Prelinger, 11.1 min), raw SigLIP cosine vs "a tropical banana
+plantation with workers": **item icon −0.011 · strip max-pool +0.151** (an ffmpeg 16-frame sweep of
+the real video tops out at +0.155, so the free strip recovers ~98 % of the achievable signal). The
+reel genuinely contains the shot, and the shipped icon scored it below zero — it could never be
+selected. Sub-sampling does not fix this and is **not monotone**: the matching shot sat at strip
+index 11, so 3 frames (0/11/22) scored +0.147 while 8 uniform frames stepped over it and got +0.066;
+on another sentence 3 frames managed +0.034 where the full strip reached +0.093. No sample size is
+reliably lucky, so the whole strip is max-pooled — ~23 × 6 KB ≈ 138 KB per candidate, keyless, and
+embeddings are cached on disk permanently, so it is paid once per asset ever.
 
 ## 5. Phase 4 — the Score → Verify cascade
 
@@ -143,7 +160,8 @@ usable; measure and tune the skip thresholds.
 1. `beats.era` (analyze) + per-entity era derived from Wikidata dates.
 2. Entity-expansion cache (aliases, related entities, dates, extra query terms).
 3. `ProviderId` union += the 11 new sources; per-source credentials + `PROVIDER_WINDOWS`.
-4. Candidate model: a video carries **3 frames (10/50/90 %)** instead of one thumb.
+4. Candidate model: a video carries **several spread frames** instead of one thumb — 3 (10/50/90 %)
+   for Pexels' short clips, up to 24 (the whole derived strip) for Internet Archive's long reels.
 5. Score stage: OCR gate → SigLIP top-5 → identity → VLM → cascade decision → SDXL ladder rung.
 6. Sidecar: new endpoints — `/ocr`, `/face`, `/dino`, `/vlm`, `/generate`.
 7. Phase 5+ (fetch / align / compose) and `timeline.json` are **unchanged**.
@@ -167,8 +185,9 @@ usable; measure and tune the skip thresholds.
   archives; routing covers group A.
 - **Step 3 — Archives group B (§4).** iNat / GBIF, NOAA, USGS, ESA-Hubble. Exit: nature / ocean /
   geo / space beats route to their authoritative source.
-- **Step 4 — Multi-frame video candidates (§4).** 3 frames at 10/50/90 % through search + storage +
-  scoring. Exit: videos are judged on 3 frames.
+- **Step 4 — Multi-frame video candidates (§4).** Spread frames through search + storage + scoring:
+  3 at 10/50/90 % for Pexels, the whole derived strip (≤ 24) for Internet Archive. Exit: videos are
+  judged on their best-matching frame, not one lucky still.
 - **Step 5 — Cascade A + B (§5).** OCR gate (watermark penalty + contradiction veto) + SigLIP top-5
   shortlist. *New model: Tesseract.* Exit: watermarked / contradicting clips filtered pre-cascade.
 - **Step 6 — Cascade C (§5).** InsightFace (person) + DINOv2 (landmark / artwork) reference identity.
