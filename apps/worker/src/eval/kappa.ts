@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { rootDir } from '@scriptreel/config';
@@ -219,6 +220,26 @@ async function main(): Promise<void> {
     return;
   }
 
+  // --score before the labelling is done is the obvious mistake to make (the two commands sit next
+  // to each other in the build output, and the work between them happens in a browser). Say so, and
+  // say what to do — an ENOENT stack trace for a file the user was never told to create by hand
+  // reads like a broken tool rather than a missing step.
+  const humanPath = resolve(rootDir, 'fixtures/eval/kappa-human.jsonl');
+  if (!existsSync(humanPath)) {
+    console.log('=== eval:kappa --score — nothing to score yet ===\n');
+    console.log('  fixtures/eval/kappa-human.jsonl does not exist, so the labels have not been');
+    console.log("  collected. --score compares YOUR verdicts against the model's; there is no");
+    console.log(
+      '  shortcut, and a model cannot stand in for you here (that is the whole question).\n',
+    );
+    console.log('  1. open   fixtures/eval/kappa.html   in a browser');
+    console.log('     (missing? run `pnpm eval:kappa` to rebuild it — same 50 pairs, fixed seed)');
+    console.log('  2. click each thumb: unset → good → bad. All 50.');
+    console.log('  3. click "Copy labelled JSONL", paste into  fixtures/eval/kappa-human.jsonl');
+    console.log('  4. run  pnpm eval:kappa --score\n');
+    console.log('  ~20 minutes. It decides whether τ = 0.360 and the four measured nulls stand.');
+    return;
+  }
   const human = await loadJsonl('fixtures/eval/kappa-human.jsonl', HumanSchema);
   const byKey = new Map<string, Label>();
   for (const l of labels) byKey.set(`${l.beat}|${l.thumbPath}`, l);
