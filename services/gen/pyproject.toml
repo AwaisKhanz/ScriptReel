@@ -17,6 +17,13 @@ dependencies = [
   # --- Windows / Linux: SDXL-Turbo via diffusers on CUDA ----------------------------------
   # torch comes from the cu128 index (Blackwell sm_120 needs CUDA 12.8) — see [tool.uv.sources].
   "torch>=2.7; sys_platform != 'darwin' or platform_machine != 'arm64'",
+  # torchvision, from the same cu128 index as torch (its compiled ops must match torch's build).
+  # diffusers' SDXL image processors import it; without it every /genimage dies with an empty
+  # "gen: generation failed ()" and the ladder falls straight through to a text card — the rung
+  # that exists to avoid text cards, silently unable to run. Only the transformers WARNING named
+  # it ("`CLIPImageProcessor` requires torchvision (not installed)"), and warnings are easy to
+  # scroll past. Not needed on Apple: that path is mflux/MLX, not diffusers.
+  "torchvision>=0.22; sys_platform != 'darwin' or platform_machine != 'arm64'",
   "diffusers>=0.31; sys_platform != 'darwin' or platform_machine != 'arm64'",
   "transformers>=4.44; sys_platform != 'darwin' or platform_machine != 'arm64'",
   "accelerate>=0.34; sys_platform != 'darwin' or platform_machine != 'arm64'",
@@ -32,6 +39,7 @@ explicit = true
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 
 [tool.uv]
 package = false
