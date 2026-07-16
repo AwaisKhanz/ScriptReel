@@ -26,6 +26,12 @@ const LabelSchema = z.object({
   height: z.number(),
   duration: z.number().nullable(),
   label: z.enum(['good', 'bad']),
+  // Provenance. `human` = hand-labelled (doc 21). `model` = judged by a vision model via
+  // `pnpm eval:pool`'s labelling workflow. Model labels are defensible here because the question
+  // is objective ("is the subject actually present?") rather than taste — but they are NOT
+  // independent ground truth: an AUC measured against them scores agreement with a model's
+  // opinion, not a human's. Recorded so that can never be forgotten, and reported below.
+  labeledBy: z.enum(['human', 'model']).optional(),
 });
 type Label = z.infer<typeof LabelSchema>;
 
@@ -230,6 +236,14 @@ async function main(): Promise<void> {
   console.log('=== eval:matching (doc 21) ===');
   console.log(
     `pairs: ${scored.length}  (${good.length} good, ${bad.length} bad)  beats: ${beats.length}`,
+  );
+  // Surface provenance on every run: most of this fixture is model-judged, so these numbers
+  // measure agreement with a vision model's opinion, not human ground truth. Per the plan's
+  // §3.13 the real source is the review gate. Strong evidence, not proof.
+  const byModel = scored.filter((s) => s.labeledBy === 'model').length;
+  const byHuman = scored.filter((s) => s.labeledBy === 'human').length;
+  console.log(
+    `labels: ${byHuman} human · ${byModel} model${byModel > 0 ? '  ⚠ model labels are strong evidence, not ground truth' : ''}`,
   );
   console.log(
     `good score  mean=${mean(good.map((s) => s.score)).toFixed(3)}  min=${min(good.map((s) => s.score)).toFixed(3)}`,
