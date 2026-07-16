@@ -2,7 +2,7 @@
 
 One shared SigLIP 2 base model, lazy-loaded and kept warm. Text and image towers
 produce L2-normalized vectors so cosine similarity is a plain dot product. Image
-embeddings are cached on disk next to their thumbnail (``{thumb}.emb.f32``, raw
+embeddings are cached on disk next to their thumbnail (``{thumb}.{model-slug}.emb.f32``, raw
 little-endian float32) — re-runs and re-scores are free. An asyncio lock
 serialises the heavy forward passes; light ops (health) still interleave.
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +22,23 @@ _log = logging.getLogger("scriptreel.embed")
 MODEL_ID = os.environ.get("SIGLIP_MODEL", "google/siglip2-base-patch16-224")
 _TEXT_MAX_TOKENS = 64  # SigLIP text tower is fixed-length; must pad to max_length
 _IMAGE_BATCH = 16  # doc 14: batch 16 on MPS
-_EMB_SUFFIX = ".emb.f32"
+
+
+def _model_slug(model_id: str) -> str:
+    """Filesystem-safe tag identifying which model produced a cached vector."""
+    return re.sub(r"[^a-z0-9]+", "-", model_id.lower()).strip("-")
+
+
+# Cached vectors are keyed by MODEL_ID, not just ".emb.f32".
+#
+# Embeddings from different models are NOT interchangeable, and the dimension guard in
+# _read_cache only catches it when the dims happen to differ (base-224 is 768-d, so-400m is
+# 1152-d — caught by luck). Two same-dimension variants would silently return the PREVIOUS
+# model's vectors, so `pnpm eval:matching` would "re-run" and quietly score the new model using
+# stale embeddings — defeating the one rule CLAUDE.md states about this ("τ are model-specific;
+# re-run the eval"). Keying by model makes a swap a cache MISS, which is the correct behaviour,
+# and lets both models' vectors coexist so switching back is still free.
+_EMB_SUFFIX = f".{_model_slug(MODEL_ID)}.emb.f32"
 
 _model: object | None = None
 _processor: object | None = None

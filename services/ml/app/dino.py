@@ -15,14 +15,17 @@ download that would silently change a render — the gate stays inert until
 the worker catches) so the identity pass skips and the render is unchanged
 (invariant 7 — degrade, never die).
 
-Embeddings are cached on disk as ``{path}.dino.f32`` (raw little-endian float32),
-mirroring embed.py. An ``asyncio`` lock serialises the heavy forward passes.
+Embeddings are cached on disk as ``{path}.{model-slug}.dino.f32`` (raw little-endian
+float32), mirroring embed.py — keyed by model so a DINO_MODEL swap is a cache MISS rather
+than a silent reuse of the previous model's vectors. An ``asyncio`` lock serialises the
+heavy forward passes.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +33,11 @@ import numpy as np
 from app import models
 
 MODEL_ID = os.environ.get("DINO_MODEL", "facebook/dinov2-small")
-_CACHE_SUFFIX = ".dino.f32"
+# Keyed by MODEL_ID for the same reason as embed.py: DINO_MODEL is env-configurable, vectors from
+# different models are not interchangeable, and the dimension guard in _read_cache only catches a
+# swap when the widths differ (dinov2-small is 384-d, -base 768-d). Two same-width variants would
+# silently reuse the previous model's vectors and quietly change identity-gate verdicts.
+_CACHE_SUFFIX = f".{re.sub(r'[^a-z0-9]+', '-', MODEL_ID.lower()).strip('-')}.dino.f32"
 
 _model: object | None = None
 _processor: object | None = None

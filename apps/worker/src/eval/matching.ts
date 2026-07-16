@@ -111,6 +111,54 @@ function rocAuc(scored: Scored[], axisOf: (s: Scored) => number): number | null 
   return (sumPosRanks - (n1 * (n1 + 1)) / 2) / (n1 * n2);
 }
 
+// Paired bootstrap CI for the DIFFERENCE between two ranking axes (B resamples, stratified by
+// label, both axes scored on the SAME resample so the comparison stays paired).
+//
+// Why this and not the printed s.e.: that number is the standard error of ONE AUC (~±0.035 here),
+// which is the wrong yardstick for "is axis B better than axis A on these same pairs". A paired
+// comparison cancels the shared pair-to-pair variance and has far more power, so a delta well
+// under the single-AUC s.e. can still be real — or still be nothing. Only this can tell them
+// apart, and every remaining decision in the redesign is exactly such a comparison.
+//
+// The RNG is seeded and deterministic: a calibration fixture that returns different CIs each run
+// is not a fixture. Returns the observed delta plus the 95% interval.
+function bootstrapDeltaAuc(
+  scored: Scored[],
+  axisA: (s: Scored) => number,
+  axisB: (s: Scored) => number,
+  reps = 2000,
+): { delta: number; lo: number; hi: number; significant: boolean } | null {
+  const good = scored.filter((s) => s.label === 'good');
+  const bad = scored.filter((s) => s.label === 'bad');
+  if (good.length < 2 || bad.length < 2) return null;
+  const a0 = rocAuc(scored, axisA);
+  const b0 = rocAuc(scored, axisB);
+  if (a0 == null || b0 == null) return null;
+
+  let seed = 987654321;
+  const rnd = (): number => {
+    // xorshift32 — small, deterministic, good enough for resampling indices
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 0xffffffff;
+  };
+  const draw = (xs: Scored[], n: number): Scored[] =>
+    Array.from({ length: n }, () => xs[Math.floor(rnd() * xs.length)] as Scored);
+
+  const deltas: number[] = [];
+  for (let i = 0; i < reps; i += 1) {
+    const sample = [...draw(good, good.length), ...draw(bad, bad.length)];
+    const a = rocAuc(sample, axisA);
+    const b = rocAuc(sample, axisB);
+    if (a != null && b != null) deltas.push(b - a);
+  }
+  deltas.sort((x, y) => x - y);
+  const lo = deltas[Math.floor(deltas.length * 0.025)] ?? 0;
+  const hi = deltas[Math.floor(deltas.length * 0.975)] ?? 0;
+  return { delta: b0 - a0, lo, hi, significant: !(lo <= 0 && hi >= 0) };
+}
+
 // Standardised mean difference. Quantifies the core bug: a good/bad gap of ~0.03 against
 // penalties of 0.05–0.25 means a single lever outvotes the semantic signal entirely.
 function cohensD(good: number[], bad: number[]): number {
@@ -322,10 +370,42 @@ async function main(): Promise<void> {
   console.log(
     `  top-1 good sim→spec = ${simTop1Good}/${beatsWithPair} → ${specTop1Good}/${beatsWithPair}`,
   );
-  // Honesty guard: with 16 good / 14 bad the AUC standard error is ~0.09, so a delta smaller
-  // than that is indicative, not proven. Growing the fixture is what turns this into a decision.
+  // The single-AUC s.e. — context only. It is NOT the test for the paired comparisons below.
   console.log(
-    `  ⚠ n=${scored.length} (${good.length}/${bad.length}) → AUC s.e. ≈ ±${(Math.sqrt(0.85 * 0.15) / Math.sqrt(Math.min(good.length, bad.length))).toFixed(3)}: treat a small delta as indicative only`,
+    `  (single-AUC s.e. ≈ ±${(Math.sqrt(0.85 * 0.15) / Math.sqrt(Math.min(good.length, bad.length))).toFixed(3)} at n=${scored.length} — the paired CIs below are the actual test)`,
+  );
+
+  // ---- The decisions, tested properly: paired bootstrap on the same pairs. ----
+  const call = (
+    r: { delta: number; lo: number; hi: number; significant: boolean } | null,
+  ): string =>
+    r == null
+      ? 'n/a'
+      : `${r.delta >= 0 ? '+' : ''}${r.delta.toFixed(4)}  95% CI [${r.lo >= 0 ? '+' : ''}${r.lo.toFixed(4)}, ${r.hi >= 0 ? '+' : ''}${r.hi.toFixed(4)}]  → ${
+          r.significant
+            ? r.delta > 0
+              ? 'REAL improvement'
+              : 'REAL regression'
+            : 'no effect (CI spans 0)'
+        }`;
+  console.log('\n── paired bootstrap ΔAUC (2000 resamples, same pairs both axes) ──');
+  console.log(
+    `  spec − sim   (§1.1 contrastive)  = ${call(
+      bootstrapDeltaAuc(
+        scored,
+        (s) => s.sim,
+        (s) => s.spec,
+      ),
+    )}`,
+  );
+  console.log(
+    `  base − sim   (§1.2 extra terms)  = ${call(
+      bootstrapDeltaAuc(
+        scored,
+        (s) => s.sim,
+        (s) => s.score,
+      ),
+    )}`,
   );
 
   console.log('\noperating points (base-score space):');
