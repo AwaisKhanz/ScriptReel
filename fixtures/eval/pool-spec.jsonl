@@ -1,0 +1,34 @@
+// Beat specs for `pnpm eval:pool` — the input that grows fixtures/eval/labels.jsonl.
+//
+// `beatDescription` mirrors the analyzer's visualDescription style (what a camera would literally
+// see); `query` is the generic English stock query the search stage would emit for it (doc 07:
+// real names never go in stock queries). `expect` documents intent and is NOT used by the tool:
+//   servable — stock should hold a genuinely good match; tests ranking.
+//   hard     — no stock asset can truly satisfy this (a named subject / specific event), so the
+//              pool should come back ALL BAD. The current fixture has zero such beats, which is
+//              why the abstain path — the thing §1.1's accept rule redefines — is untested and
+//              precision@1 sits pinned at 100%.
+{"beat":"p01","beatDescription":"empty highway stretching through red desert at sunrise","query":"empty desert highway sunrise","kind":"video","expect":"servable"}
+{"beat":"p02","beatDescription":"close-up of hands kneading dough on a floured wooden table","query":"hands kneading dough","kind":"video","expect":"servable"}
+{"beat":"p03","beatDescription":"surgeon in blue scrubs concentrating under operating theatre lights","query":"surgeon operating room","kind":"video","expect":"servable"}
+{"beat":"p04","beatDescription":"wind turbines turning slowly on a green hillside","query":"wind turbines hillside","kind":"video","expect":"servable"}
+{"beat":"p05","beatDescription":"rain running down a window at night with city lights blurred behind","query":"rain window night city lights","kind":"video","expect":"servable"}
+{"beat":"p06","beatDescription":"a single candle burning in a dark room","query":"candle burning dark","kind":"video","expect":"servable"}
+{"beat":"p07","beatDescription":"crowded subway platform as a train rushes past","query":"subway platform train","kind":"video","expect":"servable"}
+{"beat":"p08","beatDescription":"microscope on a laboratory bench with samples in focus","query":"microscope laboratory","kind":"video","expect":"servable"}
+{"beat":"p09","beatDescription":"aerial view of waves breaking on a rocky coastline","query":"aerial waves rocky coast","kind":"video","expect":"servable"}
+{"beat":"p10","beatDescription":"child's hands stacking colourful wooden blocks","query":"child stacking wooden blocks","kind":"video","expect":"servable"}
+{"beat":"p11","beatDescription":"steam rising from a fresh cup of coffee on a desk","query":"steaming coffee cup desk","kind":"video","expect":"servable"}
+{"beat":"p12","beatDescription":"dense forest canopy seen from below, sunlight through leaves","query":"forest canopy sunlight","kind":"video","expect":"servable"}
+{"beat":"p13","beatDescription":"welder's sparks flying in a dim workshop","query":"welding sparks workshop","kind":"video","expect":"servable"}
+{"beat":"p14","beatDescription":"snow falling on an empty park bench","query":"snow falling park bench","kind":"video","expect":"servable"}
+{"beat":"p15","beatDescription":"traffic streaking at night in a long exposure over a bridge","query":"night traffic long exposure bridge","kind":"video","expect":"servable"}
+{"beat":"p16","beatDescription":"honeybee landing on a purple flower","query":"bee landing flower","kind":"video","expect":"servable"}
+{"beat":"h01","beatDescription":"Neil Armstrong saluting the United States flag on the lunar surface in 1969","query":"astronaut moon surface flag","kind":"video","expect":"hard"}
+{"beat":"h02","beatDescription":"the Saturn V rocket lifting off from Kennedy Space Center, July 1969","query":"rocket launch tower smoke","kind":"video","expect":"hard"}
+{"beat":"h03","beatDescription":"Marie Curie working at her laboratory bench in Paris","query":"scientist historical laboratory","kind":"video","expect":"hard"}
+{"beat":"h04","beatDescription":"the Berlin Wall being torn down by crowds in November 1989","query":"crowd wall demolition","kind":"video","expect":"hard"}
+{"beat":"h05","beatDescription":"Voyager 1 passing Saturn's rings in deep space","query":"spacecraft saturn rings","kind":"video","expect":"hard"}
+{"beat":"h06","beatDescription":"the Wright brothers' first powered flight at Kitty Hawk, 1903","query":"early aeroplane flight","kind":"video","expect":"hard"}
+{"beat":"h07","beatDescription":"a 1930s Dust Bowl farmer standing before his collapsed barn","query":"farmer barn dust storm","kind":"video","expect":"hard"}
+{"beat":"h08","beatDescription":"Apollo 11's lunar module descending onto the grey, cratered Sea of Tranquility","query":"lunar lander descending crater","kind":"video","expect":"hard"}

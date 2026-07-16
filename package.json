@@ -19,6 +19,7 @@
     "db:types": "supabase gen types typescript --linked > packages/db/src/types.ts",
     "stage": "pnpm --filter @scriptreel/worker exec tsx src/cli.ts",
     "eval:fixtures": "pnpm --filter @scriptreel/worker exec tsx src/eval/fetch-fixtures.ts",
+    "eval:pool": "pnpm --filter @scriptreel/worker exec tsx src/eval/build-pool.ts",
     "eval:matching": "pnpm --filter @scriptreel/worker exec tsx src/eval/matching.ts",
     "prepare": "husky"
   },
