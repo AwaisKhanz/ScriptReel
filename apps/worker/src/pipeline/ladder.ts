@@ -177,7 +177,12 @@ async function fireRung(
     pageUrl: c.pageUrl,
     author: c.author,
     license: c.license,
-    ...(c.meta !== undefined ? { meta: c.meta } : {}),
+    // `viaLadder` marks this row as something SCORE produced, not something search handed it.
+    // score's inputsHash fingerprints the beat's candidates, so without this marker the ladder's
+    // own appends change score's inputs and score re-runs on every retry, forever (see
+    // candidateFingerprint in score.ts). textcard/generated rows are identifiable by `provider`;
+    // these are not — a broadened query returns ordinary pexels/pixabay rows.
+    meta: { ...(typeof c.meta === 'object' && c.meta !== null ? c.meta : {}), viaLadder: true },
   }));
   const rows = await db.appendCandidatesForBeat(beat.id, inserts);
 

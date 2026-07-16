@@ -47,8 +47,37 @@ function targetAspectFor(aspect: string): number {
   return w && h ? w / h : 16 / 9;
 }
 
+// Score's INPUT is the pool search handed it — never the rows score itself added.
+//
+// The fallback ladder appends real `candidates` rows on every rung (doc 09 step 4: broadened-search
+// hits, a generated image, the text card) so the storyboard can still offer them as swaps. Those are
+// score's OUTPUT. Counting them as input made score invalidate its own inputsHash by running: the
+// pool it hashed on the way in never matches the pool on the way out, so score could never report
+// `skipped (inputsHash match)` the way analyze/search/tts do. Every retry after a downstream failure
+// — click "Try again", restart the worker — silently re-ran the whole scoring pass, re-embedding and
+// re-spending the ladder's provider quota to reach the identical selection. That is idempotence
+// (invariant 3) broken by the stage's own side effects.
+//
+// Excluded by `provider` for textcard/generated, and by `meta.viaLadder` for broadened-search rows,
+// which are otherwise indistinguishable from search's own pexels/pixabay hits.
+//
+// Deliberately NOT excluded: beat-research appends (apps/worker/src/pipeline/beat-research.ts).
+// Those come from the user asking for new candidates on a beat, so they SHOULD re-run score — that
+// is a real input change, not a self-inflicted one.
+function isLadderRow(c: db.CandidateRow): boolean {
+  if (c.provider === 'textcard' || c.provider === 'generated') return true;
+  const meta = c.meta;
+  return (
+    typeof meta === 'object' &&
+    meta !== null &&
+    (meta as Record<string, unknown>).viaLadder === true
+  );
+}
+
 function candidateFingerprint(rows: readonly db.CandidateRow[]): unknown {
-  return rows.map((c) => [c.provider, c.provider_id, c.thumb_path, c.width, c.height, c.duration]);
+  return rows
+    .filter((c) => !isLadderRow(c))
+    .map((c) => [c.provider, c.provider_id, c.thumb_path, c.width, c.height, c.duration]);
 }
 
 // A beat "names a specific subject" (doc 23 §6.3) when analyze extracted a person or
