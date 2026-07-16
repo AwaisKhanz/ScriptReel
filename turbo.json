@@ -1,6 +1,16 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "stream",
+  // Turbo 2.x defaults to envMode "strict": a task sees ONLY declared vars plus turbo's own
+  // allowlist. USERNAME is not on that allowlist, and torch imports `getpass.getuser()` at import
+  // time (torch/_inductor/runtime/cache_dir_utils.py) to name its inductor cache dir. getuser()
+  // reads LOGNAME/USER/LNAME/USERNAME and, finding none, falls back to `import pwd` — Unix-only. So
+  // under `pnpm dev` the sidecar died with ModuleNotFoundError: No module named 'pwd', surfacing as
+  // E_EMBED / E_MODEL_LOAD on SigLIP and hanging every run at the score stage. It only reproduces
+  // through turbo: a hand-started `uv run uvicorn` inherits the shell's USERNAME and works fine.
+  // passThrough (not `env`) because these identify the machine, not the build — they must not enter
+  // any cache key. TEMP/TMP for the same reason: tempfile.gettempdir() picks the cache's parent.
+  "globalPassThroughEnv": ["USERNAME", "USER", "LOGNAME", "TEMP", "TMP"],
   "tasks": {
     "dev": {
       "cache": false,
