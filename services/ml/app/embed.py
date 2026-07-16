@@ -44,6 +44,8 @@ _model: object | None = None
 _processor: object | None = None
 _device: str = "cpu"
 _load_lock = asyncio.Lock()
+# First load failure, remembered forever. See _ensure_loaded — a retry cannot succeed, and lies.
+_load_error: str | None = None
 _infer_lock = asyncio.Lock()
 
 
@@ -54,10 +56,22 @@ class EmbedError(Exception):
 
 
 async def _ensure_loaded() -> None:
-    global _model, _processor, _device
+    global _model, _processor, _device, _load_error
     async with _load_lock:
         if _model is not None:
             return
+        # A failed import is PERMANENT for this process, so replay the first error instead of
+        # retrying. `import transformers` pulls torch._dynamo, whose package.py registers a cache
+        # artifact at module scope. If that import dies partway, the half-initialised modules stay
+        # in sys.modules, and the next attempt re-runs the decorator and raises
+        #   AssertionError: Artifact of type=precompile already registered in mega-cache artifact factory
+        # — which then masks the real cause on every subsequent call. That is not hypothetical: a
+        # missing USERNAME (turbo's strict env mode) made torch's getpass.getuser() fall through to
+        # `import pwd` on Windows; the first call reported that honestly and every call after blamed
+        # the artifact factory, which is where the debugging went wrong. The process needs a restart
+        # either way — so say why, accurately, every time.
+        if _load_error is not None:
+            raise EmbedError(_load_error)
         try:
             import torch
             from transformers import AutoModel, AutoProcessor
@@ -99,8 +113,13 @@ async def _ensure_loaded() -> None:
         except Exception as exc:  # noqa: BLE001 — surface any load failure as E_MODEL_LOAD
             # Log the full traceback (like ocr/vlm) — the endpoint only returns the short code,
             # so without this a SigLIP load failure is undiagnosable from the sidecar console.
-            _log.warning("SigLIP load failed (%s) on device=%s", MODEL_ID, _device, exc_info=True)
-            raise EmbedError(f"E_MODEL_LOAD: SigLIP 2 ({MODEL_ID}) — {exc}") from exc
+            # `_device` is only assigned once the import succeeds, so on an import failure it still
+            # holds its "cpu" default — say "device unresolved" rather than print a reading that
+            # looks like a CUDA problem and isn't.
+            where = _device if _model is not None else f"{_device} (unresolved — load never got there)"
+            _log.warning("SigLIP load failed (%s) on device=%s", MODEL_ID, where, exc_info=True)
+            _load_error = f"E_MODEL_LOAD: SigLIP 2 ({MODEL_ID}) — {exc}"
+            raise EmbedError(_load_error) from exc
 
 
 def _normalize(vectors: np.ndarray) -> np.ndarray:
