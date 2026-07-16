@@ -53,8 +53,18 @@ export const analyzeStage: Stage = {
       raw,
     });
 
+    // The reprompt already failed once; these beats keep the model's visuals over text the
+    // arithmetic re-slice moved underneath them. Ship them (invariant 7) but say so.
+    const warnings =
+      post.reconstruction === 'proportional'
+        ? [
+            'analyze: the model did not reproduce the script verbatim even after a reprompt; beat text was re-sliced proportionally, so each beat may show visuals designed for a different sentence',
+          ]
+        : [];
+
     return {
       artifacts: ['beats.json'],
+      warnings,
       meta: {
         analyzer: llm.provider,
         model: llm.textModel,

@@ -256,13 +256,19 @@ export interface PostProcessInput {
   result: AnalysisResult;
   language: string;
   speed: number;
+  // Accept a proportional re-slice, whose boundaries are word-count arithmetic rather than
+  // semantic — every beat then carries visuals designed for a different span of the script.
+  // Only the final degrade path, after the reprompt has failed, sets this (doc 07).
+  allowProportional?: boolean;
 }
 
 export interface PostProcessOutput {
   beats: ProcessedBeat[];
   language: string;
   musicMood: AnalysisResult['musicMood'];
-  reconstruction: 'exact' | 'repaired';
+  // 'anchored' and 'proportional' were both 'repaired' — one has exact boundaries, the other
+  // arithmetic ones, and collapsing them is what let misaligned visuals ship unnoticed.
+  reconstruction: 'exact' | RepairMethod;
 }
 
 export function normalizeWhitespace(input: string): string {
@@ -372,12 +378,23 @@ function repairProportional(script: string, beats: Beat[]): Beat[] {
   return repaired;
 }
 
+// How a beat list was re-sliced back to verbatim. 'anchors' keeps each beat's own words, so
+// its visuals still describe its text; 'proportional' does not — the caller must decide.
+export type RepairMethod = 'anchors' | 'proportional';
+
+export interface RepairResult {
+  beats: Beat[];
+  method: RepairMethod;
+}
+
 // Anchor-repair first (best boundaries); proportional fallback guarantees verbatim.
-export function repairVerbatim(script: string, beats: Beat[]): Beat[] | null {
+export function repairVerbatim(script: string, beats: Beat[]): RepairResult | null {
   const anchored = repairByAnchors(script, beats);
-  if (anchored) return anchored;
+  if (anchored) return { beats: anchored, method: 'anchors' };
   const proportional = repairProportional(script, beats);
-  return reconstructionMatches(script, proportional) ? proportional : null;
+  return reconstructionMatches(script, proportional)
+    ? { beats: proportional, method: 'proportional' }
+    : null;
 }
 
 export function estimateSeconds(text: string, language: string, speed = 1): number {
@@ -553,7 +570,7 @@ export function queryHygiene(beats: ProcessedBeat[]): ProcessedBeat[] {
 
 export function postProcessAnalysis(input: PostProcessInput): PostProcessOutput {
   let beats: Beat[] = input.result.beats;
-  let reconstruction: 'exact' | 'repaired' = 'exact';
+  let reconstruction: PostProcessOutput['reconstruction'] = 'exact';
 
   if (!reconstructionMatches(input.script, beats)) {
     const repaired = repairVerbatim(input.script, beats);
@@ -564,8 +581,18 @@ export function postProcessAnalysis(input: PostProcessInput): PostProcessOutput 
         'verbatim reconstruction failed after repair',
       );
     }
-    beats = repaired;
-    reconstruction = 'repaired';
+    if (repaired.method === 'proportional' && !input.allowProportional) {
+      // A proportional re-slice is contiguous, so its join always equals the script and
+      // reconstructionMatches can never catch it. Rejecting it here is the only thing that
+      // arms the reprompt — otherwise every beat silently ships another beat's visuals.
+      throw new PipelineError(
+        'E_LLM_SCHEMA',
+        'analyze',
+        'anchor repair failed; proportional re-slice would decouple each beat from its own visuals',
+      );
+    }
+    beats = repaired.beats;
+    reconstruction = repaired.method;
   }
 
   const processed: ProcessedBeat[] = beats.map((beat, idx) => ({

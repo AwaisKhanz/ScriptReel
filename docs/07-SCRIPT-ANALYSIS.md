@@ -87,7 +87,7 @@ Scripts > 1,200 words: split on paragraph boundaries into ≤ 1,200-word chunks;
 
 ## Deterministic post-pass (worker, after LLM)
 
-1. **Verbatim check:** normalize whitespace; `join(beats.text) === normalize(script)` else attempt repair by re-slicing the script using each beat's first/last 4 words as anchors; if repair fails → `PipelineError('E_LLM_SCHEMA', 'analyze')` and retry once with an error-explaining reprompt, then fail.
+1. **Verbatim check:** normalize whitespace; `join(beats.text) === normalize(script)` (`reconstruction: 'exact'`) else attempt repair by re-slicing the script using each beat's first 4 words as anchors (`'anchored'`). A model that *summarizes* rather than segments defeats the anchors, and the last-resort re-slice by word-count proportion (`'proportional'`) rebuilds the text while leaving every beat holding visuals designed for a different span — so `postProcessAnalysis` **rejects it** with `PipelineError('E_LLM_SCHEMA', 'analyze')` unless the caller passes `allowProportional`. That rejection is what triggers the single verbatim reprompt; the reprompt itself sets `allowProportional` (invariant 7 — degrade, never die) and the stage records a manifest **warning** so a `'proportional'` ship is never silent.
 2. **Duration estimate:** `estSeconds = words / (baseWps(language) * speed)` (doc 10 table). CJK uses chars-based rate.
 3. **Merge** any beat with `estSeconds < 2.5` into its shorter neighbor (concatenate text, keep the longer beat's visuals, re-index).
 4. **Split** any beat with `estSeconds > 12` at the sentence/clause boundary nearest its midpoint; duplicate visuals but set second half's `literal` queries to the `conceptual`/`mood` tier to force visual variety.

@@ -81,15 +81,15 @@ describe('repairVerbatim', () => {
     const bad = [beat('Hello world this is a'), beat('test of the system today')];
     expect(reconstructionMatches(script, bad)).toBe(false);
     const repaired = repairVerbatim(script, bad);
-    expect(repaired).not.toBeNull();
-    expect(reconstructionMatches(script, repaired ?? [])).toBe(true);
-    expect(repaired?.[1]?.text).toContain('today.');
+    expect(repaired?.method).toBe('anchors');
+    expect(reconstructionMatches(script, repaired?.beats ?? [])).toBe(true);
+    expect(repaired?.beats[1]?.text).toContain('today.');
   });
-  it('falls back to proportional re-slicing so reconstruction always succeeds', () => {
+  it('reports the proportional fallback as such — its boundaries are arithmetic, not semantic', () => {
     const script = 'alpha beta gamma delta epsilon zeta';
     const out = repairVerbatim(script, [beat('zzz yyy'), beat('www vvv uuu')]);
-    expect(out).not.toBeNull();
-    expect(reconstructionMatches(script, out ?? [])).toBe(true);
+    expect(out?.method).toBe('proportional');
+    expect(reconstructionMatches(script, out?.beats ?? [])).toBe(true);
   });
 });
 
@@ -169,10 +169,40 @@ describe('postProcessAnalysis', () => {
     expect(reconstructionMatches(script, out.beats)).toBe(true);
   });
 
-  it('reconstructs via the proportional fallback even when the model text diverges', () => {
-    const script = 'the real script words appear right here now';
-    const result: AnalysisResult = { ...base, beats: [beat('totally'), beat('different text')] };
-    const out = postProcessAnalysis({ script, result, language: 'en-US', speed: 1 });
+  // A summarized beat set: the words are gone, so no anchor matches and only the proportional
+  // re-slice can rebuild the script — by stapling each beat's visuals onto someone else's text.
+  const summarized = (): { script: string; result: AnalysisResult } => ({
+    script:
+      'Grapes are tiny balloons of sugar. Bananas with brown spots are worse for you. Berries are the safest fruit of all.',
+    result: {
+      ...base,
+      beats: [
+        beat('Grapes are sugar.', { visualDescription: 'close-up of grapes' }),
+        beat('Bananas are worse.', { visualDescription: 'close-up of ripe bananas' }),
+        beat('In conclusion, eat berries.', { visualDescription: 'close-up of berries' }),
+      ],
+    },
+  });
+
+  it('refuses to staple a beat’s visuals onto a proportionally re-sliced text', () => {
+    const { script, result } = summarized();
+    // Contiguous slices always reconstruct, so nothing downstream can catch this: the post-pass
+    // must reject it here, which is what makes the verbatim reprompt reachable at all.
+    expect(() => postProcessAnalysis({ script, result, language: 'en-US', speed: 1 })).toThrow(
+      expect.objectContaining({ code: 'E_LLM_SCHEMA' }),
+    );
+  });
+
+  it('records the repair method so proportional output is never mistaken for exact boundaries', () => {
+    const { script, result } = summarized();
+    const out = postProcessAnalysis({
+      script,
+      result,
+      language: 'en-US',
+      speed: 1,
+      allowProportional: true,
+    });
+    expect(out.reconstruction).toBe('proportional');
     expect(reconstructionMatches(script, out.beats)).toBe(true);
   });
 });
