@@ -27,6 +27,34 @@ Sequential penalties (computed during greedy selection, beat order):
 - `dupPenalty = 0.10` if `cosine(thumb, previousChosenThumb) > 0.92` (visual near-duplicate of the adjacent beat).
 - `monotonyPenalty = 0.04` if same provider **author** as previous chosen beat.
 
+> **[CALIBRATE] These are vetoes, not penalties — measured 2026-07-16, not yet changed.** In the
+> base-score space they are subtracted from, the real rank-1 margin (top1−top2, 30 beats, `pnpm
+> eval:matching --dump`) has **median 0.0053**, and the *entire* range of top-1 scores across all 30
+> beats is **0.0775**. Against that:
+>
+> | penalty | value | vs median margin | exceeds the margin on |
+> | --- | --- | --- | --- |
+> | `monotonyPenalty` | 0.04 | **7.5×** | 30/30 beats |
+> | `dupPenalty` | 0.10 | **18.7×** | 30/30 beats |
+> | `reusePenalty` | 0.15 | **28×** | 30/30 beats |
+>
+> So whenever one fires it decides the beat outright, whatever the match quality — `reusePenalty`
+> alone is ~2× the whole score range, which pushes any reused asset below `τ_lo = 0.314` and into the
+> fallback ladder (real quota). They read as "prefer variety, all else equal"; they behave as "never,
+> at any cost". Note also that reuse is banned **twice**: `ladder.ts` already hard-skips reused
+> `assetKey`s, so the 0.15 buys nothing the ladder doesn't already enforce — it only forces the ladder.
+>
+> This is what the redesign's P7 ("editorial signals belong as a **tiebreak**, never as a summand")
+> is really about, and it applies to these shipped penalties, not just to future editorial scoring.
+> It also means the redesign's R3 cure is aimed wrong: §3.12's global assignment would optimally
+> solve *this same objective*. The defect is the magnitudes, not the greediness.
+>
+> **Deliberately unchanged.** Picking the right values needs a label set that can adjudicate taste,
+> and the current fixture cannot: `pnpm eval:kappa` measured κ(model, human) = 0.416 at reliability
+> 1.000, i.e. the labels are systematically *biased*, not merely noisy. Re-scaling a constant against
+> a biased instrument is how the shipped `τ = 0.322` came to claim 90% precision and deliver 78.8%.
+> Whether variety is a hard ban or a soft preference is also a product decision, not an eval result.
+
 ## Step 3 — Greedy selection with thresholds
 
 Constants `[CALIBRATE in Phase 6]` against the golden set; SigLIP cosine ranges are model-specific, so calibrate empirically: score 30 hand-labeled (good/bad) beat–thumb pairs, set `τ_hi` at the 90%-precision point and `τ_lo` at 70%.
@@ -58,7 +86,15 @@ Every ladder step appends real `candidates` rows (provider `'generated'`/`'textc
 
 ## Step 5 — Global variety pass
 
-After all beats chosen: if > 60% of beats share one provider+author, or ≥ 3 consecutive beats are images, re-run selection for the offending beats with the penalty weights doubled (single pass, no loop). Then write `chosen_candidate_id`s.
+After all beats chosen: if > 60% of beats share one provider **author**, re-run selection for the offending beats with the penalty weights doubled (single pass, no loop). Then write `chosen_candidate_id`s.
+
+> **Corrected 2026-07-16 — the doc described a trigger that does not exist.** This line previously
+> also promised "*or ≥ 3 consecutive beats are images*". `varietyPass` (`packages/core/src/matching.ts`)
+> implements **only** the author-dominance trigger — it returns early unless one author holds > 60%,
+> and never inspects `kind`. No consecutive-images check has ever shipped. The doc is corrected to
+> match the code rather than the reverse: adding the trigger is a behaviour change to selection, and
+> given the penalties it would double are already 7–28× the rank-1 margin (see §Step 2), doubling
+> them for a *third* reason should be a deliberate decision with evidence, not a doc-conformance fix.
 
 ## Single-beat re-search (storyboard)
 
