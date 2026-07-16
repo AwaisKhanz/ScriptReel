@@ -68,6 +68,62 @@ function operatingPoint(
   return null;
 }
 
+// Rank-based ROC-AUC (Mann–Whitney U), average ranks for ties. Threshold-free: "what is
+// P(a random good outranks a random bad)?" — 0.5 is a coin flip, 1.0 is perfect separation.
+// This is the metric a CALIBRATION change moves. precision@1 cannot see one: with 6 beats that
+// all contain a good candidate it saturates at 100%, so a large separability gain reads as "no
+// change". Report AUC on the base score AND on raw sim (the subject-presence axis).
+function rocAuc(scored: Scored[], axisOf: (s: Scored) => number): number | null {
+  const pos = scored.filter((s) => s.label === 'good');
+  const neg = scored.filter((s) => s.label === 'bad');
+  if (pos.length === 0 || neg.length === 0) return null;
+  const all = [
+    ...pos.map((s) => ({ v: axisOf(s), good: true })),
+    ...neg.map((s) => ({ v: axisOf(s), good: false })),
+  ].sort((a, b) => a.v - b.v);
+  // Average ranks within tie groups — otherwise ties bias the U statistic.
+  const ranks = new Array<number>(all.length);
+  let i = 0;
+  while (i < all.length) {
+    let j = i;
+    while (j + 1 < all.length && all[j + 1]?.v === all[i]?.v) j += 1;
+    const avgRank = (i + j) / 2 + 1; // 1-based
+    for (let k = i; k <= j; k += 1) ranks[k] = avgRank;
+    i = j + 1;
+  }
+  const sumPosRanks = all.reduce((acc, x, idx) => acc + (x.good ? (ranks[idx] ?? 0) : 0), 0);
+  const n1 = pos.length;
+  const n2 = neg.length;
+  return (sumPosRanks - (n1 * (n1 + 1)) / 2) / (n1 * n2);
+}
+
+// Standardised mean difference. Quantifies the core bug: a good/bad gap of ~0.03 against
+// penalties of 0.05–0.25 means a single lever outvotes the semantic signal entirely.
+function cohensD(good: number[], bad: number[]): number {
+  if (good.length < 2 || bad.length < 2) return 0;
+  const vg = variance(good);
+  const vb = variance(bad);
+  const pooled = Math.sqrt(
+    ((good.length - 1) * vg + (bad.length - 1) * vb) / (good.length + bad.length - 2),
+  );
+  return pooled > 0 ? (mean(good) - mean(bad)) / pooled : 0;
+}
+
+// Per-beat rank-1 margin (top1 − top2). This IS the `spec_margin` δ the redesign proposes as the
+// accept rule in place of an absolute τ, so it's the number to watch when contrastive
+// normalisation lands: the margin should widen even if precision@1 stays pinned at 100%.
+function margins(scored: Scored[]): { beat: string; margin: number; topGood: boolean }[] {
+  const out: { beat: string; margin: number; topGood: boolean }[] = [];
+  for (const beat of [...new Set(scored.map((s) => s.beat))]) {
+    const group = scored.filter((s) => s.beat === beat).sort((a, b) => b.score - a.score);
+    const t1 = group[0];
+    const t2 = group[1];
+    if (!t1 || !t2) continue;
+    out.push({ beat, margin: t1.score - t2.score, topGood: t1.label === 'good' });
+  }
+  return out;
+}
+
 function histogram(scored: Scored[]): string {
   const buckets = new Map<string, { good: number; bad: number }>();
   const bucketFor = (x: number): string => {
@@ -175,6 +231,25 @@ async function main(): Promise<void> {
   );
   console.log('\nscore histogram (✓=good ░=bad):');
   console.log(histogram(scored));
+  // Separability — threshold-free, and the axis a calibration change actually moves.
+  const aucScore = rocAuc(scored, (s) => s.score);
+  const aucSim = rocAuc(scored, (s) => s.sim);
+  const dScore = cohensD(
+    good.map((s) => s.score),
+    bad.map((s) => s.score),
+  );
+  const mg = margins(scored);
+  const marginVals = mg.map((m) => m.margin).sort((a, b) => a - b);
+  const medianMargin = marginVals[Math.floor(marginVals.length / 2)] ?? 0;
+  console.log('\nseparability (threshold-free — what a calibration fix moves):');
+  console.log(`  ROC-AUC base score = ${fmt(aucScore)}   (0.5 = coin flip, 1.0 = perfect)`);
+  console.log(`  ROC-AUC raw sim    = ${fmt(aucSim)}`);
+  console.log(`  Cohen's d (score)  = ${dScore.toFixed(3)}   (0.2 small · 0.5 medium · 0.8 large)`);
+  console.log('\nrank-1 margin, top1−top2 (the §1.1 spec_margin δ):');
+  console.log(
+    `  mean=${mean(marginVals).toFixed(4)}  median=${medianMargin.toFixed(4)}  min=${min(marginVals).toFixed(4)}  max=${max(marginVals).toFixed(4)}`,
+  );
+
   console.log('\noperating points (base-score space):');
   console.log(`  τ_hi @90% precision = ${fmt(tauHi)}`);
   console.log(`  τ_lo @70% precision = ${fmt(tauLo)}`);
@@ -190,6 +265,11 @@ async function main(): Promise<void> {
 }
 
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const variance = (xs: number[]): number => {
+  if (xs.length < 2) return 0;
+  const m = mean(xs);
+  return xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1); // sample variance
+};
 const min = (xs: number[]): number => (xs.length ? Math.min(...xs) : 0);
 const max = (xs: number[]): number => (xs.length ? Math.max(...xs) : 0);
 const fmt = (x: number | null): string => (x == null ? 'n/a (never reaches target)' : x.toFixed(3));
