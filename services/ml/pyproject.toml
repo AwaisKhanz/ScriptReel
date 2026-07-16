@@ -6,6 +6,8 @@ requires-python = "==3.12.*"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.34",
+  # torch/torchvision come from the cu128 index on non-Apple — see [tool.uv.sources]. Plain PyPI
+  # resolves to a CPU-ONLY wheel on Windows/Linux, which silently runs SigLIP + DINOv2 on the CPU.
   "torch>=2.5",
   "torchvision>=0.20", # DINOv2 AutoImageProcessor (doc 25 §6) needs it
   "transformers>=4.48,<5", # <5: SigLIP2/DINOv2 code targets 4.x; mlx-vlm would otherwise pull 5.x
@@ -26,6 +28,11 @@ dependencies = [
   # --- Cross-platform models (torch / onnx — run everywhere) -------------------------------
   "kokoro>=0.9",
   "misaki[en]>=0.9",
+  # misaki[en] (Kokoro's English G2P) needs spaCy's en_core_web_sm. It isn't on PyPI — it ships as
+  # a wheel from the spacy-models GitHub release, so no package can depend on it and it was
+  # previously installed ad-hoc. DECLARE it: an undeclared install is removed by the next
+  # `uv sync`, which silently breaks English TTS (exactly what happened adding the cu128 index).
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   "soundfile>=0.12",
   "pillow>=11",
   "pytesseract>=0.3.13",
@@ -40,6 +47,22 @@ dependencies = [
 dev = [
   "pytest>=8",
 ]
+
+# Blackwell (RTX 50, sm_120) needs a CUDA-12.8 torch build; pull torch + torchvision from PyTorch's
+# cu128 index on non-Apple, exactly as services/gen already does. Without this, uv resolves them
+# from PyPI, which on Windows/Linux is the CPU-ONLY wheel: torch.cuda.is_available() is False and
+# the whole vision stack (SigLIP scoring, DINOv2 identity) runs on the CPU while the GPU idles —
+# silently, with no error. Apple Silicon keeps its PyPI arm64 wheel (that one carries MPS), so the
+# marker must exclude darwin. torchvision is pinned to the same index because its compiled ops must
+# match torch's build.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 
 [tool.uv]
 package = false
