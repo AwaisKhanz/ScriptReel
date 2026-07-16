@@ -1,4 +1,5 @@
 import {
+  FRAME_SEC,
   KENBURNS_PRESCALE,
   LOOP_MAX,
   NORMALIZE_BITRATE,
@@ -56,14 +57,32 @@ export interface NormalizeVideoParams {
 export async function normalizeVideo(p: NormalizeVideoParams): Promise<void> {
   const ENCODE = await encodeArgs();
   const L = p.lengthSec;
-  const vf = coverVf(p.width, p.height);
-  const t = L.toFixed(3);
+  // Ask for an exact FRAME COUNT, and clone the last frame if the source runs dry.
+  //
+  // `-t <seconds>` is not a length guarantee, and neither is `-frames:v` alone. A container's
+  // reported duration rarely lands on the 30 fps grid (a real Pexels file probes at 14.639625 s),
+  // so `sourceDurationSec - L` can place the window a hair past the last decodable frame and the
+  // output lands one frame short. Measured on the real cache: 2 of 3 assets lost a frame when the
+  // in-point clamped to the end; the one that survived had a frame-aligned duration (25.240). One
+  // frame is inside the caller's tolerance, but a montage normalises each segment separately, so a
+  // 2-segment beat loses 2 frames — 0.066 s — and fetch's `clip N duration < required` invariant
+  // (rightly) rejects it. Narration is the clock: the clip must cover it exactly, not nearly.
+  //
+  // -frames:v pins the count; tpad supplies material if the stream ends early (it costs nothing
+  // when it doesn't — tpad only emits after EOF). Both are required: -frames:v alone still yields
+  // 120/121 because the frames genuinely are not there. Verified on the real cache, all branches.
+  const frames = Math.max(1, Math.round(L / FRAME_SEC));
+  // Cloned tail allowance. Generous on purpose — -frames:v is what actually bounds the output, so
+  // this only has to be "enough", and L always is.
+  const guard = `tpad=stop_mode=clone:stop_duration=${Math.max(1, L).toFixed(3)}`;
+  const vf = `${coverVf(p.width, p.height)},${guard}`;
+  const count = ['-frames:v', String(frames)];
 
   if (p.sourceDurationSec >= L + 1e-3) {
     // Enough footage: seek so the beat's content is centered, backed up by the head pad.
     const startAt = clamp(p.inPointSec - p.headPadSec, 0, p.sourceDurationSec - L);
     await ff(
-      ['-ss', startAt.toFixed(3), '-i', p.src, '-t', t, '-vf', vf, '-an', ...ENCODE, p.outPath],
+      ['-ss', startAt.toFixed(3), '-i', p.src, ...count, '-vf', vf, '-an', ...ENCODE, p.outPath],
       p.outPath,
       p.signal,
     );
@@ -78,8 +97,7 @@ export async function normalizeVideo(p: NormalizeVideoParams): Promise<void> {
         String(loops - 1),
         '-i',
         p.src,
-        '-t',
-        t,
+        ...count,
         '-vf',
         vf,
         '-an',
@@ -91,10 +109,9 @@ export async function normalizeVideo(p: NormalizeVideoParams): Promise<void> {
     );
     return;
   }
-  // Looping would repeat too often → play once, then hold the last frame (doc 13).
-  const pad = Math.max(0, L - p.sourceDurationSec).toFixed(3);
-  const heldVf = `${coverVf(p.width, p.height)},tpad=stop_mode=clone:stop_duration=${pad}`;
-  await ff(['-i', p.src, '-t', t, '-vf', heldVf, '-an', ...ENCODE, p.outPath], p.outPath, p.signal);
+  // Looping would repeat too often → play once, then hold the last frame (doc 13). The tpad guard
+  // above already does the holding; -frames:v decides where it stops.
+  await ff(['-i', p.src, ...count, '-vf', vf, '-an', ...ENCODE, p.outPath], p.outPath, p.signal);
 }
 
 // Anchor corner (fraction of the pan range) per Ken Burns direction (doc 13).
