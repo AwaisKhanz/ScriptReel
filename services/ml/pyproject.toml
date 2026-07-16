@@ -46,6 +46,15 @@ dependencies = [
 [dependency-groups]
 dev = [
   "pytest>=8",
+  # Florence-2's remote code imports these directly, and `trust_remote_code` cannot declare its own
+  # dependencies — so without them `scripts/caption_fixture.py` dies at load with an ImportError.
+  # Declared for the same reason as en-core-web-sm above: they were installed ad-hoc, and the next
+  # `uv sync` would have silently removed them, breaking a committed script.
+  # `dev`, not a runtime dependency: the sidecar (app/*) never imports Florence-2 — only the §3.9
+  # caption experiment does, and that measured null as a ranker (see the eval). If the derived
+  # caption-as-calibration-gate idea ever earns its way in, these graduate to `dependencies`.
+  "einops>=0.8",
+  "timm>=1.0",
 ]
 
 # Blackwell (RTX 50, sm_120) needs a CUDA-12.8 torch build; pull torch + torchvision from PyTorch's
