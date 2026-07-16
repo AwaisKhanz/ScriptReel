@@ -3,31 +3,32 @@ import { resolve } from 'node:path';
 import { rootDir } from '@scriptreel/config';
 import { z } from 'zod';
 
-// pnpm eval:kappa — measure whether this fixture's MODEL labels track a HUMAN.
+// pnpm eval:kappa — is this fixture's label set valid?
 //
-// Why this exists, and why it outranks every remaining idea in the redesign plan:
 // 192 of the 222 labels in fixtures/eval/labels.jsonl were judged by a vision model. Four levers
-// (§1.1 contrastive, §1.2 score terms, §1.3 SO400M, §3.9 caption+RRF) were declared null against
-// that instrument, τ was re-calibrated against it, and the one significant result yet found (the
-// §3.9 caption axis, pooled ΔAUC +0.076) rests on it too. If the model labels track a human, all of
-// that stands. If they don't, EVERY ONE of those decisions is an artifact and must be re-run.
-// Nobody has ever checked. That is a five-decision swing for an afternoon of clicking.
+// (§1.1, §1.2, §1.3, §3.9) were called null against them, τ was calibrated to 0.360 against them,
+// and the one significant result (§3.9's caption axis) rests on them. matching.ts already concedes
+// an AUC against those labels scores agreement with a model's opinion, not a human's.
 //
-// This is the one measurement an AI cannot perform for you. The question IS "does a model agree
-// with a human" — so a model labelling the sample answers a different question (model vs model),
-// which is exactly the doubt we are trying to remove. Circularity is the whole hazard here.
+//   pnpm eval:kappa          → fixtures/eval/kappa.html — 50 pairs, blind, seeded
+//   pnpm eval:kappa --score  → confusion matrix + Cohen's κ vs fixtures/eval/kappa-human.jsonl
 //
-//   pnpm eval:kappa            → writes fixtures/eval/kappa.html (blind) + kappa-sample.jsonl
-//   pnpm eval:kappa --score    → reads fixtures/eval/kappa-human.jsonl, reports κ and the verdict
+// A model cannot stand in for the human here: the question IS whether model and human agree, so a
+// model-labelled sample answers model-vs-model.
 //
-// PRE-REGISTERED — decided BEFORE any label is collected, so the result cannot be rationalised
-// after the fact (the failure that produced the phantom §1.1 +0.040 at n=30):
-//   κ ≥ 0.60  → substantial agreement. The four nulls STAND as real evidence, the plan is finished
-//               as a quality program, and the §3.9 caption-gate finding is worth building.
-//   0.30–0.60 → moderate/fair. The instrument is too noisy to have DECLARED those nulls; effects
-//               smaller than the noise floor were unresolvable. Re-run the levers on human labels.
-//   κ ≤ 0.30  → poor. The fixture measures the vision model's taste, not quality. Every decision
-//               taken against it — including τ = 0.360 — is void and must be re-derived.
+// PRE-REGISTERED (fixed before any label is collected, so the call cannot drift after the fact):
+//   κ ≥ 0.60  → the four nulls stand as evidence; build the §3.9 caption gate.
+//   0.30–0.60 → re-run the levers on human labels before writing any of them off.
+//   κ ≤ 0.30  → the fixture measures the model's taste; every decision against it, τ=0.360
+//               included, is void.
+//
+// PRELIMINARY, n=30 (2026-07-16): the 30 pre-existing human labels were re-judged blind by two
+// independent vision raters. κ(model,human) = +0.416; κ(raterA,raterB) = +1.000. The model is
+// perfectly reliable and only moderately valid — not noisy, systematically different. Bias does not
+// average out the way noise does. Direction: 8 pairs the model calls bad the human calls good vs 1
+// the other way (the model wants literal subject presence; the human accepted thematic fit).
+// Lands in the middle band, but n=30 on the servable g1–g3 beats cannot say WHO is right — only
+// that the raters mean different things by "good". That is what the 50-pair run settles.
 const SAMPLE_TARGET = 50;
 
 const LabelSchema = z.object({
