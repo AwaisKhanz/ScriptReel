@@ -18,6 +18,11 @@ data/
 # SPEC (pool-spec.jsonl) and the finished verdicts (labels.jsonl) are tracked.
 fixtures/eval/pool.jsonl
 fixtures/eval/label.html
+# Same rule for `pnpm eval:kappa`: the page and its sample are scratch for one labelling session and
+# regenerate deterministically from labels.jsonl + the fixed seed. The finished HUMAN verdicts
+# (kappa-human.jsonl) are NOT ignored — they are the scarcest artifact in this repo.
+fixtures/eval/kappa.html
+fixtures/eval/kappa-sample.jsonl
 .env
 .env.local
 
