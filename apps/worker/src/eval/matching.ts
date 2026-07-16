@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
-import { rootDir } from '@scriptreel/config';
+import { env, rootDir } from '@scriptreel/config';
 import {
   baseScore,
   type CandidateFeatures,
@@ -44,6 +44,45 @@ interface Scored extends Label {
   score: number;
   sim: number;
   spec: number; // contrastive-normalised sim (redesign §1.1) — the Phase 1 candidate axis
+}
+
+// A recorded run: every pair's scores plus the encoder that produced them. Comparing two SigLIP
+// models is a PAIRED question ("on these same pairs, is B better than A?"), but the sidecar only
+// ever has one model resident — so the two arms cannot exist in one process. Dump arm A, then run
+// arm B with --baseline and join on (beat, thumbPath) to recover the pairing. Without this, model
+// A/Bs fall back to comparing two independent AUCs against the ±0.035 single-AUC s.e., which is
+// far too blunt to resolve the deltas that matter here.
+const RunSchema = z.object({
+  model: z.string(),
+  pairs: z.array(
+    z.object({
+      beat: z.string(),
+      thumbPath: z.string(),
+      label: z.enum(['good', 'bad']),
+      sim: z.number(),
+      spec: z.number(),
+      score: z.number(),
+    }),
+  ),
+});
+type Run = z.infer<typeof RunSchema>;
+
+function argValue(flag: string): string | null {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? (process.argv[i + 1] ?? null) : null;
+}
+
+// Ask the sidecar which encoder is loaded — never assert it from our own env, which does not even
+// carry SIGLIP_MODEL (that is the sidecar's process env). A mislabelled dump is worse than none.
+async function sidecarModel(): Promise<string> {
+  try {
+    const res = await fetch(`${env.SIDECAR_URL}/health`, { signal: AbortSignal.timeout(10_000) });
+    const j: unknown = await res.json();
+    const v = (j as { versions?: Record<string, string> }).versions;
+    return v?.siglipModel ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 function labelsPath(): string {
@@ -157,6 +196,88 @@ function bootstrapDeltaAuc(
   const lo = deltas[Math.floor(deltas.length * 0.025)] ?? 0;
   const hi = deltas[Math.floor(deltas.length * 0.975)] ?? 0;
   return { delta: b0 - a0, lo, hi, significant: !(lo <= 0 && hi >= 0) };
+}
+
+// Mean WITHIN-BEAT AUC — averaged over beats that contain both a good and a bad candidate.
+//
+// This is the diagnostic the pooled AUC cannot give. Pooled AUC ranks every candidate against
+// every other, so it compares a "kneading dough" candidate with a "Neil Armstrong" one — different
+// questions — and therefore measures cross-beat COMPARABILITY as much as ranking skill. SigLIP's
+// raw cosine drifts with prompt phrasing/length, so that confound is large and is exactly what a
+// pooled number hides.
+//
+// Within-beat AUC asks only "for THIS beat, does the axis put its good candidates above its bad
+// ones?" — which is the question the selector actually answers. Split the two:
+//   within HIGH + pooled LOW  ⇒ ranking is fine; the scores just aren't comparable across beats
+//                               ⇒ fix = per-beat normalisation / margin, NOT a bigger encoder.
+//   within LOW                ⇒ the encoder genuinely cannot tell these apart ⇒ a model problem.
+// Beats that are all-good or all-bad have no within-beat AUC (undefined) and are skipped — the
+// h* beats therefore contribute to `pooled` only.
+function withinBeatAuc(
+  scored: Scored[],
+  axisOf: (s: Scored) => number,
+): { mean: number; beats: number } | null {
+  const aucs: number[] = [];
+  for (const beat of [...new Set(scored.map((s) => s.beat))]) {
+    const group = scored.filter((s) => s.beat === beat);
+    if (!group.some((s) => s.label === 'good') || !group.some((s) => s.label === 'bad')) continue;
+    const a = rocAuc(group, axisOf);
+    if (a != null) aucs.push(a);
+  }
+  return aucs.length > 0 ? { mean: mean(aucs), beats: aucs.length } : null;
+}
+
+// Paired CLUSTER bootstrap for the within-beat ΔAUC: resamples BEATS (not candidates) with
+// replacement, because the beat is the independent unit — candidates inside one beat share a
+// description and are correlated, so resampling them individually would understate the variance
+// and manufacture significance.
+//
+// This is the correct test for "does axis B rank better than A inside a beat?", which is the only
+// ranking the selector ever performs. The pooled test answers a different question (cross-beat
+// comparability) and can hide a real within-beat effect entirely.
+function bootstrapWithinBeatDelta(
+  scored: Scored[],
+  axisA: (s: Scored) => number,
+  axisB: (s: Scored) => number,
+  reps = 2000,
+): { delta: number; lo: number; hi: number; significant: boolean; beats: number } | null {
+  const mixed = [...new Set(scored.map((s) => s.beat))].filter((b) => {
+    const g = scored.filter((s) => s.beat === b);
+    return g.some((s) => s.label === 'good') && g.some((s) => s.label === 'bad');
+  });
+  if (mixed.length < 3) return null;
+  const byBeat = new Map(mixed.map((b) => [b, scored.filter((s) => s.beat === b)]));
+  const meanDelta = (bs: string[]): number => {
+    const ds: number[] = [];
+    for (const b of bs) {
+      const g = byBeat.get(b);
+      if (!g) continue;
+      const a = rocAuc(g, axisA);
+      const bb = rocAuc(g, axisB);
+      if (a != null && bb != null) ds.push(bb - a);
+    }
+    return mean(ds);
+  };
+  const observed = meanDelta(mixed);
+  let seed = 424242;
+  const rnd = (): number => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 0xffffffff;
+  };
+  const deltas: number[] = [];
+  for (let i = 0; i < reps; i += 1) {
+    const sample = Array.from(
+      { length: mixed.length },
+      () => mixed[Math.floor(rnd() * mixed.length)] as string,
+    );
+    deltas.push(meanDelta(sample));
+  }
+  deltas.sort((x, y) => x - y);
+  const lo = deltas[Math.floor(deltas.length * 0.025)] ?? 0;
+  const hi = deltas[Math.floor(deltas.length * 0.975)] ?? 0;
+  return { delta: observed, lo, hi, significant: !(lo <= 0 && hi >= 0), beats: mixed.length };
 }
 
 // Standardised mean difference. Quantifies the core bug: a good/bad gap of ~0.03 against
@@ -321,6 +442,20 @@ async function main(): Promise<void> {
   console.log('\nseparability (threshold-free — what a calibration fix moves):');
   console.log(`  ROC-AUC base score = ${fmt(aucScore)}   (0.5 = coin flip, 1.0 = perfect)`);
   console.log(`  ROC-AUC raw sim    = ${fmt(aucSim)}`);
+  // Pooled vs within-beat: the diagnostic that says whether a low pooled number means "can't
+  // rank" or merely "scores aren't comparable across beats" (see withinBeatAuc).
+  const wSim = withinBeatAuc(scored, (s) => s.sim);
+  const wSpec = withinBeatAuc(scored, (s) => s.spec);
+  const wScore = withinBeatAuc(scored, (s) => s.score);
+  console.log(
+    `  within-beat AUC    = sim ${wSim ? wSim.mean.toFixed(3) : 'n/a'} · spec ${wSpec ? wSpec.mean.toFixed(3) : 'n/a'} · score ${wScore ? wScore.mean.toFixed(3) : 'n/a'}   (mean over ${wSim?.beats ?? 0} mixed beats)`,
+  );
+  if (wSim && aucSim != null) {
+    const gap = wSim.mean - aucSim;
+    console.log(
+      `  within − pooled    = ${gap >= 0 ? '+' : ''}${gap.toFixed(3)}${gap > 0.05 ? '  → ranks well WITHIN a beat; the loss is cross-beat comparability (per-beat normalisation, not a bigger model)' : gap < -0.05 ? '  → worse within a beat than pooled — beats differ in difficulty' : '  → no material gap'}`,
+    );
+  }
   console.log(`  Cohen's d (score)  = ${dScore.toFixed(3)}   (0.2 small · 0.5 medium · 0.8 large)`);
   console.log('\nrank-1 margin, top1−top2 (the §1.1 spec_margin δ):');
   console.log(
@@ -388,7 +523,7 @@ async function main(): Promise<void> {
               : 'REAL regression'
             : 'no effect (CI spans 0)'
         }`;
-  console.log('\n── paired bootstrap ΔAUC (2000 resamples, same pairs both axes) ──');
+  console.log('\n── POOLED paired bootstrap ΔAUC (2000 resamples) — cross-beat comparability ──');
   console.log(
     `  spec − sim   (§1.1 contrastive)  = ${call(
       bootstrapDeltaAuc(
@@ -408,12 +543,118 @@ async function main(): Promise<void> {
     )}`,
   );
 
+  // The decision that actually matters: the selector only ever ranks WITHIN a beat, so a pooled
+  // null can hide a real within-beat win. Cluster-bootstrapped over beats (the independent unit).
+  const wCall = (
+    r: { delta: number; lo: number; hi: number; significant: boolean; beats: number } | null,
+  ): string =>
+    r == null
+      ? 'n/a'
+      : `${r.delta >= 0 ? '+' : ''}${r.delta.toFixed(4)}  95% CI [${r.lo >= 0 ? '+' : ''}${r.lo.toFixed(4)}, ${r.hi >= 0 ? '+' : ''}${r.hi.toFixed(4)}]  (${r.beats} beats)  → ${
+          r.significant
+            ? r.delta > 0
+              ? 'REAL improvement'
+              : 'REAL regression'
+            : 'no effect (CI spans 0)'
+        }`;
+  console.log('\n── WITHIN-BEAT cluster bootstrap ΔAUC — the ranking the selector performs ──');
+  console.log(
+    `  spec − sim   (§1.1 contrastive)  = ${wCall(
+      bootstrapWithinBeatDelta(
+        scored,
+        (s) => s.sim,
+        (s) => s.spec,
+      ),
+    )}`,
+  );
+  console.log(
+    `  base − sim   (§1.2 extra terms)  = ${wCall(
+      bootstrapWithinBeatDelta(
+        scored,
+        (s) => s.sim,
+        (s) => s.score,
+      ),
+    )}`,
+  );
+
   console.log('\noperating points (base-score space):');
   console.log(`  τ_hi @90% precision = ${fmt(tauHi)}`);
   console.log(`  τ_lo @70% precision = ${fmt(tauLo)}`);
   console.log('\ncross-check sim floor (raw-sim space, doc 23 §6):');
   console.log(`  sim @90% precision  = ${fmt(simFloorHi)}   ← CROSSCHECK_SIM_FLOOR candidate`);
   console.log(`  sim @80% precision  = ${fmt(simFloorLo)}`);
+  // ---- Model A/B: record this run, and/or paired-compare it against a recorded baseline. ----
+  const model = await sidecarModel();
+  const dumpPath = argValue('--dump');
+  if (dumpPath) {
+    const run: Run = {
+      model,
+      pairs: scored.map((s) => ({
+        beat: s.beat,
+        thumbPath: s.thumbPath,
+        label: s.label,
+        sim: s.sim,
+        spec: s.spec,
+        score: s.score,
+      })),
+    };
+    await writeFile(resolve(rootDir, dumpPath), JSON.stringify(run), 'utf8');
+    console.log(`\ndumped ${run.pairs.length} pairs for model "${model}" → ${dumpPath}`);
+  }
+
+  const baselinePath = argValue('--baseline');
+  if (baselinePath) {
+    const base = RunSchema.parse(
+      JSON.parse(await readFile(resolve(rootDir, baselinePath), 'utf8')),
+    );
+    const key = (p: { beat: string; thumbPath: string }): string => `${p.beat}|${p.thumbPath}`;
+    const baseByKey = new Map(base.pairs.map((p) => [key(p), p]));
+    // Join so both arms are the SAME pairs; anything unmatched is dropped rather than guessed.
+    const joined = scored.filter((s) => baseByKey.has(key(s)));
+    console.log(`\n── model A/B (paired on ${joined.length}/${scored.length} joined pairs) ──`);
+    console.log(`  A (baseline) = ${base.model}`);
+    console.log(`  B (current)  = ${model}`);
+    if (base.model === model) {
+      console.log('  ⚠ both arms are the SAME model — this compares nothing.');
+    }
+    if (joined.length < scored.length) {
+      console.log(
+        `  ⚠ ${scored.length - joined.length} pairs missing from the baseline — dropped.`,
+      );
+    }
+    // Re-key each axis onto the joined rows: axisA reads the baseline's value for that same pair.
+    const withBase = joined.map((s) => ({
+      ...s,
+      _b: baseByKey.get(key(s)) as Run['pairs'][number],
+    }));
+    const rep = (
+      name: string,
+      a: (s: (typeof withBase)[number]) => number,
+      b: (s: (typeof withBase)[number]) => number,
+    ): void => {
+      const aucA = rocAuc(withBase as unknown as Scored[], a as unknown as (s: Scored) => number);
+      const aucB = rocAuc(withBase as unknown as Scored[], b as unknown as (s: Scored) => number);
+      const r = bootstrapDeltaAuc(
+        withBase as unknown as Scored[],
+        a as unknown as (s: Scored) => number,
+        b as unknown as (s: Scored) => number,
+      );
+      console.log(
+        `  ${name.padEnd(6)} AUC ${fmt(aucA)} → ${fmt(aucB)}   Δ=${r ? `${r.delta >= 0 ? '+' : ''}${r.delta.toFixed(4)} CI [${r.lo.toFixed(4)}, ${r.hi.toFixed(4)}] → ${r.significant ? (r.delta > 0 ? 'REAL improvement' : 'REAL regression') : 'no effect (CI spans 0)'}` : 'n/a'}`,
+      );
+    };
+    rep(
+      'sim',
+      (s) => s._b.sim,
+      (s) => s.sim,
+    );
+    rep(
+      'score',
+      (s) => s._b.score,
+      (s) => s.score,
+    );
+  }
+
   console.log('\nper-beat top-1:');
   console.log(perBeat.join('\n'));
   console.log(

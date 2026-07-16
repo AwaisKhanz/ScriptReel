@@ -183,7 +183,16 @@ def health() -> HealthResponse:
             "dinov2": "ready" if dino.installed() else "cold",
             "vlm": "ready" if vlm.available() else "cold",
         },
-        versions={"python": platform.python_version(), "hf_home": os.environ.get("HF_HOME", "")},
+        versions={
+            "python": platform.python_version(),
+            "hf_home": os.environ.get("HF_HOME", ""),
+            # Which encoder is actually loaded. Embeddings from different SigLIP models are not
+            # comparable, so any recorded score MUST carry the model that produced it — otherwise
+            # a calibration run can be silently mislabelled and its τ applied to the wrong model
+            # (CLAUDE.md: τ are model-specific). Read by `pnpm eval:matching --dump`.
+            "siglipModel": embed.MODEL_ID,
+            "dinoModel": dino.MODEL_ID,
+        },
     )
 
 
