@@ -44,7 +44,16 @@ interface Scored extends Label {
   score: number;
   sim: number;
   spec: number; // contrastive-normalised sim (redesign §1.1) — the Phase 1 candidate axis
+  // §3.9 second ranker: cos(bge(visualDescription), bge(florence2_caption)). null when the fixture
+  // has no caption for this thumb (produced out-of-process — see services/ml/scripts/caption_sim.py).
+  captionSim: number | null;
+  rrf: number; // reciprocal-rank fusion of the sim and caption rankings, within the beat
 }
+
+// RRF's k. 60 is the constant from Cormack et al. 2009, where RRF was introduced — kept at the
+// literature default deliberately: tuning k on the same 30-beat fixture used to judge the method
+// would be fitting the fusion to its own test set, which is how §1.1 got its phantom +0.040.
+const RRF_K = 60;
 
 // A recorded run: every pair's scores plus the encoder that produced them. Comparing two SigLIP
 // models is a PAIRED question ("on these same pairs, is B better than A?"), but the sidecar only
@@ -105,6 +114,40 @@ async function loadLabels(): Promise<Label[]> {
 // Precision-at-threshold curve: precision(τ) = #good with value≥τ / #all with value≥τ.
 // `axisOf` picks the axis — base score (τ_hi/τ_lo) or raw sim (cross-check floor, 23d).
 // τ_hi = lowest τ reaching 90% precision, τ_lo = 70% (doc 09 §step 3, doc 21).
+// §3.9 caption sims, keyed `${beat}|${thumbPath}`. Computed out-of-process because the axis needs a
+// text<->text encoder (BGE) that the sidecar has no reason to host unless this experiment wins —
+// see services/ml/scripts/caption_sim.py. Absent file = axis simply not reported.
+async function loadCaptionSims(): Promise<Map<string, number> | null> {
+  const p = resolve(rootDir, 'fixtures/eval/.caption-sim.json');
+  let raw: string;
+  try {
+    raw = await readFile(p, 'utf8');
+  } catch {
+    return null;
+  }
+  const parsed = z.record(z.string(), z.number()).parse(JSON.parse(raw));
+  return new Map(Object.entries(parsed));
+}
+
+// Reciprocal-rank fusion (Cormack et al. 2009) of the two rankers, computed WITHIN each beat.
+// RRF consumes ranks, and ranks only exist relative to a candidate pool — so the fused score is
+// meaningful within a beat and meaningless across beats. That is not a limitation to work around:
+// the selector only ever ranks within a beat, so this matches what production actually does. It
+// does mean the pooled AUC of `rrf` is uninterpretable, and only the within-beat test counts.
+function fuseRrf(scored: Scored[]): void {
+  for (const beat of new Set(scored.map((s) => s.beat))) {
+    const group = scored.filter((s) => s.beat === beat);
+    if (group.some((s) => s.captionSim == null)) continue; // partial captions → leave rrf at sim-only
+    const bySim = [...group].sort((a, b) => b.sim - a.sim);
+    const byCap = [...group].sort((a, b) => (b.captionSim ?? 0) - (a.captionSim ?? 0));
+    const rankSim = new Map(bySim.map((s, i) => [s, i + 1]));
+    const rankCap = new Map(byCap.map((s, i) => [s, i + 1]));
+    for (const s of group) {
+      s.rrf = 1 / (RRF_K + (rankSim.get(s) ?? 0)) + 1 / (RRF_K + (rankCap.get(s) ?? 0));
+    }
+  }
+}
+
 function operatingPoint(
   scored: Scored[],
   axisOf: (s: Scored) => number,
@@ -355,6 +398,7 @@ async function main(): Promise<void> {
     });
   }
 
+  const captionSims = await loadCaptionSims();
   const scored: Scored[] = labels.map((l) => {
     const descEmb = descByText.get(l.beatDescription) ?? [];
     const abs = isAbsolute(l.thumbPath) ? l.thumbPath : resolve(rootDir, l.thumbPath);
@@ -369,8 +413,16 @@ async function main(): Promise<void> {
       durationSec: l.duration,
       fps: null,
     };
-    return { ...l, sim, spec, score: baseScore(sim, features, CTX, NOMINAL_BEAT_SEC).base };
+    return {
+      ...l,
+      sim,
+      spec,
+      captionSim: captionSims?.get(`${l.beat}|${l.thumbPath}`) ?? null,
+      rrf: 0,
+      score: baseScore(sim, features, CTX, NOMINAL_BEAT_SEC).base,
+    };
   });
+  fuseRrf(scored);
 
   const good = scored.filter((s) => s.label === 'good');
   const bad = scored.filter((s) => s.label === 'bad');
@@ -576,6 +628,69 @@ async function main(): Promise<void> {
       ),
     )}`,
   );
+
+  // ---- §3.9: a second, structurally different ranker, fused by RRF ----
+  // The premise: SigLIP is near bag-of-words on relations, so "bee on a PURPLE flower" and "bee on
+  // an ORANGE flower" collapse toward the same embedding. A caption states the binding in words, and
+  // a text encoder can weight it. Fused rather than substituted — RRF needs no shared scale and lets
+  // a ranker that is merely uncorrelated still add signal.
+  const captioned = scored.filter((s) => s.captionSim != null);
+  if (captioned.length === 0) {
+    console.log('\n── §3.9 caption ranker: no .caption-sim.json (see services/ml/scripts) ──');
+  } else {
+    const fullBeats = [...new Set(captioned.map((s) => s.beat))].filter((b) =>
+      scored.filter((s) => s.beat === b).every((s) => s.captionSim != null),
+    );
+    const usable = scored.filter((s) => fullBeats.includes(s.beat));
+    console.log('\n── §3.9 caption ranker: cos(bge(desc), bge(florence2 caption)), RRF-fused ──');
+    console.log(
+      `  coverage           = ${captioned.length}/${scored.length} pairs · ${fullBeats.length} fully-captioned beats (only these are fused)`,
+    );
+    console.log(`  ROC-AUC raw sim    = ${fmt(rocAuc(usable, (s) => s.sim))}`);
+    console.log(
+      `  ROC-AUC captionSim = ${fmt(rocAuc(usable, (s) => s.captionSim ?? 0))}   ${verdict(
+        rocAuc(usable, (s) => s.sim),
+        rocAuc(usable, (s) => s.captionSim ?? 0),
+      )}`,
+    );
+    const wCap = withinBeatAuc(usable, (s) => s.captionSim ?? 0);
+    const wRrf = withinBeatAuc(usable, (s) => s.rrf);
+    const wSimU = withinBeatAuc(usable, (s) => s.sim);
+    console.log(
+      `  within-beat AUC    = sim ${wSimU ? wSimU.mean.toFixed(3) : 'n/a'} · caption ${wCap ? wCap.mean.toFixed(3) : 'n/a'} · RRF ${wRrf ? wRrf.mean.toFixed(3) : 'n/a'}`,
+    );
+    // The pooled ΔAUC for RRF is deliberately absent: RRF scores are per-beat ranks, so pooling them
+    // across beats compares numbers that were never on one scale. Reporting it would invite exactly
+    // the misreading this harness exists to prevent.
+    console.log('  paired tests (the caption axis vs the shipped one, same pairs):');
+    console.log(
+      `    caption − sim  POOLED = ${call(
+        bootstrapDeltaAuc(
+          usable,
+          (s) => s.sim,
+          (s) => s.captionSim ?? 0,
+        ),
+      )}`,
+    );
+    console.log(
+      `    caption − sim  WITHIN = ${wCall(
+        bootstrapWithinBeatDelta(
+          usable,
+          (s) => s.sim,
+          (s) => s.captionSim ?? 0,
+        ),
+      )}`,
+    );
+    console.log(
+      `    RRF     − sim  WITHIN = ${wCall(
+        bootstrapWithinBeatDelta(
+          usable,
+          (s) => s.sim,
+          (s) => s.rrf,
+        ),
+      )}   ← THE §3.9 DECISION`,
+    );
+  }
 
   console.log('\noperating points (base-score space):');
   console.log(`  τ_hi @90% precision = ${fmt(tauHi)}`);
