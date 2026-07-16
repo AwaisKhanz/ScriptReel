@@ -8,7 +8,7 @@ import {
 } from '@scriptreel/core';
 import { execa } from 'execa';
 import { FFMPEG_BIN } from './bin';
-import { getEncodeArgs } from './encoder';
+import { demoteToSoftware, getEncodeArgs, isEncoderOpenFailure } from './encoder';
 
 // Pass A per-beat normalization (doc 13): every source becomes a uniform W×H, 30 fps,
 // yuv420p, SAR 1, silent clip of length L_i. Video is scaled/cropped/looped/held;
@@ -19,14 +19,46 @@ import { getEncodeArgs } from './encoder';
 // start; the probe runs at most once (cached), so repeat calls are effectively free.
 const encodeArgs = (): Promise<string[]> => getEncodeArgs(NORMALIZE_BITRATE);
 
+const run = (args: string[], signal?: AbortSignal): Promise<unknown> =>
+  execa(FFMPEG_BIN, ['-y', '-hide_banner', '-loglevel', 'warning', ...args], {
+    ...(signal ? { cancelSignal: signal } : {}),
+  });
+
+// Swap the encoder args for freshly-resolved ones. Every call site builds `[…, '-an', ...ENCODE,
+// outPath]`, so the encoder block runs from the first `-c:v` up to the trailing output path.
+async function withCurrentEncoder(args: string[]): Promise<string[]> {
+  const i = args.indexOf('-c:v');
+  if (i < 0) return args;
+  const out = args[args.length - 1] as string;
+  return [...args.slice(0, i), ...(await encodeArgs()), out];
+}
+
 async function ff(args: string[], outPath: string, signal?: AbortSignal): Promise<void> {
   try {
-    await execa(FFMPEG_BIN, ['-y', '-hide_banner', '-loglevel', 'warning', ...args], {
-      ...(signal ? { cancelSignal: signal } : {}),
-    });
+    await run(args, signal);
   } catch (cause) {
     if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'fetch', 'cancelled');
     const stderr = cause instanceof Error && 'stderr' in cause ? String(cause.stderr) : '';
+    // The GPU encoder passed the startup probe but couldn't open now — almost always because
+    // something else (Ollama's vision model, the sidecar) is holding the VRAM it needs for a CUDA
+    // context. Demote to libx264 and retry this beat rather than fail the render: invariant 7, and
+    // the exact case the startup probe cannot see because it answers the question too early.
+    if (isEncoderOpenFailure(stderr) && demoteToSoftware('GPU encoder unavailable under load')) {
+      try {
+        await run(await withCurrentEncoder(args), signal);
+        return;
+      } catch (retryCause) {
+        if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'fetch', 'cancelled');
+        const retryErr =
+          retryCause instanceof Error && 'stderr' in retryCause ? String(retryCause.stderr) : '';
+        throw new PipelineError(
+          'E_NORMALIZE',
+          'fetch',
+          `normalize failed → ${outPath} (after demoting to libx264)\n${retryErr.split('\n').slice(-40).join('\n')}`,
+          { cause: retryCause },
+        );
+      }
+    }
     const tail = stderr.split('\n').slice(-40).join('\n');
     throw new PipelineError('E_NORMALIZE', 'fetch', `normalize failed → ${outPath}\n${tail}`, {
       cause,

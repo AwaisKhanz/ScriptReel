@@ -91,6 +91,35 @@ export async function getEncodeArgs(bitrate: string): Promise<string[]> {
   return argsFor(await resolveEncoder(), bitrate);
 }
 
+// Does this ffmpeg stderr say the encoder could not OPEN (as opposed to a bad file, bad args, …)?
+// A hardware encoder can pass the startup probe and still fail later: NVENC needs VRAM to create a
+// CUDA context, and on a 16 GB card the sidecar (SigLIP + DINOv2 + InsightFace) plus Ollama's
+// vision model for the media-fit gate can leave nothing free — measured mid-run at 15174/16311 MiB.
+// Ollama keeps a model resident for ~5 min after use, so fetch starts encoding while score's VRAM
+// is still held and NVENC reports "No capable devices found" / CUDA_ERROR_ALREADY_MAPPED. The probe
+// is a point-in-time answer to a question whose answer changes.
+export function isEncoderOpenFailure(stderr: string): boolean {
+  return /No capable devices|Could not open encoder|cuCtxCreate|OpenEncodeSessionEx|Error while opening encoder|Cannot load nvcuda/i.test(
+    stderr,
+  );
+}
+
+// Give up on the hardware encoder for the rest of this process and use libx264. Called when an
+// encode actually fails to open — the render must not die because another process took the VRAM
+// (invariant 7). Not reversible on purpose: once the GPU has proven unreliable under real load,
+// flapping back would just fail the next beat.
+export function demoteToSoftware(reason: string): boolean {
+  if (resolved === 'libx264') return false; // already demoted — the failure is something else
+  console.warn(
+    `[encoder] "${resolved ?? CONFIGURED}" failed to open mid-run (${reason}) — demoting to ` +
+      'libx264 (CPU) for the rest of this process. Usually VRAM: the sidecar + Ollama can fill a ' +
+      '16 GB card. OLLAMA_MAX_LOADED_MODELS=1 and a shorter keep_alive free it sooner.',
+  );
+  resolved = 'libx264';
+  probe = Promise.resolve('libx264');
+  return true;
+}
+
 // Test-only: forget the probed encoder so a changed env/driver is re-evaluated.
 export function _resetEncoderProbe(): void {
   resolved = null;
