@@ -1,8 +1,14 @@
 'use client';
 
-import { isArchiveProvider, providerLabel, TAU_HI, TAU_LO } from '@scriptreel/core';
+import {
+  isArchiveProvider,
+  providerLabel,
+  STORYBOARD_CANDIDATES,
+  TAU_HI,
+  TAU_LO,
+} from '@scriptreel/core';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { fileUrl, fmtDuration } from '../lib/format';
 import { Badge, Button, Card, Dot, Skeleton, Spinner } from './ui';
@@ -93,6 +99,7 @@ export function Storyboard({
   onApprove: () => void;
 }) {
   const [researchBeat, setResearchBeat] = useState<Beat | null>(null);
+  const [swapBeat, setSwapBeat] = useState<Beat | null>(null);
   const [researching, setResearching] = useState<Record<string, number>>({}); // beatId → prior candidate count
 
   const { data, isLoading, isError, refetch } = useQuery<{ beats: Beat[] }>({
@@ -131,6 +138,23 @@ export function Storyboard({
   function startResearch(beat: Beat) {
     setResearching((r) => ({ ...r, [beat.id]: beat.candidates.length }));
     setResearchBeat(null);
+  }
+
+  // A swap is the one place a human states a preference the ranker can be judged against:
+  // "this one, not the one you picked". The PATCH re-keys fetch's inputsHash, so the montage
+  // rebuilds from the new choice.
+  async function swapCandidate(beat: Beat, candidateId: string): Promise<string | null> {
+    const res = await fetch(`/api/beats/${beat.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chosenCandidateId: candidateId }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      const body = await res?.json().catch(() => ({}));
+      return body?.error ?? 'Swap failed — the worker may be down.';
+    }
+    await refetch();
+    return null;
   }
 
   if (isLoading) {
@@ -187,6 +211,7 @@ export function Storyboard({
             researching={beat.id in researching}
             onResearch={() => setResearchBeat(beat)}
             onTextcard={() => toggleTextcard(beat)}
+            onSwap={() => setSwapBeat(beat)}
           />
         ))}
       </div>
@@ -223,6 +248,14 @@ export function Storyboard({
           onClose={() => setResearchBeat(null)}
         />
       )}
+
+      {swapBeat && (
+        <CandidateDrawer
+          beat={beats.find((b) => b.id === swapBeat.id) ?? swapBeat}
+          onSwap={(candidateId) => swapCandidate(swapBeat, candidateId)}
+          onClose={() => setSwapBeat(null)}
+        />
+      )}
     </div>
   );
 }
@@ -233,12 +266,14 @@ function BeatCard({
   researching,
   onResearch,
   onTextcard,
+  onSwap,
 }: {
   beat: Beat;
   aspect: string;
   researching: boolean;
   onResearch: () => void;
   onTextcard: () => void;
+  onSwap: () => void;
 }) {
   const chosen = beat.candidates.find((c) => c.id === beat.chosenCandidateId) ?? beat.candidates[0];
   const kind = beat.forcedTextcard ? 'textcard' : (chosen?.kind ?? 'textcard');
@@ -334,6 +369,15 @@ function BeatCard({
           )}
         </div>
         <div className="mt-auto flex gap-1.5 pt-1">
+          {/* Swap is the primary action: it picks from candidates already on disk, so unlike
+              Re-search it costs no provider quota — and it is the only one that records a
+              human preference (doc 26). Disabled when a text card is pinned (nothing to
+              choose) or when the beat has no alternates. */}
+          <ActionBtn
+            onClick={onSwap}
+            label="Swap"
+            disabled={beat.forcedTextcard || beat.candidates.length < 2}
+          />
           <ActionBtn onClick={onResearch} label="Re-search" />
           <ActionBtn
             onClick={onTextcard}
@@ -350,16 +394,19 @@ function ActionBtn({
   onClick,
   label,
   active = false,
+  disabled = false,
 }: {
   onClick: () => void;
   label: string;
   active?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors duration-[var(--dur-fast)] ${
+      disabled={disabled}
+      className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors duration-[var(--dur-fast)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg-muted ${
         active
           ? 'border-accent/40 bg-accent-quiet text-accent'
           : 'border-border bg-surface-2 text-fg-muted hover:border-border-strong hover:text-fg'
@@ -458,6 +505,183 @@ function ReSearchDialog({
             </Button>
           </div>
         </Card>
+      </div>
+    </Portal>
+  );
+}
+
+// Pick a different asset for a beat from the candidates already scored and on disk.
+//
+// Specced as `CandidateDrawer` in doc 16 and never built, while the server half shipped complete and
+// callerless (`PATCH /api/beats/[beatId]` has validated {chosenCandidateId} all along) — so the
+// review gate could approve, but never disagree.
+//
+// It matters beyond convenience: a swap is the only human preference this system produces ("this
+// one, not the one you ranked first"). Every calibration question currently open — τ, the penalty
+// magnitudes, whether the four measured nulls are real — is starved of exactly that signal, because
+// 192 of the eval fixture's 222 labels are a vision model judging a vision model (`pnpm eval:kappa`:
+// κ vs human = 0.416 at reliability 1.000, i.e. biased, not noisy). Swapping costs no provider
+// quota — these candidates were already fetched, scored, and embedded.
+function CandidateDrawer({
+  beat,
+  onSwap,
+  onClose,
+}: {
+  beat: Beat;
+  onSwap: (candidateId: string) => Promise<string | null>;
+  onClose: () => void;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Esc closes; focus moves into the panel on open so the drawer is keyboard-reachable and
+  // does not strand focus behind the overlay (doc 16 §Accessibility).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    panelRef.current?.focus();
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  // Rank by score, not by `rank`: the score stage drops gate-vetoed candidates before ranking, so
+  // their `rank` still holds the search stage's unrelated 0-based value while `score` is NULL.
+  // Sorting on `rank` would interleave never-ranked rows among the real ones.
+  const ordered = [...beat.candidates].sort(
+    (a, b) => (b.score ?? Number.NEGATIVE_INFINITY) - (a.score ?? Number.NEGATIVE_INFINITY),
+  );
+  const shown = showAll ? ordered : ordered.slice(0, STORYBOARD_CANDIDATES);
+  const hiddenCount = ordered.length - shown.length;
+
+  async function choose(candidateId: string) {
+    if (candidateId === beat.chosenCandidateId) return onClose(); // already chosen — no-op
+    setBusyId(candidateId);
+    setError(null);
+    const err = await onSwap(candidateId);
+    if (err) {
+      setError(err);
+      setBusyId(null);
+      return;
+    }
+    onClose();
+  }
+
+  return (
+    <Portal>
+      <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm animate-[var(--animate-fade-in)]">
+        {/* Closes on Esc (bound above) and the Close button — matching ReSearchDialog. No
+            click-outside-to-close: it needs a handler on a non-interactive overlay, and a
+            mis-click would silently discard nothing here but is inconsistent with the rest. */}
+        <div
+          ref={panelRef}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Swap the asset for beat ${beat.idx + 1}`}
+          className="flex h-full w-full max-w-lg flex-col gap-4 overflow-y-auto border-l border-border bg-surface p-5 outline-none"
+        >
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-sm font-semibold">Swap beat {beat.idx + 1}</h3>
+              <Button variant="subtle" size="sm" onClick={onClose}>
+                Close
+              </Button>
+            </div>
+            <p className="mt-1 line-clamp-2 text-xs text-fg-subtle">{beat.text}</p>
+            {beat.visualDescription && (
+              <p className="mt-2 text-xs text-fg-muted">
+                <span className="font-semibold uppercase tracking-wide">Looking for</span>{' '}
+                {beat.visualDescription}
+              </p>
+            )}
+          </div>
+
+          {error && (
+            <p className="rounded-lg border border-danger/40 bg-danger/10 p-2.5 text-xs text-danger">
+              {error}
+            </p>
+          )}
+
+          {ordered.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+              <p className="text-sm text-fg-muted">No candidates for this beat.</p>
+              <p className="max-w-xs text-xs text-fg-subtle">
+                Re-search with a different description, or pin a text card.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {shown.map((c) => {
+                const isChosen = c.id === beat.chosenCandidateId;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => choose(c.id)}
+                    disabled={busyId != null}
+                    aria-current={isChosen}
+                    className={`group relative overflow-hidden rounded-lg border text-left transition-colors duration-[var(--dur-fast)] disabled:opacity-60 ${
+                      isChosen
+                        ? 'border-accent ring-2 ring-accent/30'
+                        : 'border-border hover:border-border-strong'
+                    }`}
+                  >
+                    <div className="relative aspect-video bg-surface-2">
+                      {c.thumbPath ? (
+                        <img
+                          src={fileUrl(c.thumbPath)}
+                          alt=""
+                          loading="lazy"
+                          className="size-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex size-full items-center justify-center text-[10px] text-fg-subtle">
+                          {c.kind}
+                        </div>
+                      )}
+                      {busyId === c.id && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-bg/70">
+                          <Spinner className="text-accent" />
+                        </div>
+                      )}
+                      {isChosen && (
+                        <span className="absolute left-1.5 top-1.5">
+                          <Badge tone="accent">chosen</Badge>
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-1 p-2">
+                      <div className="flex items-center justify-between gap-1.5 text-[11px]">
+                        <Badge tone={isArchiveProvider(c.provider) ? 'accent' : 'neutral'}>
+                          {providerLabel(c.provider)}
+                        </Badge>
+                        {/* The model's own score, shown so a swap is a disagreement you can see. */}
+                        <span className="tabular-nums text-fg-subtle">
+                          {c.score != null ? c.score.toFixed(3) : '—'}
+                        </span>
+                      </div>
+                      <p className="truncate text-[10px] text-fg-subtle">
+                        {c.kind === 'video' && c.duration != null
+                          ? `video · ${fmtDuration(c.duration)}`
+                          : c.kind}
+                        {c.author ? ` · ${c.author}` : ''}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {hiddenCount > 0 && (
+            <Button variant="subtle" size="sm" onClick={() => setShowAll(true)}>
+              Show all {ordered.length} candidates
+            </Button>
+          )}
+        </div>
       </div>
     </Portal>
   );
