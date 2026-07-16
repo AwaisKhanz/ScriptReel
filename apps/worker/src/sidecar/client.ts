@@ -139,13 +139,23 @@ async function postSidecar<T>(
       signal: reqSignal(signal, timeoutMs),
     });
   } catch (cause) {
+    // Three different things reach this catch and they are NOT the same error.
+    //
+    // `reqSignal` merges the caller's cancel signal with a timeout, so an abort here means either
+    // "the user pressed Cancel" or "the sidecar was too slow" — and a genuine connection failure
+    // means the sidecar is actually down. Reporting all three as E_SIDECAR_DOWN told the user
+    // "sidecar unreachable at 127.0.0.1:8484" seconds after /health had answered 200 OK, for a
+    // cancel they themselves had just clicked. An error that names the wrong culprit is worse than
+    // no error: it sends you debugging a service that was never broken.
+    if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'score', 'cancelled', { cause });
+    const timedOut = cause instanceof Error && cause.name === 'TimeoutError';
     throw new PipelineError(
       'E_SIDECAR_DOWN',
       'score',
-      `sidecar unreachable at ${env.SIDECAR_URL}`,
-      {
-        cause,
-      },
+      timedOut
+        ? `sidecar at ${env.SIDECAR_URL} did not respond within ${Math.round(timeoutMs / 1000)}s (it is running — the model is loading or the GPU is busy)`
+        : `sidecar unreachable at ${env.SIDECAR_URL}`,
+      { cause },
     );
   }
   if (!res.ok) {
