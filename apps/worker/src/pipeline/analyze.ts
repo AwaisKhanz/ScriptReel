@@ -46,6 +46,12 @@ export const analyzeStage: Stage = {
       script: project.script,
       ...(ctx.settings.language ? { languageOverride: ctx.settings.language } : {}),
       speed: ctx.settings.speed,
+      // Chunk 1..N maps to 10..80% — a local model spends minutes per chunk, so this is what
+      // keeps the bar moving and the run's heartbeat fresh (each report bumps projects.updated_at,
+      // so the stuck-job reconciler doesn't re-enqueue a run that is genuinely working).
+      onChunk: (done, total) =>
+        report(10 + Math.round((70 * done) / total), `analyzing beats (${done}/${total})`),
+      signal: ctx.signal, // so Cancel aborts the in-flight LLM call promptly (not at stage end)
     });
 
     report(85, `persisting ${post.beats.length} beats`);

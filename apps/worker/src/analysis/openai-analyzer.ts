@@ -20,21 +20,25 @@ import { extractJsonObject, getLlm, jsonFormat, type LlmProvider } from './llm';
 // images, applied to text: a hosted API and a local model are not the same machine, and a request
 // that exceeds the window "was never servable, at any timeout".
 //
-// A beat expands to roughly 12x its script words in JSON (verbatim text + visualDescription +
-// keyPhrase + entities + shots + queries), and analyze must emit a whole chunk's beats in ONE
-// response. gpt-4o has a 128k window at ~100 tok/s, so 1200 words is one fast call. Measured on
-// the owner's RTX 5060 Ti with OLLAMA_CONTEXT_LENGTH=16384: qwen2.5-coder:14b runs at 41.7 tok/s,
-// so a 1200-word chunk demands ~13.7k output tokens on top of ~3k input — ~16.7k against a 16,384
-// window. It does not fit, and Ollama drops the overflow SILENTLY rather than erroring: measured
-// 2026-07-16, a 295-word script came back as 185 words of beats (37% dropped) and the model was
-// blamed. At 5.5 min of generation it also outruns any sane request timeout. 500 words keeps a
-// chunk near ~8k tokens — half the window — and ~2 min per call.
+// A beat expands to ~300 JSON tokens (verbatim text + visualDescription + keyPhrase + entities
+// with instanceOf/searchTerms + shots + queries), and analyze must emit a whole chunk's beats in
+// ONE response. gpt-4o has a 128k window at ~100 tok/s, so 1200 words is one fast call.
 //
-// This does NOT make a local run faster: total generation is ~12 tokens per script word either
-// way (a 2,278-word script is ~11 min on this box). It makes each call FIT and SURVIVE.
+// A local model is a different machine and this size does NOT transfer. On the owner's RTX 5060 Ti
+// (OLLAMA_CONTEXT_LENGTH=16384), qwen2.5-coder:14b free-decodes at ~42 tok/s but GRAMMAR-CONSTRAINED
+// decoding of this deeply-nested json_schema runs far slower (the sampler masks every token against
+// the schema) — a 16-beat generation did not finish in 150s, i.e. well under 20 tok/s. So the
+// binding limit is time, not the window: a 500-word chunk (~16 beats, ~5k tokens) blew the 300s
+// request timeout, and because analyze is NOT resumable within itself, that timeout restarts every
+// chunk from zero. 200 words (~6-7 beats, ~2k tokens) completes with comfortable margin and turns
+// the run into ~12 observable steps that each survive.
+//
+// This does NOT make a local run faster — total output is fixed at ~300 tokens/beat, so a
+// 15-minute script is ~20-30 min of generation on this box regardless. Cloud (gpt-4o) does the
+// same in seconds. Small chunks buy reliability + progress, not speed.
 const LIMITS: Record<LlmProvider, { maxChunkWords: number; timeoutMs: number }> = {
   openai: { maxChunkWords: 1200, timeoutMs: 300_000 },
-  ollama: { maxChunkWords: 500, timeoutMs: 300_000 },
+  ollama: { maxChunkWords: 200, timeoutMs: 300_000 },
 };
 
 // An LLM error with no HTTP status never reached the model. Which way it failed is the whole
@@ -275,33 +279,37 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
   // front of every chunk — so a beat saying only "the spacecraft" can still name Voyager 1, and
   // the whole-script answers come from the whole script rather than from whichever chunk ran last.
   async analyze(input: AnalyzeInput, opts: AnalyzeOptions = {}): Promise<AnalysisResult> {
-    const brief = await this.brief(input);
+    const brief = await this.brief(input, opts.signal);
     const briefContext = brief ? formatBriefContext(brief) : undefined;
     const chunks = chunkScript(input.script, LIMITS[getLlm().provider].maxChunkWords);
 
     const beats: AnalysisResult['beats'] = [];
     let language = brief?.language ?? input.languageHint ?? 'en-US';
     let musicMood: AnalysisResult['musicMood'] = brief?.musicMood ?? 'none';
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i += 1) {
+      // Stop promptly on cancel rather than segmenting the rest of the script (each chunk is
+      // minutes on a local model). The in-flight request is also aborted via opts.signal below.
+      if (opts.signal?.aborted) throw new PipelineError('E_CANCELLED', 'analyze', 'cancelled');
       const continuation =
         beats.length > 0
           ? `Previous beat count: ${beats.length}. Continue segmentation; maintain shot variety with previous shotType: ${beats.at(-1)?.shotType ?? 'wide'}.`
           : undefined;
       const context = [briefContext, continuation].filter(Boolean).join('\n\n') || undefined;
-      const part = await this.analyzeChunk(input, chunk, context, opts);
+      const part = await this.analyzeChunk(input, chunks[i] as string, context, opts);
       beats.push(...part.beats);
       // Only trust a chunk's whole-script fields when pass 1 didn't answer them.
       if (!brief) {
         language = part.language;
         musicMood = part.musicMood;
       }
+      opts.onChunk?.(i + 1, chunks.length);
     }
     return { language, musicMood, beats };
   }
 
   // Pass 1. Degrades to null rather than throwing — a missing brief costs cross-chunk context,
   // which is worse analysis but not a failed project (invariant 7).
-  private async brief(input: AnalyzeInput): Promise<ScriptBrief | null> {
+  private async brief(input: AnalyzeInput, signal?: AbortSignal): Promise<ScriptBrief | null> {
     try {
       const completion = await this.client.chat.completions.create(
         {
@@ -322,7 +330,7 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
           ],
           response_format: jsonFormat('brief', BRIEF_JSON_SCHEMA),
         },
-        { timeout: LIMITS[getLlm().provider].timeoutMs },
+        { timeout: LIMITS[getLlm().provider].timeoutMs, ...(signal ? { signal } : {}) },
       );
       const content = completion.choices[0]?.message?.content;
       if (!content) return null;
@@ -334,6 +342,9 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
       this.log.debug({ subject: parsed.data.subject, cast: parsed.data.cast }, 'script brief');
       return parsed.data;
     } catch (err) {
+      // A cancel must NOT be swallowed into the degrade path — otherwise pressing Cancel during the
+      // brief call just drops the brief and segments the whole script anyway.
+      if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'analyze', 'cancelled');
       this.log.warn({ err }, 'script brief call failed — segmenting without it');
       return null;
     }
@@ -371,9 +382,16 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
         },
         // Explicit, provider-sized. Without it the SDK's own default applies (× maxRetries), which
         // is neither tuned to a local model's token rate nor visible to anyone reading this file.
-        { timeout: LIMITS[getLlm().provider].timeoutMs },
+        // opts.signal aborts the in-flight request the moment Cancel is pressed.
+        {
+          timeout: LIMITS[getLlm().provider].timeoutMs,
+          ...(opts.signal ? { signal: opts.signal } : {}),
+        },
       );
     } catch (err) {
+      // A cancel aborts the request → the SDK throws. Classify it as E_CANCELLED (not the retryable
+      // E_LLM_QUOTA), or pressing Cancel would re-dispatch the job instead of stopping it.
+      if (opts.signal?.aborted) throw new PipelineError('E_CANCELLED', 'analyze', 'cancelled');
       const status = (err as { status?: number }).status;
       // Not every LLM failure is a quota problem. E_LLM_QUOTA is in errors.ts's RETRYABLE set, so
       // reporting EVERY error as one makes an unfixable config mistake cost three full attempts

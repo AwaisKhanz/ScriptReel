@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type AnalysisResult,
   type Beat,
+  BeatSchema,
   type Entity,
   estimateSeconds,
   mergeShortBeats,
@@ -487,5 +488,113 @@ describe('the shot plan is never truncated to a fixed number', () => {
     });
     expect(out.beats[0]?.visualMoments).toHaveLength(5);
     expect(out.beats[0]?.visualMoments).toContain('liver close up');
+  });
+});
+
+describe('BeatSchema coercion (invariant 7 — one over-cap beat must not fail the analysis)', () => {
+  const base = {
+    text: 'A verbatim sentence.',
+    visualDescription: 'a clean desk',
+    keyPhrase: 'desk',
+    emotion: 'neutral',
+    shotType: 'wide',
+    era: 'timeless',
+    entities: [],
+    queries: { literal: ['a', 'b'], conceptual: 'c', mood: 'm' },
+    shots: [],
+  };
+
+  it('clamps a 3rd literal query to 2 instead of rejecting', () => {
+    const b = BeatSchema.parse({
+      ...base,
+      queries: { literal: ['one', 'two', 'three'], conceptual: 'c', mood: 'm' },
+    });
+    expect(b.queries.literal).toEqual(['one', 'two']);
+  });
+
+  it('accepts a single literal query (downstream tolerates a missing literal[1])', () => {
+    const b = BeatSchema.parse({
+      ...base,
+      queries: { literal: ['only'], conceptual: 'c', mood: 'm' },
+    });
+    expect(b.queries.literal).toEqual(['only']);
+  });
+
+  it('truncates an over-long visualDescription and keyPhrase rather than failing', () => {
+    const b = BeatSchema.parse({
+      ...base,
+      visualDescription: 'x'.repeat(300),
+      keyPhrase: 'y'.repeat(90),
+    });
+    expect(b.visualDescription).toHaveLength(160);
+    expect(b.keyPhrase).toHaveLength(48);
+  });
+
+  it('clamps too many shots to MAX_SHOTS_PER_BEAT (12)', () => {
+    const shots = Array.from({ length: 20 }, (_, i) => ({ phrase: `shot ${i}`, weight: 1 }));
+    const b = BeatSchema.parse({ ...base, shots });
+    expect(b.shots).toHaveLength(12);
+  });
+
+  it('the verbatim text field is NEVER clamped (narration contract)', () => {
+    const long = 'A very long sentence. '.repeat(50);
+    const b = BeatSchema.parse({ ...base, text: long });
+    expect(b.text).toBe(long);
+  });
+});
+
+describe('BeatSchema resilience under json_object (no generation-time grammar)', () => {
+  const base = {
+    text: 'A verbatim sentence.',
+    visualDescription: 'a desk',
+    keyPhrase: 'desk',
+    emotion: 'neutral',
+    shotType: 'wide',
+    era: 'timeless',
+    entities: [],
+    queries: { literal: ['a', 'b'], conceptual: 'c', mood: 'm' },
+    shots: [],
+  };
+
+  it('an out-of-enum entity category falls back to "object" instead of failing the beat', () => {
+    const b = BeatSchema.parse({
+      ...base,
+      entities: [
+        { surface: 'x', canonical: 'x', category: 'spacecraft', visualizable: true }, // not in enum
+      ],
+    });
+    expect(b.entities[0]?.category).toBe('object');
+  });
+
+  it('drops a single malformed entity rather than rejecting the whole beat', () => {
+    const b = BeatSchema.parse({
+      ...base,
+      entities: [
+        { surface: 'good', canonical: 'good', category: 'food', visualizable: true },
+        { nonsense: true }, // missing required surface/canonical → dropped, not fatal
+        { surface: 'ok', canonical: 'ok', category: 'plant', visualizable: true },
+      ],
+    });
+    expect(b.entities.map((e) => e.canonical)).toEqual(['good', 'ok']);
+  });
+
+  it('out-of-enum emotion/shotType/era fall back to defaults', () => {
+    const b = BeatSchema.parse({
+      ...base,
+      emotion: 'euphoric',
+      shotType: 'panorama',
+      era: 'futuristic',
+    });
+    expect(b.emotion).toBe('neutral');
+    expect(b.shotType).toBe('wide');
+    expect(b.era).toBe('timeless');
+  });
+
+  it('seeds an empty literal from conceptual so downstream always has a tier-1 query', () => {
+    const b = BeatSchema.parse({
+      ...base,
+      queries: { literal: [], conceptual: 'the idea', mood: 'atmosphere' },
+    });
+    expect(b.queries.literal).toEqual(['the idea']);
   });
 });

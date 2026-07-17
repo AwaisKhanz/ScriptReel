@@ -49,12 +49,18 @@ export function jsonFormat(
   name: string,
   schema: Record<string, unknown>,
 ): NonNullable<OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']> {
-  // Both providers use grammar-constrained json_schema so the model CANNOT omit a required field
-  // (json_object alone only guarantees valid JSON, not the shape → E_LLM_SCHEMA). It also forces
-  // JSON from the first token, which suppresses a reasoning model's <think> ramble (faster). Ollama
-  // reads json_schema.schema; `strict` is OpenAI-only (Ollama ignores it, so we omit it there).
+  // OpenAI uses STRICT json_schema: the grammar guarantees the shape at negligible cost on a hosted
+  // model. Ollama does NOT — llama.cpp compiles this deeply-nested schema into a GBNF grammar and
+  // masks every generated token against it, which is measured at ~5x slower on the owner's box (a
+  // 3-beat generation timed out at 120s under json_schema vs ~42 tok/s under generic json). That
+  // made analyze of any real script overflow the request timeout and restart from zero. So Ollama
+  // gets json_object (fast generic JSON) and the shape is enforced AFTER the fact: the prompt above
+  // carries an explicit skeleton, most fields have zod .default()s, the cosmetic bounds COERCE
+  // rather than reject (BeatSchema, invariant 7), and a single reprompt catches a genuine omission.
+  // `name`/`schema` stay in the signature because the OpenAI branch still needs them.
+  void name;
   return getLlm().provider === 'ollama'
-    ? { type: 'json_schema', json_schema: { name, schema } }
+    ? { type: 'json_object' }
     : { type: 'json_schema', json_schema: { name, strict: true, schema } };
 }
 

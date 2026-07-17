@@ -15,6 +15,8 @@ export interface AnalysisRunParams {
   script: string;
   languageOverride?: string;
   speed: number;
+  onChunk?: (done: number, total: number) => void; // per-chunk progress (see AnalyzeOptions)
+  signal?: AbortSignal; // cancel signal → aborts the in-flight LLM call (see AnalyzeOptions)
 }
 
 export interface AnalysisRun {
@@ -32,7 +34,11 @@ export async function runAnalysisWithReprompt(
   params: AnalysisRunParams,
 ): Promise<AnalysisRun> {
   const attempt = async (hint?: string, allowProportional = false): Promise<AnalysisRun> => {
-    const raw = await analyzer.analyze(params.input, hint ? { retryHint: hint } : {});
+    const raw = await analyzer.analyze(params.input, {
+      ...(hint ? { retryHint: hint } : {}),
+      ...(params.onChunk ? { onChunk: params.onChunk } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
     const post = postProcessAnalysis({
       script: params.script,
       result: raw,

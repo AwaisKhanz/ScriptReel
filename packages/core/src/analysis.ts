@@ -93,11 +93,17 @@ export type EntityCategory = z.infer<typeof EntityCategorySchema>;
 export const EntitySchema = z.object({
   surface: z.string().min(1), // as written in the narration ("the Dead Sea")
   canonical: z.string().min(1), // disambiguated English name ("Dead Sea")
-  category: EntityCategorySchema,
-  instanceOf: z.string().default(''), // expected class, lowercase ("lake") — verifies the hit
-  disambiguation: z.string().default(''), // one clause fixing the sense
-  searchTerms: z.string().array().max(4).default([]), // English fallback queries
-  visualizable: z.boolean(), // false ⇒ abstract ⇒ generic b-roll / text card
+  category: EntityCategorySchema.catch('object'), // out-of-enum ⇒ generic (see BeatSchema note)
+  instanceOf: z.string().catch('').default(''), // expected class, lowercase ("lake") — verifies the hit
+  disambiguation: z.string().catch('').default(''), // one clause fixing the sense
+  // English fallback queries — clamped, not rejected, so a 5th term can't fail the whole analysis.
+  searchTerms: z
+    .string()
+    .array()
+    .transform((a) => (a.length > 4 ? a.slice(0, 4) : a))
+    .catch([])
+    .default([]),
+  visualizable: z.boolean().catch(true), // false ⇒ abstract ⇒ generic b-roll / text card
 });
 export type Entity = z.infer<typeof EntitySchema>;
 
@@ -155,36 +161,71 @@ export const CATEGORY_DEFAULT_WANT: Readonly<Record<EntityCategory, ShotWant>> =
 // the beat entity it depicts (a stable key that survives merge/dedupe), '' for a generic shot.
 export const ShotSchema = z.object({
   phrase: z.string().min(1), // concrete searchable English phrase ("dead sea aerial view")
-  entity: z.string().default(''), // canonical of the depicted entity, '' = generic
-  want: ShotWantSchema.default('generic'),
-  weight: z.number().positive().default(1), // relative on-screen time
+  entity: z.string().catch('').default(''), // canonical of the depicted entity, '' = generic
+  want: ShotWantSchema.catch('generic').default('generic'),
+  weight: z.number().positive().catch(1).default(1), // relative on-screen time
 });
 export type Shot = z.infer<typeof ShotSchema>;
 
+// These bounds COERCE rather than reject. A local model segmenting a long script trips a cosmetic
+// cap (a 49-char keyPhrase, a 3rd literal query, a 13th shot) on some beat most runs, and a hard
+// .max()/.length() would fail-closed on the WHOLE response — throwing away a 20-30 minute analysis
+// over one truncatable field. Every one of these has a natural coercion and every downstream reader
+// already tolerates the coerced shape (planTier1Requests reads only literal[0]/[1]; a text card
+// truncates anyway), so clamping is invariant 7 ("degrade, never die") applied to the schema. The
+// verbatim `text` field is deliberately NOT clamped — its correctness is enforced by the
+// reconstruction check, not a length, and truncating it would corrupt the narration contract.
+const clampStr = (max: number) =>
+  z.string().transform((s) => (s.length > max ? s.slice(0, max) : s));
+
+// Parse an array element-by-element: a single malformed entity/shot is DROPPED, not fatal, and the
+// result is capped. Ollama runs under json_object (no grammar — see llm.ts), so nothing enforces
+// the shape DURING generation and the model will occasionally emit one item with an out-of-enum
+// value or a missing field. A plain `.array()` fails the WHOLE beat on the first bad element;
+// safeParse-per-element keeps the good ones (each still gets its fields' own .catch()/.default()).
+const resilientArray = <T>(item: z.ZodType<T>, max: number) =>
+  z
+    .array(z.unknown())
+    .transform((arr) =>
+      arr.flatMap((x) => (item.safeParse(x).success ? [item.parse(x)] : [])).slice(0, max),
+    )
+    .catch([] as T[])
+    .default([] as T[]);
+
 export const BeatSchema = z.object({
-  text: z.string().min(1), // VERBATIM slice of the script
-  visualDescription: z.string().max(160), // English, filmable
-  keyPhrase: z.string().max(48), // ≤6 words, script language
-  emotion: EmotionSchema,
-  shotType: ShotTypeSchema,
-  era: EraSchema.default('timeless'), // modern | historical | timeless (doc 25 §2, rule 12)
+  text: z.string().min(1), // VERBATIM slice of the script — never clamped/caught (see above)
+  visualDescription: clampStr(160).catch(''), // English, filmable
+  keyPhrase: clampStr(48).catch(''), // ≤6 words, script language
+  emotion: EmotionSchema.catch('neutral'),
+  shotType: ShotTypeSchema.catch('wide'),
+  era: EraSchema.catch('timeless').default('timeless'), // modern | historical | timeless (rule 12)
   // Typed entities (doc 24 §2) — drive authoritative sourcing; REAL names belong here.
   // The bound is a sanity guard, not a target: a beat naming five foods has five entities.
-  entities: EntitySchema.array().max(MAX_ENTITIES_PER_BEAT).default([]),
-  queries: z.object({
-    literal: z.string().array().length(2), // tier 1 — concrete (GENERIC stock, no real names)
-    conceptual: z.string(), // tier 2 — the idea
-    mood: z.string(), // tier 3 — atmosphere
-  }),
+  entities: resilientArray(EntitySchema, MAX_ENTITIES_PER_BEAT),
+  // tier 1 — concrete (GENERIC stock, no real names). Everything falls back rather than rejecting:
+  // an empty literal is seeded from conceptual/mood so downstream always has a tier-1 query, and
+  // extras are clamped to 2 (all downstream reads only [0]/[1]).
+  queries: z
+    .object({
+      literal: z.string().array().catch([]),
+      conceptual: z.string().catch(''),
+      mood: z.string().catch(''),
+    })
+    .transform((q) => ({
+      literal: (q.literal.length > 0 ? q.literal : [q.conceptual || q.mood || 'scene']).slice(0, 2),
+      conceptual: q.conceptual,
+      mood: q.mood,
+    }))
+    .catch({ literal: ['scene'], conceptual: '', mood: '' }),
   // Ordered visual plan (doc 24 §3): one shot per distinct thing the beat puts on screen —
   // however many that is. Real names allowed — these drive archives.
-  shots: ShotSchema.array().max(MAX_SHOTS_PER_BEAT).default([]),
+  shots: resilientArray(ShotSchema, MAX_SHOTS_PER_BEAT),
 });
 export type Beat = z.infer<typeof BeatSchema>;
 
 export const AnalysisResultSchema = z.object({
-  language: z.string(),
-  musicMood: MusicMoodSchema,
+  language: z.string().catch('en-US'),
+  musicMood: MusicMoodSchema.catch('none'),
   beats: BeatSchema.array().min(1),
 });
 export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
@@ -197,12 +238,17 @@ export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
 // that were being answered from a single chunk — and, since each chunk overwrote the last, the
 // final answer came from whichever chunk happened to be last.
 export const ScriptBriefSchema = z.object({
-  subject: z.string(), // what the script is about, one clause
-  topic: z.string(), // the dominant domain, lowercase ("space", "medicine", "food")
-  era: EraSchema, // the era the script's visuals should evoke overall
-  cast: z.string().array().max(12).default([]), // recurring entities, canonical English names
-  language: z.string(), // detected over the whole script
-  musicMood: MusicMoodSchema, // chosen for the whole script
+  subject: z.string().catch(''), // what the script is about, one clause
+  topic: z.string().catch('generic'), // the dominant domain, lowercase ("space", "medicine", "food")
+  era: EraSchema.catch('timeless'), // the era the script's visuals should evoke overall
+  cast: z
+    .string()
+    .array()
+    .transform((a) => (a.length > 12 ? a.slice(0, 12) : a))
+    .catch([])
+    .default([]), // recurring entities, canonical English names
+  language: z.string().catch('en-US'), // detected over the whole script
+  musicMood: MusicMoodSchema.catch('none'), // chosen for the whole script
 });
 export type ScriptBrief = z.infer<typeof ScriptBriefSchema>;
 
@@ -216,6 +262,18 @@ export interface AnalyzeInput {
 
 export interface AnalyzeOptions {
   retryHint?: string; // appended to the prompt on a single reprompt
+  // Cancel signal, threaded into the LLM calls. analyze is the longest stage (minutes on a local
+  // model), and the worker's cancel poll aborts this controller — but without the signal reaching
+  // the in-flight request, Cancel could not take effect until analyze FINISHED (runStages only
+  // checks between stages), so the button looked broken. With it, a cancel aborts the current
+  // request and the chunk loop stops at its next boundary.
+  signal?: AbortSignal;
+  // Called after each chunk's beats land. A local model segments a long script one slow chunk at
+  // a time (minutes each), so without this the stage sits at one percentage for the whole run —
+  // indistinguishable from a hang — and its heartbeat goes stale long enough for the worker's
+  // stuck-job reconciler to re-enqueue a run that is actually progressing. The worker wires this
+  // to the stage reporter, which both moves the UI and bumps projects.updated_at.
+  onChunk?: (done: number, total: number) => void;
 }
 
 export interface ScriptAnalyzer {
@@ -355,7 +413,18 @@ RULES — VISUAL DESIGN
 
 For Japanese/Chinese target 18–30 characters (fast), 25–45 (normal), 40–65 (slow) per beat.
 
-Return ONLY JSON matching the provided schema.`;
+Return ONLY a JSON object of EXACTLY this shape — no prose, no markdown fences, every field on
+every beat:
+{"language":"en-US","musicMood":"calm","beats":[
+  {"text":"<one verbatim slice of the script>","visualDescription":"<filmable scene, English>",
+   "keyPhrase":"<=6 words","emotion":"neutral","shotType":"wide","era":"timeless",
+   "entities":[{"surface":"","canonical":"","category":"food","instanceOf":"","disambiguation":"","searchTerms":[""],"visualizable":true}],
+   "queries":{"literal":["concrete a","concrete b"],"conceptual":"the idea","mood":"atmosphere"},
+   "shots":[{"phrase":"","entity":"","want":"scene","weight":1}]}
+]}
+emotion ∈ neutral|uplifting|serious|tense|sad|exciting|calm|inspiring. shotType ∈
+wide|medium|close|detail|aerial|abstract. want ∈ portrait|flag|map|aerial|logo|footage|scene|generic.
+"queries.literal" is exactly two concrete English phrases. Omit no field.`;
 
 export function buildSystemPrompt(pacing: Pacing): string {
   return SYSTEM_PROMPT.replace('{PACING_RULE}', PACING_RULES[pacing]);
