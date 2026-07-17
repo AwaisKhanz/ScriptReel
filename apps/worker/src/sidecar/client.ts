@@ -200,11 +200,11 @@ export function dinoEmbed(paths: string[], signal?: AbortSignal): Promise<EmbedI
 
 // VLM checklist gate (doc 25 §5-D, cascade D). Qwen2.5-VL judges each item's image
 // against the beat's description + era, returning four bools per readable image; images
-// it couldn't read / parse land in `failed`. The model is ~2.2 GB and loaded on demand,
-// and the remote (Ollama) path processes the batch SERIALLY, each item bounded by the
-// sidecar's VLM_TIMEOUT_S (default 120 s). This client timeout must exceed the worst case
-// (VLM_TOP_K=3 × 120 s = 360 s) or a slow model trips E_SIDECAR_DOWN mid-batch and wastes
-// the work — so it is 7 min (weights load + 3 serial items + margin). A missing model
+// it couldn't read / parse land in `failed`. The model is loaded on demand (mlx ~2.2 GB on
+// Apple; a q8 Ollama VLM is ~10 GB), and the remote (Ollama) path processes the batch
+// SERIALLY, each item bounded by the sidecar's VLM_TIMEOUT_S (code default 300 s; .env sets
+// 120). The client budget is computed per batch at the `vlm()` call below — see the note there
+// for why a fixed one silently skips the gate on any real script. A missing model
 // throws E_VLM_UNAVAILABLE (or E_SIDECAR_DOWN / timeout) — the VLM pass catches that, skips
 // the whole gate, and leaves selection unchanged (invariant 7).
 const VlmChecklistSchema = z.object({
@@ -228,8 +228,20 @@ export interface VlmItem {
   era: string;
 }
 
+// The batch is ONE deduped list across ALL beats (pipeline/vlm.ts builds `itemByPath` over every
+// beat, then issues a single call), so its size is VLM_TOP_K × beats — NOT VLM_TOP_K. A fixed
+// budget therefore silently under-covers any real script: measured on G9, 15 beats ⇒ ~45 items
+// against 420 s is 9 s/item, and one cold load of a ~10 GB q8 vision model can spend a third of
+// that before the first item is scored. On a timeout the gate is skipped wholesale (invariant 7)
+// and every second of GPU work already done is discarded — the exact silent-no-op that raising
+// the sidecar's own per-item timeout (24aeed8) was meant to end. So scale with the batch, and
+// keep the old value as a floor for small ones.
+const VLM_MS_PER_ITEM = 20_000; // ~4× the warm per-item cost; the sidecar caps each at VLM_TIMEOUT_S
+const VLM_LOAD_MARGIN_MS = 120_000; // evict + load of a multi-GB model before item 1
+
 export function vlm(items: VlmItem[], signal?: AbortSignal): Promise<VlmResponse> {
-  return postSidecar('/vlm', { items }, VlmResponseSchema, signal, 420_000);
+  const budgetMs = Math.max(420_000, items.length * VLM_MS_PER_ITEM + VLM_LOAD_MARGIN_MS);
+  return postSidecar('/vlm', { items }, VlmResponseSchema, signal, budgetMs);
 }
 
 // OCR gate (doc 25 §5): Tesseract reads burned-in text/coverage for a beat's SigLIP

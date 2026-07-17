@@ -1,5 +1,6 @@
 import {
   type Entity,
+  PipelineError,
   parseEntities,
   type SelectionBeat,
   type SelectionCandidate,
@@ -117,6 +118,12 @@ export async function applyVlmGate(args: {
     try {
       res = await vlm(items, signal);
     } catch (err) {
+      // A cancel is not a missing capability. postSidecar already tells the two apart; if we
+      // swallow E_CANCELLED here the run continues, score writes its manifest with
+      // `vlmSkipped: true`, and because gate availability is not part of score's inputsHash
+      // every later run reports `skipped (inputsHash match)` — the project then ships
+      // unverified selections forever. Same rule as providers/search.ts.
+      if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
       log.warn({ err }, 'VLM gate skipped — continuing without VLM checklist verification');
       return unchanged();
     }
@@ -176,6 +183,13 @@ export async function applyVlmGate(args: {
 
     return { selectionBeats: next, penalized, vetoed, skipped: false, reasons };
   } catch (err) {
+    // A cancel is not a missing capability. postSidecar already distinguishes the two, but
+    // swallowing E_CANCELLED here turns "the user pressed Cancel" into "this gate is
+    // unavailable" — and because gate availability is not part of score's inputsHash, that
+    // verdict is written to the manifest and every later run reports `skipped (inputsHash
+    // match)`. The project would then ship unverified selections forever. Same rule as
+    // providers/search.ts.
+    if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
     // Belt-and-suspenders: any unexpected throw leaves selection exactly as it was.
     log.warn({ err }, 'VLM gate skipped — unexpected error, selection unchanged');
     return unchanged();

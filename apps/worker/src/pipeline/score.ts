@@ -324,6 +324,10 @@ export const scoreStage: Stage = {
           return { ...sb, candidates: next };
         });
       } catch (err) {
+        // A cancel is not a missing capability — see the note in pipeline/vlm.ts. Swallowing it
+        // here writes `ocrSkipped: true` into a manifest that is never re-computed, so the
+        // project ships without watermark/era filtering on every later run too.
+        if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
         // The degrade path: leave selectionBeats untouched, apply nothing, warn once.
         ocrSkipped = true;
         ocrPenalized = 0;
@@ -463,6 +467,9 @@ export const scoreStage: Stage = {
           if (v.veto || v.penalty > 0) verdicts.set(it.id, { veto: v.veto, penalty: v.penalty });
         }
       } catch (err) {
+        // A cancel is not a missing capability — see the note in pipeline/vlm.ts. The ladder
+        // runs per beat, so swallowing it here also lets the walk continue past a cancel.
+        if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
         ctx.log.warn({ err }, 'ladder OCR gate skipped — continuing');
       }
       return verdicts;

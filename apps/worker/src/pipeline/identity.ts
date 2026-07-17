@@ -6,6 +6,7 @@ import {
   identityGate,
   identityMethodFor,
   namesSubject,
+  PipelineError,
   parseEntities,
   type SelectionBeat,
   type SelectionCandidate,
@@ -139,6 +140,8 @@ export async function applyIdentityGate(args: {
               ? await faceEmbed([refPath], signal)
               : await dinoEmbed([refPath], signal);
         } catch (err) {
+          // A cancel is not a missing model — see the note in pipeline/vlm.ts.
+          if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
           embedThrew = true;
           if (err instanceof Error && err.message.includes('UNAVAILABLE')) unavailable = true;
           warnOnce(err);
@@ -164,6 +167,8 @@ export async function applyIdentityGate(args: {
         candRes =
           method === 'face' ? await faceEmbed(thumbs, signal) : await dinoEmbed(thumbs, signal);
       } catch (err) {
+        // A cancel is not a missing model — see the note in pipeline/vlm.ts.
+        if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
         embedThrew = true;
         if (err instanceof Error && err.message.includes('UNAVAILABLE')) unavailable = true;
         warnOnce(err);
@@ -217,6 +222,9 @@ export async function applyIdentityGate(args: {
 
     return { selectionBeats: next, penalized, vetoed, skipped: false, reasons };
   } catch (err) {
+    // A cancel is not a missing capability — see the note in pipeline/vlm.ts. Swallowing it
+    // here writes `identitySkipped: true` into a manifest that is never re-computed.
+    if (err instanceof PipelineError && err.code === 'E_CANCELLED') throw err;
     // Belt-and-suspenders: any unexpected throw leaves selection exactly as it was.
     log.warn({ err }, 'identity gate skipped — unexpected error, selection unchanged');
     return unchanged();
