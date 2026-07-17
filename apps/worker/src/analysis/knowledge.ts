@@ -1,4 +1,7 @@
-import { INSTANCE_OF_QID } from '@scriptreel/core';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { paths } from '@scriptreel/config';
+import { INSTANCE_OF_QID, sha1Hex } from '@scriptreel/core';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import {
@@ -49,6 +52,53 @@ const EMPTY: EntityKnowledge = {
   extraTerms: [],
 };
 
+// Disk cache for a resolved entity (doc 25 §3: "cache hard, key = entity"). Knowledge expansion is
+// ~6 uncached Wikidata/Wikipedia calls per unique entity and runs as a barrier before ANY provider
+// search, so without this every generate/retry re-fetches the whole set — the slow, rate-limited,
+// occasionally-parking phase that leaves search at 0%. Keyed by canonical+instanceOf so the same
+// subject across scripts is fetched once. Only SUCCESSFUL (non-empty) results are cached — a
+// transient failure returns EMPTY and must be retried, not frozen (the search-cache poisoning trap).
+const EntityKnowledgeSchema = z.object({
+  qid: z.string().nullable(),
+  aliases: z.string().array(),
+  relatedTerms: z.string().array(),
+  era: z.enum(['modern', 'historical']).nullable(),
+  extraTerms: z.string().array(),
+});
+const knowledgeCachePath = (canonical: string, instanceOf: string): string =>
+  join(paths.cacheDir, 'knowledge', `${sha1Hex(`${canonical}|${instanceOf}`.toLowerCase())}.json`);
+
+async function readKnowledgeCache(c: string, i: string): Promise<EntityKnowledge | null> {
+  try {
+    const parsed = EntityKnowledgeSchema.safeParse(
+      JSON.parse(await readFile(knowledgeCachePath(c, i), 'utf8')),
+    );
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null; // miss or unreadable → recompute
+  }
+}
+
+function isEmpty(k: EntityKnowledge): boolean {
+  return (
+    k.qid === null &&
+    k.aliases.length === 0 &&
+    k.relatedTerms.length === 0 &&
+    k.extraTerms.length === 0
+  );
+}
+
+async function writeKnowledgeCache(c: string, i: string, k: EntityKnowledge): Promise<void> {
+  if (isEmpty(k)) return; // never cache a failure/not-found — retry it next run
+  try {
+    const path = knowledgeCachePath(c, i);
+    await mkdir(join(paths.cacheDir, 'knowledge'), { recursive: true });
+    await writeFile(path, JSON.stringify(k), 'utf8');
+  } catch {
+    // caching is best-effort; a write failure must not fail expansion
+  }
+}
+
 async function getJson(url: URL, retries = 2): Promise<unknown> {
   const res = await fetch(url, {
     headers: { 'user-agent': UA, 'api-user-agent': UA },
@@ -59,9 +109,14 @@ async function getJson(url: URL, retries = 2): Promise<unknown> {
   // to the LLM's own search terms (invariant 7). Mirrors providers/wikidata-commons.ts.
   if ((res.status === 429 || res.status >= 500) && retries > 0) {
     const retryAfter = Number(res.headers.get('retry-after'));
-    const waitMs =
+    // CAP the wait. Wikidata can return Retry-After: 3600, and knowledge expansion fires a burst of
+    // uncached calls for every unique entity, so an uncapped sleep parks the ENTIRE search stage —
+    // per-beat search doesn't start until every entity has expanded (search.ts barrier). Measured:
+    // an 85-beat / 70-entity script sat at "Search stock 0%" for 9+ minutes here. 8s is enough to
+    // clear a burst; if the source is genuinely down, degrade to the LLM's own terms (invariant 7).
+    const base =
       Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1500 * (3 - retries);
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(base, 8000)));
     return getJson(url, retries - 1);
   }
   if (!res.ok) throw new Error(`${url.host} → HTTP ${res.status}`);
@@ -327,6 +382,8 @@ export async function expandEntity(
 ): Promise<EntityKnowledge> {
   // Local-LLM path (no Wikidata) when configured; otherwise the factual Wikidata graph.
   if (getLlm().provider === 'ollama') return expandEntityLlm(canonical, instanceOf, log);
+  const cached = await readKnowledgeCache(canonical, instanceOf);
+  if (cached) return cached;
   try {
     const resolved = await resolveVerifiedClaims(canonical, instanceOf);
     if (!resolved) return EMPTY;
@@ -337,7 +394,9 @@ export async function expandEntity(
     const extraTerms = enTitle
       ? await wikipediaTerms(enTitle, [canonical, ...aliases]).catch(() => [])
       : [];
-    return { qid, aliases, relatedTerms, era, extraTerms };
+    const result: EntityKnowledge = { qid, aliases, relatedTerms, era, extraTerms };
+    await writeKnowledgeCache(canonical, instanceOf, result);
+    return result;
   } catch (err) {
     log.warn({ err, canonical }, 'knowledge expansion failed — using LLM terms only');
     return EMPTY;
