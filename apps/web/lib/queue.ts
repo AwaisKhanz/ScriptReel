@@ -1,10 +1,5 @@
 import { env } from '@scriptreel/config';
-import {
-  BEAT_RESEARCH_QUEUE,
-  type BeatResearchPayload,
-  type JobMode,
-  PIPELINE_QUEUE,
-} from '@scriptreel/core';
+import { type JobMode, PIPELINE_QUEUE } from '@scriptreel/core';
 import PgBoss from 'pg-boss';
 
 // A single send-only pg-boss client for the API routes (the worker owns the
@@ -36,10 +31,4 @@ export async function enqueuePipeline(projectId: string, mode: JobMode): Promise
   const boss = await getBoss();
   await ensureQueue(boss, PIPELINE_QUEUE);
   return boss.send(PIPELINE_QUEUE, { projectId, mode }, { singletonKey: projectId });
-}
-
-export async function enqueueBeatResearch(payload: BeatResearchPayload): Promise<string | null> {
-  const boss = await getBoss();
-  await ensureQueue(boss, BEAT_RESEARCH_QUEUE);
-  return boss.send(BEAT_RESEARCH_QUEUE, payload);
 }

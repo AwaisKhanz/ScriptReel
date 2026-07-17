@@ -1,16 +1,9 @@
 import { env } from '@scriptreel/config';
-import {
-  BEAT_RESEARCH_QUEUE,
-  BeatResearchPayloadSchema,
-  type JobMode,
-  PIPELINE_QUEUE,
-  PipelinePayloadSchema,
-} from '@scriptreel/core';
+import { type JobMode, PIPELINE_QUEUE, PipelinePayloadSchema } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import PgBoss from 'pg-boss';
 import pino from 'pino';
 import { runPipeline } from './handler';
-import { runBeatResearch } from './pipeline/beat-research';
 
 const log = pino({
   level: 'info',
@@ -52,23 +45,7 @@ async function main(): Promise<void> {
     }
   });
 
-  // beat-research: lightweight single-beat re-search from the storyboard (teamSize 2).
-  await boss.createQueue(BEAT_RESEARCH_QUEUE, {
-    name: BEAT_RESEARCH_QUEUE,
-    retryLimit: 1,
-    expireInSeconds: 600,
-  });
-  await boss.work(BEAT_RESEARCH_QUEUE, { batchSize: 2 }, async (jobs) => {
-    for (const job of jobs) {
-      const payload = BeatResearchPayloadSchema.parse(job.data);
-      await runBeatResearch(payload, log.child({ beatId: payload.beatId }));
-    }
-  });
-
-  log.info(
-    { queues: [PIPELINE_QUEUE, BEAT_RESEARCH_QUEUE] },
-    'worker up — pg-boss queues registered',
-  );
+  log.info({ queues: [PIPELINE_QUEUE] }, 'worker up — pg-boss queues registered');
 
   // Self-heal orphaned jobs. A project can end up marked queued/running in the DB with NO live
   // pg-boss job — a send that was deduped on its singletonKey (a lingering prior job), a job that

@@ -4,7 +4,6 @@ import {
   type ProjectSettings,
   type ProviderCredentials,
   parseSettings,
-  STORYBOARD_CANDIDATES,
   settingsHash,
 } from '@scriptreel/core';
 import { sql } from './client';
@@ -501,66 +500,12 @@ export async function appendCandidatesForBeat(
   return inserted;
 }
 
-export async function setBeatForcedTextcard(beatId: string, forced: boolean): Promise<void> {
-  await sql`update beats set forced_textcard = ${forced} where id = ${beatId}`;
-}
-
-export async function setBeatVisualDescription(beatId: string, description: string): Promise<void> {
-  await sql`update beats set visual_description = ${description} where id = ${beatId}`;
-}
-
-export async function setBeatChosenCandidate(
-  beatId: string,
-  chosenCandidateId: string | null,
-): Promise<void> {
-  // Picking a specific clip opts the beat out of the auto-montage (its plan anchored on
-  // the old chosen); it renders that single clip (doc 23 §7).
-  await sql`
-    update beats set chosen_candidate_id = ${chosenCandidateId}, segments = null
-    where id = ${beatId}`;
-}
-
-// Swap one montage segment's clip (doc 23 §7b), keeping the rest of the plan. Segment 0
-// is the beat's representative, so swapping it also updates chosen_candidate_id.
-export async function updateBeatSegment(
-  beatId: string,
-  index: number,
-  candidateId: string,
-): Promise<boolean> {
-  const rows = await sql<{ segments: unknown }[]>`select segments from beats where id = ${beatId}`;
-  const plan = Array.isArray(rows[0]?.segments) ? [...(rows[0].segments as BeatSegmentPlan[])] : [];
-  const current = plan[index];
-  if (!current || typeof current !== 'object') return false;
-  plan[index] = { candidateId, weight: current.weight ?? 1 };
-  await sql.begin(async (tx) => {
-    await tx`update beats set segments = ${sql.json(plan as unknown as JsonValue)} where id = ${beatId}`;
-    if (index === 0) {
-      await tx`update beats set chosen_candidate_id = ${candidateId} where id = ${beatId}`;
-    }
-  });
-  return true;
-}
-
-// Owning project + its status for a beat — the storyboard PATCH/research routes
-// gate on `awaiting_review` (doc 15).
-export async function getBeatOwner(
-  beatId: string,
-): Promise<{ projectId: string; status: ProjectStatus } | null> {
-  const rows = await sql<{ projectId: string; status: ProjectStatus }[]>`
-    select b.project_id as "projectId", p.status
-    from beats b join projects p on p.id = b.project_id
-    where b.id = ${beatId}`;
-  return rows[0] ?? null;
-}
-
-export async function candidateBelongsToBeat(
-  beatId: string,
-  candidateId: string,
-): Promise<boolean> {
-  const rows = await sql`
-    select 1 from candidates where id = ${candidateId} and beat_id = ${beatId} limit 1`;
-  return rows.length > 0;
-}
+// The manual-override write path (setBeatForcedTextcard / setBeatVisualDescription /
+// setBeatChosenCandidate / updateBeatSegment) and its authz helpers (getBeatOwner /
+// candidateBelongsToBeat) were removed 2026-07-17 with the storyboard swap feature: the selector
+// picks, and nothing may write a beat's selection after score has run. Restoring any of them means
+// restoring the invariant they broke — updateBeatSegment silently dropped `momentIdx` (defeating
+// media-fit verification) and read-modify-wrote `segments` outside its transaction.
 
 // Live pipeline activity (doc 16): the media found so far, newest first — the run
 // screen streams these thumbs in as search/score progress.
@@ -585,26 +530,30 @@ export async function getRecentCandidates(
   return [...rows];
 }
 
-// Beats + their top-N candidates by rank (STORYBOARD_CANDIDATES), for the storyboard
-// (doc 16). One query for all candidates, grouped in memory (avoids N+1 across beats).
+// Beats + the candidate each one actually chose, for the storyboard (doc 16). One query for all
+// of them, joined in memory (avoids N+1 across beats).
+//
+// This used to return the top-5 by rank so the swap drawer had alternates to offer. The swap is
+// gone (2026-07-17), so the alternates are dead weight — and fetching only the chosen row also
+// closes a latent bug in the old `slice(0, STORYBOARD_CANDIDATES)`: the ladder can choose a
+// candidate that is NOT in the top 5 by rank (a text card, a generated still, a mood-tier pick),
+// in which case the slice dropped it and the storyboard fell back to `candidates[0]` — showing a
+// clip the render would never use.
 export async function getStoryboard(
   projectId: string,
 ): Promise<{ beat: BeatRow; candidates: CandidateRow[] }[]> {
   const beats = await getBeats(projectId);
   if (beats.length === 0) return [];
-  const ids = beats.map((b) => b.id);
-  const cands = await sql<CandidateRow[]>`
-    select * from candidates where beat_id = any(${ids}) order by rank nulls last, id`;
-  const byBeat = new Map<string, CandidateRow[]>();
-  for (const c of cands) {
-    const arr = byBeat.get(c.beat_id);
-    if (arr) arr.push(c);
-    else byBeat.set(c.beat_id, [c]);
-  }
-  return beats.map((beat) => ({
-    beat,
-    candidates: (byBeat.get(beat.id) ?? []).slice(0, STORYBOARD_CANDIDATES),
-  }));
+  const chosenIds = beats
+    .map((b) => b.chosen_candidate_id)
+    .filter((id): id is string => id !== null);
+  if (chosenIds.length === 0) return beats.map((beat) => ({ beat, candidates: [] }));
+  const cands = await sql<CandidateRow[]>`select * from candidates where id = any(${chosenIds})`;
+  const byId = new Map(cands.map((c) => [c.id, c]));
+  return beats.map((beat) => {
+    const chosen = beat.chosen_candidate_id ? byId.get(beat.chosen_candidate_id) : undefined;
+    return { beat, candidates: chosen ? [chosen] : [] };
+  });
 }
 
 export type AssetCacheRow = Database['public']['Tables']['asset_cache']['Row'];

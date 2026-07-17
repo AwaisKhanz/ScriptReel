@@ -92,46 +92,17 @@ export function Storyboard({
   busy: boolean;
   onApprove: () => void;
 }) {
-  const [researchBeat, setResearchBeat] = useState<Beat | null>(null);
-  const [researching, setResearching] = useState<Record<string, number>>({}); // beatId → prior candidate count
-
+  // Read-only by design (2026-07-17): the selector picks, and the storyboard is where you SEE
+  // what it picked before spending a render on it. Per-beat re-search and manual swap are gone —
+  // no polling to do, so this query fetches once.
   const { data, isLoading, isError, refetch } = useQuery<{ beats: Beat[] }>({
     queryKey: ['beats', projectId],
     queryFn: () => fetch(`/api/projects/${projectId}/beats`).then((r) => r.json()),
-    refetchInterval: Object.keys(researching).length > 0 ? 1500 : false,
   });
   const beats = data?.beats ?? [];
 
-  // Clear the researching shimmer once a beat's candidate set grows.
-  useEffect(() => {
-    if (Object.keys(researching).length === 0) return;
-    let changed = false;
-    const next = { ...researching };
-    for (const b of beats) {
-      if (b.id in researching && b.candidates.length > (researching[b.id] ?? 0)) {
-        delete next[b.id];
-        changed = true;
-      }
-    }
-    if (changed) setResearching(next);
-  }, [beats, researching]);
-
   const weakCount = beats.filter(isWeak).length;
   const total = beats.reduce((sum, b) => sum + (b.estSeconds ?? 0), 0);
-
-  async function toggleTextcard(beat: Beat) {
-    await fetch(`/api/beats/${beat.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ forcedTextcard: !beat.forcedTextcard }),
-    }).catch(() => {});
-    refetch();
-  }
-
-  function startResearch(beat: Beat) {
-    setResearching((r) => ({ ...r, [beat.id]: beat.candidates.length }));
-    setResearchBeat(null);
-  }
 
   if (isLoading) {
     return (
@@ -173,21 +144,14 @@ export function Storyboard({
           <h2 className="text-base font-semibold">Storyboard</h2>
           <p className="text-sm text-fg-muted">
             Each beat is stitched into its real montage clip — press play to preview before
-            rendering.
+            rendering. Every shot was picked automatically.
           </p>
         </div>
       </div>
 
       <div className={`grid grid-cols-1 gap-4 ${ASPECT_COLS[aspect] ?? ''}`}>
         {beats.map((beat) => (
-          <BeatCard
-            key={beat.id}
-            beat={beat}
-            aspect={aspect}
-            researching={beat.id in researching}
-            onResearch={() => setResearchBeat(beat)}
-            onTextcard={() => toggleTextcard(beat)}
-          />
+          <BeatCard key={beat.id} beat={beat} aspect={aspect} />
         ))}
       </div>
 
@@ -199,8 +163,7 @@ export function Storyboard({
               {weakCount > 0 ? (
                 <span className="flex items-center gap-2 text-warning">
                   <Dot tone="warning" />
-                  {weakCount} {weakCount === 1 ? 'beat is a weak match' : 'beats are weak matches'}{' '}
-                  — re-search or continue
+                  {weakCount} {weakCount === 1 ? 'beat is a weak match' : 'beats are weak matches'}
                 </span>
               ) : (
                 <span className="flex items-center gap-2 text-success">
@@ -215,31 +178,11 @@ export function Storyboard({
           </div>
         </div>
       </Portal>
-
-      {researchBeat && (
-        <ReSearchDialog
-          beat={researchBeat}
-          onSubmitted={() => startResearch(researchBeat)}
-          onClose={() => setResearchBeat(null)}
-        />
-      )}
     </div>
   );
 }
 
-function BeatCard({
-  beat,
-  aspect,
-  researching,
-  onResearch,
-  onTextcard,
-}: {
-  beat: Beat;
-  aspect: string;
-  researching: boolean;
-  onResearch: () => void;
-  onTextcard: () => void;
-}) {
+function BeatCard({ beat, aspect }: { beat: Beat; aspect: string }) {
   const chosen = beat.candidates.find((c) => c.id === beat.chosenCandidateId) ?? beat.candidates[0];
   const kind = beat.forcedTextcard ? 'textcard' : (chosen?.kind ?? 'textcard');
   const tone = scoreTone({ score: beat.score, kind });
@@ -284,13 +227,6 @@ function BeatCard({
             }}
           />
         )}
-        {researching && (
-          <div className="absolute inset-0 flex items-center justify-center bg-bg/70 backdrop-blur-sm">
-            <span className="flex items-center gap-2 text-xs text-fg-muted">
-              <Spinner className="text-accent" /> re-searching…
-            </span>
-          </div>
-        )}
         <span className="absolute left-2 top-2 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">
           #{beat.idx + 1}
         </span>
@@ -333,132 +269,7 @@ function BeatCard({
             </Badge>
           )}
         </div>
-        <div className="mt-auto flex gap-1.5 pt-1">
-          <ActionBtn onClick={onResearch} label="Re-search" />
-          <ActionBtn
-            onClick={onTextcard}
-            label={beat.forcedTextcard ? 'Un-pin' : 'Text card'}
-            active={beat.forcedTextcard}
-          />
-        </div>
       </div>
     </Card>
-  );
-}
-
-function ActionBtn({
-  onClick,
-  label,
-  active = false,
-}: {
-  onClick: () => void;
-  label: string;
-  active?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors duration-[var(--dur-fast)] ${
-        active
-          ? 'border-accent/40 bg-accent-quiet text-accent'
-          : 'border-border bg-surface-2 text-fg-muted hover:border-border-strong hover:text-fg'
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
-function ReSearchDialog({
-  beat,
-  onSubmitted,
-  onClose,
-}: {
-  beat: Beat;
-  onSubmitted: () => void;
-  onClose: () => void;
-}) {
-  const [desc, setDesc] = useState(beat.visualDescription ?? '');
-  const [query, setQuery] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const quota = useQuery<{ meters: { key: string; remaining: number }[] }>({
-    queryKey: ['quota'],
-    queryFn: () => fetch('/api/quota').then((r) => r.json()),
-  });
-  const pexels = quota.data?.meters.find((m) => m.key === 'pexels:hour')?.remaining ?? null;
-  const low = pexels != null && pexels < 4;
-
-  async function submit() {
-    setBusy(true);
-    setError(null);
-    const body: Record<string, string> = {};
-    if (desc.trim() && desc.trim() !== (beat.visualDescription ?? ''))
-      body.visualDescription = desc.trim();
-    if (query.trim()) body.customQuery = query.trim();
-    const res = await fetch(`/api/beats/${beat.id}/research`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) {
-      onSubmitted();
-    } else {
-      const b = await res.json().catch(() => ({}));
-      setError(b.error ?? 'Re-search failed');
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Portal>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-[var(--animate-fade-in)]">
-        <Card className="w-full max-w-md space-y-4 animate-[var(--animate-scale-in)]">
-          <div>
-            <h3 className="text-sm font-semibold">Re-search beat {beat.idx + 1}</h3>
-            <p className="mt-1 line-clamp-2 text-xs text-fg-subtle">{beat.text}</p>
-          </div>
-          <label className="block space-y-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-              Visual description{' '}
-              <span className="font-normal normal-case text-fg-subtle">· English</span>
-            </span>
-            <textarea
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              rows={2}
-              className="w-full resize-y rounded-lg border border-border bg-bg p-2.5 text-sm outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-              Extra query <span className="font-normal normal-case text-fg-subtle">· optional</span>
-            </span>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="e.g. lunar module descent"
-              className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/25"
-            />
-          </label>
-          <div className="flex items-center justify-between text-xs">
-            <span className={low ? 'text-warning' : 'text-fg-subtle'}>
-              {pexels != null ? `${pexels} Pexels requests left this hour` : 'checking quota…'}
-            </span>
-            {low && <span className="text-warning">low — costs ≤ 4</span>}
-          </div>
-          {error && <p className="text-sm text-danger">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="subtle" size="sm" onClick={onClose} disabled={busy}>
-              Cancel
-            </Button>
-            <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
-              {busy ? <Spinner /> : 'Re-search'}
-            </Button>
-          </div>
-        </Card>
-      </div>
-    </Portal>
   );
 }
