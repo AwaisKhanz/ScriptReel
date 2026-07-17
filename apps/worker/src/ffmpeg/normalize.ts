@@ -1,3 +1,4 @@
+import { rename, rm } from 'node:fs/promises';
 import {
   FRAME_SEC,
   KENBURNS_PRESCALE,
@@ -33,10 +34,33 @@ async function withCurrentEncoder(args: string[]): Promise<string[]> {
   return [...args.slice(0, i), ...(await encodeArgs()), out];
 }
 
+// Encode to a temp path, rename on success — a clip only ever appears at its real path
+// COMPLETE. ffmpeg finalizes an mp4 by writing the moov atom LAST, so an encoder that is killed
+// (a cancel, a crash, the box sleeping) leaves ftyp+mdat and no moov: a multi-MB file that looks
+// like a finished clip and cannot be opened. Written straight to outPath that corpse survives at
+// the real path, and because runner.ts skips a stage on an inputsHash match WITHOUT checking its
+// artifacts (doc 06 §Stage contract rule 1's "+ artifacts present" half is unimplemented), fetch
+// never regenerates it — every later render skips fetch and dies in Pass B with "moov atom not
+// found". Measured on a real project: one cancelled re-render left clips/9.mp4 at 19 MB and every
+// subsequent render failed identically. fetch's own per-clip probe (doc 13 exit criteria) cannot
+// help, because the stage that would run it is the stage being skipped.
+//
+// The temp name must keep the .mp4 suffix — ffmpeg selects its muxer from the output extension,
+// so a bare `.part` would fail with "Unable to find a suitable output format".
+const partPathFor = (outPath: string): string => `${outPath}.part.mp4`;
+
 async function ff(args: string[], outPath: string, signal?: AbortSignal): Promise<void> {
+  // Every call site builds `[…, '-an', ...ENCODE, outPath]` — swap that trailing output path.
+  const partPath = partPathFor(outPath);
+  const partArgs = [...args.slice(0, -1), partPath];
+  const discardPart = async (): Promise<void> => {
+    await rm(partPath, { force: true }).catch(() => {});
+  };
+
   try {
-    await run(args, signal);
+    await run(partArgs, signal);
   } catch (cause) {
+    await discardPart();
     if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'fetch', 'cancelled');
     const stderr = cause instanceof Error && 'stderr' in cause ? String(cause.stderr) : '';
     // The GPU encoder passed the startup probe but couldn't open now — almost always because
@@ -45,9 +69,11 @@ async function ff(args: string[], outPath: string, signal?: AbortSignal): Promis
     // the exact case the startup probe cannot see because it answers the question too early.
     if (isEncoderOpenFailure(stderr) && demoteToSoftware('GPU encoder unavailable under load')) {
       try {
-        await run(await withCurrentEncoder(args), signal);
+        await run(await withCurrentEncoder(partArgs), signal);
+        await rename(partPath, outPath);
         return;
       } catch (retryCause) {
+        await discardPart();
         if (signal?.aborted) throw new PipelineError('E_CANCELLED', 'fetch', 'cancelled');
         const retryErr =
           retryCause instanceof Error && 'stderr' in retryCause ? String(retryCause.stderr) : '';
@@ -64,6 +90,7 @@ async function ff(args: string[], outPath: string, signal?: AbortSignal): Promis
       cause,
     });
   }
+  await rename(partPath, outPath);
 }
 
 function coverVf(width: number, height: number): string {

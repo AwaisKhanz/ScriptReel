@@ -57,10 +57,21 @@ export async function runPipeline(
 
   const settings = parseSettings(project.settings);
   await db.ensurePipelineRuns(projectId, STAGES);
+
+  // `stage:<name>` is the CLI harness (pnpm stage score --project …) and must NOT touch the
+  // project's status — it is a developer running one stage, not a render. Setting `running`
+  // here unconditionally stranded the project at `running` forever once the stage returned
+  // (nothing restores it): every run row reads `done`, progress reads 100, and the UI — which
+  // routes on status, not on stage completion — shows "Generating 100%" with a Cancel button
+  // and never reaches the player. Worse, index.ts's reconciler re-enqueues anything left
+  // `queued`/`running` for >10 min, so a one-stage CLI invocation would silently trigger a
+  // full unattended re-render against the free-tier budget.
+  //
   // cancel_requested is cleared by the dispatch routes (generate/continue/rerender), NOT
   // here: clearing on every run would wipe a user's cancel when pg-boss retries a job whose
   // worker died mid-run — silently resuming a project the user asked to stop.
-  await db.setProjectStatus(projectId, 'running');
+  const singleStage = stageOfMode(mode);
+  if (!singleStage) await db.setProjectStatus(projectId, 'running');
 
   const controller = new AbortController();
   const ctx: ProjectCtx = {
@@ -90,9 +101,8 @@ export async function runPipeline(
   }, 1000);
 
   try {
-    const singleStage = stageOfMode(mode);
     if (singleStage) {
-      await run([singleStage]); // CLI single-stage; leaves project status as-is
+      await run([singleStage]); // CLI single-stage; leaves project status as-is (see above)
     } else if (mode === 'composeOnly') {
       await run(['compose']);
       await db.setProjectStatus(projectId, 'done');

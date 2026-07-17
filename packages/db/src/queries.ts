@@ -87,8 +87,15 @@ export async function getRenders(projectId: string): Promise<RenderRow[]> {
   return [...rows];
 }
 
+// `error` is cleared here because every status this is called with — queued/running/done/
+// awaiting_review/draft — means a previous failure has been superseded. `failed` is set only
+// by setProjectError (which writes both together), so this can never erase a live error.
+// Without this, projects.error was write-once: a project that failed and then succeeded still
+// reported the old failure forever (measured: a run reached `awaiting_review` still carrying an
+// E_LLM_QUOTA from a superseded attempt). The UI hides it by routing on status, so the lie only
+// surfaces through /api/projects/:id and anything reading project.error.
 export async function setProjectStatus(id: string, status: ProjectStatus): Promise<void> {
-  await sql`update projects set status = ${status}, updated_at = now() where id = ${id}`;
+  await sql`update projects set status = ${status}, error = null, updated_at = now() where id = ${id}`;
 }
 
 // Projects the DB thinks are active (queued/running) but which may have no live pg-boss job —
