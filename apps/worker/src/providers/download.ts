@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { access, mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { paths } from '@scriptreel/config';
-import { PipelineError } from '@scriptreel/core';
+import { PipelineError, providerIdSlug } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 
 // Downloaded originals live in a shared, project-independent cache (doc 08). Keyed by
@@ -26,7 +26,7 @@ function extFor(kind: string): string {
 }
 
 function cachePath(provider: string, providerId: string, kind: string): string {
-  return join(paths.cacheDir, 'assets', provider, `${providerId}.${extFor(kind)}`);
+  return join(paths.cacheDir, 'assets', provider, `${providerIdSlug(providerId)}.${extFor(kind)}`);
 }
 
 async function exists(path: string): Promise<boolean> {

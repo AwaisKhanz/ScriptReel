@@ -105,6 +105,26 @@ export function searchCacheKey(
   return sha1Hex(`${provider}|${kind}|${orientation}|${normalizeSearchQuery(query)}${suffix}`);
 }
 
+// A providerId is the provider's identifier, not a filename, and three of them are
+// neither: Commons ids are titles ('File:Voyager 1.jpg'), Library of Congress ids are
+// full URLs ('https://www.loc.gov/item/123/'), Europeana ids are paths ('/2021012/xyz').
+// Interpolated straight into a cache filename these all failed on write — the '/' demanded
+// directories nothing creates (ENOENT), and on NTFS everything after a ':' becomes an
+// alternate data stream, so 103 wikimedia thumbs collapsed onto one 0-byte file named
+// 'File'. Both paths end in `catch { return null }`, so every candidate from those
+// providers was silently dropped: measured LoC 21 searches → 0 thumbs.
+//
+// Clean ids MUST pass through byte-identical — the asset/thumb caches and
+// fixtures/eval/labels.jsonl already point at unsanitised paths, and re-keying them
+// would re-download on a metered budget (invariant 6) and break the eval fixture. So
+// only a dirty id changes shape, and it gets a hash suffix because distinct ids can
+// otherwise collapse to the same slug ('a/b' and 'a_b').
+export function providerIdSlug(providerId: string): string {
+  const safe = providerId.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const clean = safe === providerId && providerId.length > 0 && !/^\.+$/.test(providerId);
+  return clean ? providerId : `${safe.slice(0, 80)}-${sha1Hex(providerId).slice(0, 8)}`;
+}
+
 // Trailing atmosphere/time words carry mood, not subject — strip them before
 // reducing a literal query to its head noun phrase (doc 09 §ladder rung 1).
 const ATMOSPHERE_WORDS = new Set([

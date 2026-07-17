@@ -1,7 +1,7 @@
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '@scriptreel/config';
-import { type RawCandidate, THUMB_MAX_SIDE } from '@scriptreel/core';
+import { providerIdSlug, type RawCandidate, THUMB_MAX_SIDE } from '@scriptreel/core';
 import { execa } from 'execa';
 import sharp from 'sharp';
 import { FFMPEG_BIN } from '../ffmpeg/bin';
@@ -16,11 +16,11 @@ function thumbDir(candidate: RawCandidate): string {
 }
 
 function thumbPath(candidate: RawCandidate): string {
-  return join(thumbDir(candidate), `${candidate.providerId}.jpg`);
+  return join(thumbDir(candidate), `${providerIdSlug(candidate.providerId)}.jpg`);
 }
 
 function framePath(candidate: RawCandidate, i: number): string {
-  return join(thumbDir(candidate), `${candidate.providerId}_${i}.jpg`);
+  return join(thumbDir(candidate), `${providerIdSlug(candidate.providerId)}_${i}.jpg`);
 }
 
 // Already cached with content → reuse so re-runs stay network-free (doc 08).

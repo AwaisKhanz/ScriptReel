@@ -6,6 +6,7 @@ import {
   orientationForAspect,
   passesHygiene,
   planTier1Requests,
+  providerIdSlug,
   providerLabel,
   QUOTA_BUDGETS,
   type RawCandidate,
@@ -232,5 +233,48 @@ describe('quota windows', () => {
       'minute',
       'month',
     ]);
+  });
+});
+
+describe('providerIdSlug', () => {
+  // The whole point: re-keying a cache that already holds 16k thumbs would re-download
+  // them on a metered budget and break fixtures/eval/labels.jsonl, which stores raw paths.
+  it('leaves an already-safe id byte-identical', () => {
+    for (const id of ['3701084', 'GSFC_20171208_Archive_e000122', 'abc-123_v2.0']) {
+      expect(providerIdSlug(id)).toBe(id);
+    }
+  });
+
+  it('makes a Commons title safe — the ":" that NTFS reads as an alternate data stream', () => {
+    const slug = providerIdSlug('File:Voyager 1.jpg');
+    expect(slug).not.toContain(':');
+    expect(slug).not.toContain(' ');
+    expect(slug).toMatch(/^[a-zA-Z0-9._-]+$/);
+  });
+
+  it('makes a Library of Congress URL id safe — the "/" that demanded uncreated dirs', () => {
+    const slug = providerIdSlug('https://www.loc.gov/item/123/');
+    expect(slug).not.toContain('/');
+    expect(slug).toMatch(/^[a-zA-Z0-9._-]+$/);
+  });
+
+  it('makes a Europeana path id safe', () => {
+    expect(providerIdSlug('/2021012/xyz')).toMatch(/^[a-zA-Z0-9._-]+$/);
+  });
+
+  it('keeps ids distinct that would otherwise collapse to the same slug', () => {
+    expect(providerIdSlug('a/b')).not.toBe(providerIdSlug('a_b'));
+    expect(providerIdSlug('File:A B.jpg')).not.toBe(providerIdSlug('File:A_B.jpg'));
+  });
+
+  it('is deterministic, and never emits a traversal or an empty name', () => {
+    expect(providerIdSlug('a/b')).toBe(providerIdSlug('a/b'));
+    for (const id of ['..', '.', '../../etc/passwd', '']) {
+      const slug = providerIdSlug(id);
+      expect(slug).toMatch(/^[a-zA-Z0-9._-]+$/);
+      expect(slug).not.toBe('.');
+      expect(slug).not.toBe('..');
+      expect(slug.includes('/')).toBe(false);
+    }
   });
 });
