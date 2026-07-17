@@ -1,3 +1,4 @@
+import { env } from '@scriptreel/config';
 import {
   type AnalysisResult,
   AnalysisResultSchema,
@@ -13,9 +14,42 @@ import {
 } from '@scriptreel/core';
 import type OpenAI from 'openai';
 import type { Logger } from 'pino';
-import { extractJsonObject, getLlm, jsonFormat } from './llm';
+import { extractJsonObject, getLlm, jsonFormat, type LlmProvider } from './llm';
 
-const MAX_CHUNK_WORDS = 1200;
+// Chunk size + request timeout per provider — the same lesson media-verifier.ts learned for
+// images, applied to text: a hosted API and a local model are not the same machine, and a request
+// that exceeds the window "was never servable, at any timeout".
+//
+// A beat expands to roughly 12x its script words in JSON (verbatim text + visualDescription +
+// keyPhrase + entities + shots + queries), and analyze must emit a whole chunk's beats in ONE
+// response. gpt-4o has a 128k window at ~100 tok/s, so 1200 words is one fast call. Measured on
+// the owner's RTX 5060 Ti with OLLAMA_CONTEXT_LENGTH=16384: qwen2.5-coder:14b runs at 41.7 tok/s,
+// so a 1200-word chunk demands ~13.7k output tokens on top of ~3k input — ~16.7k against a 16,384
+// window. It does not fit, and Ollama drops the overflow SILENTLY rather than erroring: measured
+// 2026-07-16, a 295-word script came back as 185 words of beats (37% dropped) and the model was
+// blamed. At 5.5 min of generation it also outruns any sane request timeout. 500 words keeps a
+// chunk near ~8k tokens — half the window — and ~2 min per call.
+//
+// This does NOT make a local run faster: total generation is ~12 tokens per script word either
+// way (a 2,278-word script is ~11 min on this box). It makes each call FIT and SURVIVE.
+const LIMITS: Record<LlmProvider, { maxChunkWords: number; timeoutMs: number }> = {
+  openai: { maxChunkWords: 1200, timeoutMs: 300_000 },
+  ollama: { maxChunkWords: 500, timeoutMs: 300_000 },
+};
+
+// An LLM error with no HTTP status never reached the model. Which way it failed is the whole
+// diagnosis — "the server is off" and "the server is too slow" have nothing in common — and
+// `status n/a` says neither.
+function describeTransport(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/timed? out|ETIMEDOUT/i.test(msg)) {
+    return `request timed out after ${LIMITS[getLlm().provider].timeoutMs / 1000}s`;
+  }
+  if (/ECONNREFUSED|Connection error|fetch failed/i.test(msg)) {
+    return `cannot reach ${getLlm().provider === 'ollama' ? env.OLLAMA_BASE_URL : 'the OpenAI API'}`;
+  }
+  return msg.slice(0, 80);
+}
 
 // Mirrors ScriptBriefSchema for structured outputs (same subset rules as RESPONSE_JSON_SCHEMA
 // below — zod stays the source of truth and validates after parsing).
@@ -243,7 +277,7 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
   async analyze(input: AnalyzeInput, opts: AnalyzeOptions = {}): Promise<AnalysisResult> {
     const brief = await this.brief(input);
     const briefContext = brief ? formatBriefContext(brief) : undefined;
-    const chunks = chunkScript(input.script, MAX_CHUNK_WORDS);
+    const chunks = chunkScript(input.script, LIMITS[getLlm().provider].maxChunkWords);
 
     const beats: AnalysisResult['beats'] = [];
     let language = brief?.language ?? input.languageHint ?? 'en-US';
@@ -269,24 +303,27 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
   // which is worse analysis but not a failed project (invariant 7).
   private async brief(input: AnalyzeInput): Promise<ScriptBrief | null> {
     try {
-      const completion = await this.client.chat.completions.create({
-        model: this.model,
-        temperature: 0.2,
-        messages: [
-          { role: 'system', content: buildBriefPrompt() },
-          {
-            role: 'user',
-            content: [
-              input.languageHint ? `Script language hint: ${input.languageHint}.` : '',
-              'SCRIPT:',
-              input.script,
-            ]
-              .filter((p) => p.length > 0)
-              .join('\n\n'),
-          },
-        ],
-        response_format: jsonFormat('brief', BRIEF_JSON_SCHEMA),
-      });
+      const completion = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          temperature: 0.2,
+          messages: [
+            { role: 'system', content: buildBriefPrompt() },
+            {
+              role: 'user',
+              content: [
+                input.languageHint ? `Script language hint: ${input.languageHint}.` : '',
+                'SCRIPT:',
+                input.script,
+              ]
+                .filter((p) => p.length > 0)
+                .join('\n\n'),
+            },
+          ],
+          response_format: jsonFormat('brief', BRIEF_JSON_SCHEMA),
+        },
+        { timeout: LIMITS[getLlm().provider].timeoutMs },
+      );
       const content = completion.choices[0]?.message?.content;
       if (!content) return null;
       const parsed = ScriptBriefSchema.safeParse(JSON.parse(extractJsonObject(content)));
@@ -322,24 +359,36 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
 
     let completion: OpenAI.Chat.Completions.ChatCompletion;
     try {
-      completion = await this.client.chat.completions.create({
-        model: this.model,
-        temperature: 0.3,
-        messages: [
-          { role: 'system', content: buildSystemPrompt(input.pacing) },
-          { role: 'user', content: user },
-        ],
-        response_format: jsonFormat('analysis', RESPONSE_JSON_SCHEMA),
-      });
+      completion = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          temperature: 0.3,
+          messages: [
+            { role: 'system', content: buildSystemPrompt(input.pacing) },
+            { role: 'user', content: user },
+          ],
+          response_format: jsonFormat('analysis', RESPONSE_JSON_SCHEMA),
+        },
+        // Explicit, provider-sized. Without it the SDK's own default applies (× maxRetries), which
+        // is neither tuned to a local model's token rate nor visible to anyone reading this file.
+        { timeout: LIMITS[getLlm().provider].timeoutMs },
+      );
     } catch (err) {
       const status = (err as { status?: number }).status;
+      // Not every LLM failure is a quota problem. E_LLM_QUOTA is in errors.ts's RETRYABLE set, so
+      // reporting EVERY error as one makes an unfixable config mistake cost three full attempts
+      // and then fail naming the wrong cause: an un-pulled OLLAMA_MODEL (404) or a bad key (401)
+      // can never succeed on retry. A 4xx that is not 429 is configuration → E_ENV, which is not
+      // retryable. 429 / 5xx / timeout / connection stay E_LLM_QUOTA — those really are transient.
+      const config = status !== undefined && status >= 400 && status < 500 && status !== 429;
+      // `status` is undefined for a timeout or a refused connection, and "status n/a" tells the
+      // reader nothing — say which it was, since the two have completely different fixes.
+      const cause = status !== undefined ? `status ${status}` : describeTransport(err);
       throw new PipelineError(
-        'E_LLM_QUOTA',
+        config ? 'E_ENV' : 'E_LLM_QUOTA',
         'analyze',
-        `LLM request failed (${this.model}, status ${status ?? 'n/a'})`,
-        {
-          cause: err,
-        },
+        `LLM request failed (${this.model}, ${cause})`,
+        { cause: err },
       );
     }
 
