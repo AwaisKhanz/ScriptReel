@@ -29,8 +29,13 @@ async function main(): Promise<void> {
   // safely above the longest render but low enough that a crashed run RESUMES within
   // ~30 min (stages are idempotent, so the retry skips completed work). Single worker +
   // batchSize 1 means an expired-but-still-running job can't be double-processed.
+  // policy 'stately' makes singletonKey=projectId actually dedupe (see apps/web/lib/queue.ts and
+  // 0013_pgboss_stately.sql) — 'standard', the default, builds no singleton index so duplicate
+  // jobs pile up and the reconciler below re-enqueues on top of a live job. Both createQueue
+  // callers must agree; whichever runs first wins the ON CONFLICT DO NOTHING, so they cannot differ.
   await boss.createQueue(PIPELINE_QUEUE, {
     name: PIPELINE_QUEUE,
+    policy: 'stately',
     retryLimit: 2,
     retryDelay: 30,
     expireInSeconds: 1800,
