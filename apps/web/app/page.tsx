@@ -3,7 +3,9 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import type { CSSProperties } from 'react';
+import type { Health } from '../components/shell';
 import { Badge, Card, Dot, ProgressBar, Skeleton } from '../components/ui';
+import { getJson } from '../lib/api';
 import { fileUrl, fmtDuration } from '../lib/format';
 
 interface ProjectCard {
@@ -39,13 +41,20 @@ const STATUS: Record<
 export default function Dashboard() {
   const projects = useQuery<{ projects: ProjectCard[] }>({
     queryKey: ['projects'],
-    queryFn: () => fetch('/api/projects').then((r) => r.json()),
+    queryFn: () => getJson('/api/projects'),
     refetchInterval: 4000,
   });
   const quota = useQuery<{ meters: QuotaMeter[] }>({
     queryKey: ['quota'],
-    queryFn: () => fetch('/api/quota').then((r) => r.json()),
+    queryFn: () => getJson('/api/quota'),
     refetchInterval: 15_000,
+  });
+  // Shares the ['health'] key with SystemsPill, so this costs no extra request.
+  const health = useQuery<Health>({
+    queryKey: ['health'],
+    queryFn: () => getJson('/api/health'),
+    refetchInterval: 30_000,
+    staleTime: 20_000,
   });
 
   const list = projects.data?.projects ?? [];
@@ -96,10 +105,21 @@ export default function Dashboard() {
                   .slice(0, 3)
                   .map((m) => <QuotaMeterBar key={m.key} m={m} />)}
           </div>
+          {/* These four used to be hardcoded `tone="success"` — four green dots asserting the
+              system was healthy no matter what, while /api/health sat unread 40px away in the
+              SystemsPill. A status light that cannot go red is decoration, not a status light. */}
           <div className="flex items-center gap-4 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-            {['db', 'sidecar', 'ffmpeg', 'keys'].map((s) => (
+            {(['db', 'sidecar', 'ffmpeg', 'keys'] as const).map((s) => (
               <span key={s} className="flex items-center gap-1.5 text-xs text-fg-muted">
-                <Dot tone="success" />
+                <Dot
+                  tone={
+                    health.isLoading
+                      ? 'neutral'
+                      : health.data?.checks?.[s]?.ok
+                        ? 'success'
+                        : 'danger'
+                  }
+                />
                 {s}
               </span>
             ))}

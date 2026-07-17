@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Pills } from '../../components/controls';
 import { Badge, Button, Card, Dot, ProgressBar, Skeleton, Spinner } from '../../components/ui';
+import { getJson } from '../../lib/api';
 import { fmtBytes } from '../../lib/format';
 
 interface Health {
@@ -65,12 +66,12 @@ const PROVIDER_NOTE: Record<string, string> = {
 export default function SettingsPage() {
   const health = useQuery<Health>({
     queryKey: ['health'],
-    queryFn: () => fetch('/api/health').then((r) => r.json()),
+    queryFn: () => getJson('/api/health'),
     refetchInterval: 30_000,
   });
   const quota = useQuery<Quota>({
     queryKey: ['quota'],
-    queryFn: () => fetch('/api/quota').then((r) => r.json()),
+    queryFn: () => getJson('/api/quota'),
     refetchInterval: 5000,
   });
 
@@ -192,7 +193,7 @@ function KeysSection() {
   const [error, setError] = useState<string | null>(null);
   const keys = useQuery<{ keys: KeyRow[] }>({
     queryKey: ['keys'],
-    queryFn: () => fetch('/api/keys').then((r) => r.json()),
+    queryFn: () => getJson('/api/keys'),
   });
 
   // The credential fields for the selected provider drive the whole form —
@@ -485,7 +486,7 @@ function StorageSection() {
   const [clearing, setClearing] = useState<string | null>(null);
   const cache = useQuery<{ buckets: { bucket: string; bytes: number }[]; free: number }>({
     queryKey: ['cache'],
-    queryFn: () => fetch('/api/cache').then((r) => r.json()),
+    queryFn: () => getJson('/api/cache'),
   });
 
   async function clear(bucket: string) {

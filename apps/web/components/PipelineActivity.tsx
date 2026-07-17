@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { StageRun } from '../hooks/useProject';
 import { detailText, parseDetail } from '../lib/activity';
+import { getJson } from '../lib/api';
 import { fileUrl } from '../lib/format';
 import { Badge } from './ui';
 
@@ -25,7 +26,7 @@ export function PipelineActivity({ projectId, runs }: { projectId: string; runs:
   const visual = active !== undefined && VISUAL_STAGES.has(active.stage);
   const { data } = useQuery<{ thumbs: Thumb[] }>({
     queryKey: ['activity', projectId],
-    queryFn: () => fetch(`/api/projects/${projectId}/activity`).then((r) => r.json()),
+    queryFn: () => getJson(`/api/projects/${projectId}/activity`),
     refetchInterval: 1200,
     enabled: visual,
   });

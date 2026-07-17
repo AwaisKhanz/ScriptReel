@@ -15,7 +15,7 @@ import { useMemo, useRef, useState } from 'react';
 import { AspectToggle, Field, Pills, Slider } from '../../../components/controls';
 import { SubtitlePreviewCanvas } from '../../../components/SubtitlePreviewCanvas';
 import { Badge, Button, Card, Spinner } from '../../../components/ui';
-import { apiError } from '../../../lib/api';
+import { apiError, getJson } from '../../../lib/api';
 import { estimateBeats, estimateNarrationSec, fmtDuration } from '../../../lib/format';
 
 interface Voice {
@@ -118,11 +118,11 @@ export default function WizardPage() {
 
   const voices = useQuery<{ voices: Voice[] }>({
     queryKey: ['voices'],
-    queryFn: () => fetch('/api/voices').then((r) => r.json()),
+    queryFn: () => getJson('/api/voices'),
   });
   const music = useQuery<{ tracks: Track[] }>({
     queryKey: ['music'],
-    queryFn: () => fetch('/api/music').then((r) => r.json()),
+    queryFn: () => getJson('/api/music'),
   });
 
   const narration = useMemo(() => estimateNarrationSec(script, s.speed), [script, s.speed]);

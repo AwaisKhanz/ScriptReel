@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { getJson } from '../lib/api';
 
 export interface StageRun {
   stage: string;
@@ -39,7 +40,7 @@ const ACTIVE = new Set(['queued', 'running']);
 export function useProject(id: string) {
   return useQuery<ProjectDetail>({
     queryKey: ['project', id],
-    queryFn: () => fetch(`/api/projects/${id}`).then((r) => r.json()),
+    queryFn: () => getJson(`/api/projects/${id}`),
     refetchInterval: (q) => (ACTIVE.has(q.state.data?.project?.status ?? '') ? 800 : false),
   });
 }

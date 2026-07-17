@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { getJson } from '../lib/api';
 
 /* ---------- brand mark ---------- */
 
@@ -139,7 +140,7 @@ export function Topbar() {
 
 /* ---------- systems pill (real /api/health) ---------- */
 
-interface Health {
+export interface Health {
   ok: boolean;
   checks?: {
     db: { ok: boolean };
@@ -152,7 +153,7 @@ interface Health {
 function SystemsPill() {
   const { data, isLoading, isError } = useQuery<Health>({
     queryKey: ['health'],
-    queryFn: () => fetch('/api/health').then((r) => r.json()),
+    queryFn: () => getJson('/api/health'),
     refetchInterval: 30_000,
     staleTime: 20_000,
   });

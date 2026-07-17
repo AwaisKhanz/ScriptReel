@@ -15,7 +15,17 @@ async function getBoss(): Promise<PgBoss> {
       max: 2, // send-only; session pooler budget (see packages/db/client.ts)
     });
     boss.on('error', () => {});
-    bossPromise = boss.start().then(() => boss);
+    // Clear the cache if the start fails, or a single transient DB blip at cold start poisons
+    // this module for the life of the process: the rejected promise stays cached, and every
+    // later generate/continue/rerender returns 502 "enqueue failed" until Next is restarted.
+    // The retry costs one connection attempt; not retrying costs the whole app.
+    bossPromise = boss.start().then(
+      () => boss,
+      (err: unknown) => {
+        bossPromise = null;
+        throw err;
+      },
+    );
   }
   return bossPromise;
 }

@@ -4,6 +4,7 @@ import { isArchiveProvider, providerLabel, TAU_HI, TAU_LO } from '@scriptreel/co
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { getJson } from '../lib/api';
 import { fileUrl, fmtDuration } from '../lib/format';
 import { Badge, Button, Card, Dot, Skeleton, Spinner } from './ui';
 
@@ -97,7 +98,7 @@ export function Storyboard({
   // no polling to do, so this query fetches once.
   const { data, isLoading, isError, refetch } = useQuery<{ beats: Beat[] }>({
     queryKey: ['beats', projectId],
-    queryFn: () => fetch(`/api/projects/${projectId}/beats`).then((r) => r.json()),
+    queryFn: () => getJson(`/api/projects/${projectId}/beats`),
   });
   const beats = data?.beats ?? [];
 
