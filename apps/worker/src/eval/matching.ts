@@ -543,10 +543,20 @@ async function main(): Promise<void> {
   // threshold, and no amount of re-fitting produces it. Print it so nobody fits a τ to a target the
   // axis cannot reach and then reports the τ as if it had.
   const ceiling = precisionCeiling(scored, (s) => s.score, 5);
+  // The same ceiling for the two candidate axes, because "which axis should the selector use?" is a
+  // question about their ceilings and only `score`'s was ever reported. It matters now: on the
+  // so400m A/B, raw sim's WITHIN-beat AUC (0.756) beat the base score's (0.713) — the quality/orient
+  // terms turned a stronger encoder into a weaker selector (base−sim WITHIN flipped +0.025 → -0.043
+  // between base-224 and so400m). Whether dropping them is actually better is a precision question,
+  // and this is the line that answers it.
+  const ceilingSim = precisionCeiling(scored, (s) => s.sim, 5);
+  const ceilingSpec = precisionCeiling(scored, (s) => s.spec, 5);
   // Raw-sim cross-check floor (doc 23 §6): the subject-presence axis, independent of
   // the quality/orient terms that can lift a wrong-but-pretty asset over the base τ.
   const simFloorHi = operatingPoint(scored, (s) => s.sim, 0.9, 3);
   const simFloorLo = operatingPoint(scored, (s) => s.sim, 0.8, 3);
+  const simTau80 = operatingPoint(scored, (s) => s.sim, 0.8, 3);
+  const specTau80 = operatingPoint(scored, (s) => s.spec, 0.8, 3);
 
   // precision@1 / top-1 acceptance (doc 21): per beat, is rank-1 good? For all-bad
   // beats, a correct decline (top score < τ_lo) also counts as accepted.
@@ -825,6 +835,28 @@ async function main(): Promise<void> {
       );
     }
   }
+  // Which axis should the selector rank on? Compare CEILINGS, not AUCs — AUC is threshold-free and
+  // says nothing about the precision you can actually operate at.
+  // Coverage at the operating point is half the decision, and reporting a ceiling alone hides it:
+  // 87.5% reached by 16 of 218 candidates is not an operating point. A τ that strict sends nearly
+  // every beat to the fallback ladder — i.e. to the generic stock the τ exists to avoid. Precision
+  // AND how many clear it, or neither number means anything.
+  const axisRow = (
+    name: string,
+    axisOf: (s: Scored) => number,
+    c: { tau: number; precision: number; support: number } | null,
+    t80: number | null,
+  ): string => {
+    const ceil = c ? `${(c.precision * 100).toFixed(1)}% (${c.support}/${scored.length})` : 'n/a';
+    const at80 =
+      t80 === null ? 'n/a' : `${scored.filter((s) => axisOf(s) >= t80).length}/${scored.length}`;
+    return `  ${name.padEnd(5)} ceiling ${ceil.padEnd(16)} │ @80%: τ=${fmt(t80).padEnd(6)} clears ${at80}`;
+  };
+  console.log('\naxis comparison — precision is only half of it; coverage is the other half:');
+  console.log(axisRow('score', (s) => s.score, ceiling, tauHi80));
+  console.log(axisRow('sim', (s) => s.sim, ceilingSim, simTau80));
+  console.log(axisRow('spec', (s) => s.spec, ceilingSpec, specTau80));
+
   console.log('\ncross-check sim floor (raw-sim space, doc 23 §6):');
   console.log(`  sim @90% precision  = ${fmt(simFloorHi)}   ← CROSSCHECK_SIM_FLOOR candidate`);
   console.log(`  sim @80% precision  = ${fmt(simFloorLo)}`);
