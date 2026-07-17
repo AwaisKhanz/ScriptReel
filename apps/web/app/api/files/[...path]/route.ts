@@ -35,16 +35,35 @@ function contentType(path: string): string {
 }
 
 // Reject anything that escapes an allowed prefix (blocks `..`, absolute, symlink escapes).
+//
+// Containment is checked against the resolved PREFIX directory, never against `base`. The
+// prefix is matched on the raw string but `..` is resolved afterwards, so checking `base`
+// let any path that merely STARTS WITH an allowed prefix climb back out and still pass:
+// `assets/music/../../.env` resolves to `<rootDir>/.env`, which trivially satisfies
+// startsWith(rootDir). That served the repo's own .env — every provider key, the OpenAI key
+// and the Supabase password — over HTTP 200, and `realpath` could not help because the file
+// genuinely is inside the base. The allowlist looked like the defence and was the hole.
+//
+// A segment containing a separator is rejected outright: Next decodes %2F before building
+// params, so `..%2F..%2F.env` arrives as ONE segment carrying slashes and reconstitutes the
+// traversal at join(). Legitimate paths never need one — each segment is a single name.
+const ALLOW_ROOTS: Promise<{ prefix: string; root: string }[]> = Promise.all(
+  ALLOWED.map(async (a) => ({ prefix: a.prefix, root: await realpath(resolve(a.base, a.prefix)) })),
+).catch(() => []);
+
 async function safeResolve(segments: string[]): Promise<string | null> {
+  if (segments.some((s) => s.includes('/') || s.includes('\\') || s === '..')) return null;
   const rel = segments.join('/');
   const allow = ALLOWED.find((a) => rel === a.prefix || rel.startsWith(`${a.prefix}/`));
   if (!allow) return null;
+  const root = (await ALLOW_ROOTS).find((r) => r.prefix === allow.prefix)?.root;
+  if (!root) return null; // the prefix dir does not exist → nothing under it is servable
+  const rootWithSep = root.endsWith(sep) ? root : root + sep;
   const resolved = resolve(allow.base, rel);
-  const baseWithSep = allow.base.endsWith(sep) ? allow.base : allow.base + sep;
-  if (!resolved.startsWith(baseWithSep)) return null;
+  if (resolved !== root && !resolved.startsWith(rootWithSep)) return null;
   try {
     const real = await realpath(resolved);
-    if (!real.startsWith(baseWithSep)) return null; // symlink escape
+    if (real !== root && !real.startsWith(rootWithSep)) return null; // symlink escape
     return real;
   } catch {
     return null; // missing
