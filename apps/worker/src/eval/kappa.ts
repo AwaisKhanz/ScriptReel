@@ -282,13 +282,31 @@ async function main(): Promise<void> {
         ? 'κ in (0.30, 0.60) → MODERATE/FAIR. Too noisy to have DECLARED those nulls — re-run the levers on human labels.'
         : "κ ≤ 0.30 → POOR. The fixture measures the model's taste. Every decision taken against it, τ = 0.360 included, is void.";
   console.log(`\n  PRE-REGISTERED VERDICT: ${verdict}`);
+  // Both directions. This check used to fire only when the model was too LENIENT — so on the
+  // n=50 run it stayed silent about the dominant feature of the matrix (16 model-bad/human-good
+  // vs 5 the other way). The two biases are not symmetric in consequence and each needs saying.
   if (modelGoodHumanBad > modelBadHumanGood * 2) {
     console.log(
       `\n  ⚠ asymmetry: the model calls ${modelGoodHumanBad} pairs good that you call bad, vs ${modelBadHumanGood} the other way.`,
     );
     console.log(
-      '    A model biased toward "good" inflates precision at every τ — the exact defect R1 names.',
+      '    A model biased toward "good" INFLATES precision at every τ, so the fitted τ is too LOW',
     );
+    console.log('    and the selector ships candidates you would reject.');
+  } else if (modelBadHumanGood > modelGoodHumanBad * 2) {
+    console.log(
+      `\n  ⚠ asymmetry: the model calls ${modelBadHumanGood} pairs BAD that you call GOOD, vs ${modelGoodHumanBad} the other way.`,
+    );
+    console.log(
+      '    Those are phantom false-positives at every threshold: precision(τ) counts them against',
+    );
+    console.log(
+      '    a τ that in truth cleared them, so measured precision reads LOW and the fit climbs to',
+    );
+    console.log(
+      '    compensate. The fitted τ is too HIGH — the selector rejects candidates you would accept,',
+    );
+    console.log('    dropping those beats to the fallback ladder and generic stock.');
   }
 }
 

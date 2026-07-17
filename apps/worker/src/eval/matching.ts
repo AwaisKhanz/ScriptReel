@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { env, rootDir } from '@scriptreel/config';
@@ -27,10 +28,19 @@ const LabelSchema = z.object({
   duration: z.number().nullable(),
   label: z.enum(['good', 'bad']),
   // Provenance. `human` = hand-labelled (doc 21). `model` = judged by a vision model via
-  // `pnpm eval:pool`'s labelling workflow. Model labels are defensible here because the question
-  // is objective ("is the subject actually present?") rather than taste — but they are NOT
-  // independent ground truth: an AUC measured against them scores agreement with a model's
-  // opinion, not a human's. Recorded so that can never be forgotten, and reported below.
+  // `pnpm eval:pool`'s labelling workflow.
+  //
+  // Model labels were argued to be defensible here "because the question is objective (is the
+  // subject actually present?) rather than taste". MEASURED 2026-07-17, and that argument is
+  // dead: `pnpm eval:kappa --score` over 50 blind human labels returns κ = 0.160 — POOR, barely
+  // above chance. The question is NOT objective. The model demands literal subject presence; the
+  // human accepts thematic fit, and they disagree 16:5 in that direction (8:1 at n=30, so it
+  // reproduces). Extrapolated over the pool, ~44% of the 192 model labels are wrong, mostly
+  // `bad` that should be `good`.
+  //
+  // Consequence for anything fitted below: those mislabels are phantom false-positives at every
+  // threshold, so precision(τ) reads low and τ climbs to compensate. Any τ fitted on the model
+  // labels is too HIGH. Prefer --human-only; the pre-registered rule in kappa.ts voids the rest.
   labeledBy: z.enum(['human', 'model']).optional(),
 });
 type Label = z.infer<typeof LabelSchema>;
@@ -109,6 +119,40 @@ async function loadLabels(): Promise<Label[]> {
       if (!parsed.success) throw new Error(`labels.jsonl line ${i + 1}: ${parsed.error.message}`);
       return parsed.data;
     });
+}
+
+const HumanVerdictSchema = z.object({
+  beat: z.string(),
+  thumbPath: z.string(),
+  human: z.enum(['good', 'bad']),
+});
+
+// Overlay the blind human verdicts from kappa-human.jsonl onto the label set (joined on
+// beat|thumbPath), promoting each overwritten row to labeledBy:'human'.
+//
+// These 50 are the SAME pairs the model judged, re-judged by hand without seeing the model's
+// call — which is what makes them a correction rather than a second opinion. Where they land,
+// the human wins: κ = 0.160 says the model's verdict on those pairs carries almost no signal.
+// Kept as an overlay instead of being merged into labels.jsonl so the model's original call
+// stays on disk and eval:kappa can keep scoring the two against each other.
+async function applyHumanVerdicts(labels: Label[]): Promise<{ labels: Label[]; applied: number }> {
+  const p = resolve(rootDir, 'fixtures/eval/kappa-human.jsonl');
+  if (!existsSync(p)) return { labels, applied: 0 };
+  const raw = await readFile(p, 'utf8');
+  const verdicts = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('//'))
+    .map((l) => HumanVerdictSchema.parse(JSON.parse(l)));
+  const byKey = new Map(verdicts.map((v) => [`${v.beat}|${v.thumbPath}`, v.human]));
+  let applied = 0;
+  const out = labels.map((l) => {
+    const verdict = byKey.get(`${l.beat}|${l.thumbPath}`);
+    if (!verdict) return l;
+    applied += 1;
+    return { ...l, label: verdict, labeledBy: 'human' as const };
+  });
+  return { labels: out, applied };
 }
 
 // Precision-at-threshold curve: precision(τ) = #good with value≥τ / #all with value≥τ.
@@ -377,8 +421,26 @@ function histogram(scored: Scored[]): string {
 }
 
 async function main(): Promise<void> {
-  const labels = await loadLabels();
-  if (labels.length === 0) throw new Error('no labels found in fixtures/eval/labels.jsonl');
+  const raw = await loadLabels();
+  if (raw.length === 0) throw new Error('no labels found in fixtures/eval/labels.jsonl');
+  const { labels: corrected, applied } = await applyHumanVerdicts(raw);
+
+  // --human-only fits on hand-labelled pairs ALONE. This is what the pre-registered rule in
+  // kappa.ts calls for at κ ≤ 0.30: the model labels do not measure what they claim to, so a τ
+  // fitted on them is not a τ. Smaller n, but n of the real thing.
+  const humanOnly = process.argv.includes('--human-only');
+  const labels = humanOnly ? corrected.filter((l) => l.labeledBy === 'human') : corrected;
+  if (labels.length === 0) throw new Error('--human-only: no human-labelled pairs found');
+  if (applied > 0) {
+    console.log(
+      `overlaid ${applied} blind human verdicts from kappa-human.jsonl (κ=0.160 → human wins)`,
+    );
+  }
+  if (humanOnly) {
+    console.log(
+      `--human-only: fitting on ${labels.length} hand-labelled pairs across ${new Set(labels.map((l) => l.beat)).size} beats\n`,
+    );
+  }
 
   // Embed unique descriptions + unique thumbs (cached on disk by the sidecar).
   const descriptions = [...new Set(labels.map((l) => l.beatDescription))];
@@ -390,12 +452,30 @@ async function main(): Promise<void> {
   // The distractor bank is fixed and beat-independent — embed once (redesign §1.1).
   const distractorEmbs = (await embedText([...SPEC_DISTRACTORS])).vectors;
   const thumbByPath = new Map<string, number[]>();
+  const failedThumbs: string[] = [];
   for (let i = 0; i < thumbPaths.length; i += 64) {
     const batch = thumbPaths.slice(i, i + 64);
     const res = await embedImage(batch);
     batch.forEach((p, j) => {
-      if (!res.failed.includes(p)) thumbByPath.set(p, res.vectors[j] ?? []);
+      if (res.failed.includes(p)) failedThumbs.push(p);
+      else thumbByPath.set(p, res.vectors[j] ?? []);
     });
+  }
+  // A thumb that failed to embed used to be skipped here, read back as [] below, and score
+  // cosine([], desc) = 0 — indistinguishable from a real zero. With data/cache evicted (it is an
+  // LRU render cache, and labels.jsonl points into it) ALL 222 failed: every base score collapsed
+  // to the same 0.266 the quality/orient terms contribute, ROC-AUC came out at exactly 0.500, the
+  // bootstrap CIs were zero-width — and the run still printed `precision@1 = 76.7% PASS`. A
+  // calibration gate that passes on zero data is worse than one that crashes, so: refuse.
+  if (failedThumbs.length > 0) {
+    const sample = failedThumbs.slice(0, 3).join('\n    ');
+    throw new Error(
+      `${failedThumbs.length}/${thumbPaths.length} thumbs failed to embed — every score below would be\n` +
+        `  a constant, and every AUC exactly 0.500. Not a result.\n\n` +
+        `    ${sample}${failedThumbs.length > 3 ? '\n    …' : ''}\n\n` +
+        `  data/cache is a machine-local LRU render cache, so the labeled thumbs are routinely\n` +
+        `  evicted. Rebuild them:  pnpm eval:fixtures`,
+    );
   }
 
   const captionSims = await loadCaptionSims();
