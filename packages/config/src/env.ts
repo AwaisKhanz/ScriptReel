@@ -51,6 +51,13 @@ const EnvSchema = z.object({
   LLM_PROVIDER: z.enum(['openai', 'ollama']).default('openai'),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().min(1).default('gpt-4o-mini'),
+  // How entities are enriched for search (doc 25 §2a) — decoupled from LLM_PROVIDER so a cloud
+  // analyze doesn't force the slow, rate-limited Wikidata path. 'llm' asks the configured model for
+  // aliases/related-terms/era (fast; ~cents on cloud, free+local on Ollama) — the default, because
+  // the Wikidata barrier can add minutes to a large script. 'wikidata' is the factual graph (most
+  // accurate P31 sense-check, slowest). 'none' skips expansion entirely and searches on the
+  // analyzer's own searchTerms (fastest, zero extra calls).
+  KNOWLEDGE_SOURCE: z.enum(['llm', 'wikidata', 'none']).default('llm'),
   // Local LLM via Ollama (active when LLM_PROVIDER=ollama). Text model drives analyze + knowledge
   // expansion; the vision model drives media-fit verification (it must be able to see images).
   // Use a NON-reasoning model for text — reasoning models (qwen3, deepseek-r1) "think" before

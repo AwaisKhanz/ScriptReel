@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { paths } from '@scriptreel/config';
+import { env, paths } from '@scriptreel/config';
 import { INSTANCE_OF_QID, sha1Hex } from '@scriptreel/core';
 import type { Logger } from 'pino';
 import { z } from 'zod';
@@ -309,7 +309,7 @@ export async function resolveReferenceImage(
 
 // Expand one entity. Returns EMPTY on any failure (invariant 7). The caller memoizes by
 // canonical name so a repeated entity across beats is fetched once.
-// LLM knowledge expander (active when LLM_PROVIDER=ollama). Produces the same EntityKnowledge
+// LLM knowledge expander (active when KNOWLEDGE_SOURCE=llm — the default). Produces the same EntityKnowledge
 // shape from the local text model instead of Wikidata — no 429 rate limits, covers any entity,
 // stays fully local. The model enriches for VISUAL search and is told never to invent facts; any
 // failure degrades to EMPTY (search still has the LLM's own query terms — invariant 7).
@@ -380,8 +380,11 @@ export async function expandEntity(
   instanceOf: string,
   log: Logger,
 ): Promise<EntityKnowledge> {
-  // Local-LLM path (no Wikidata) when configured; otherwise the factual Wikidata graph.
-  if (getLlm().provider === 'ollama') return expandEntityLlm(canonical, instanceOf, log);
+  // Source is an explicit setting, NOT the LLM provider: a cloud analyze must not force the slow
+  // Wikidata barrier (env.KNOWLEDGE_SOURCE, doc 25 §2a). 'none' skips expansion (search falls back
+  // to the analyzer's own searchTerms); 'llm' asks the configured model; 'wikidata' is the graph.
+  if (env.KNOWLEDGE_SOURCE === 'none') return EMPTY;
+  if (env.KNOWLEDGE_SOURCE === 'llm') return expandEntityLlm(canonical, instanceOf, log);
   const cached = await readKnowledgeCache(canonical, instanceOf);
   if (cached) return cached;
   try {
