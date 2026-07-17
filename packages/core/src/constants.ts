@@ -138,37 +138,46 @@ export const MONTAGE_SAME_SOURCE_FACTOR = 1.25;
 // re-run and re-fit on any model or formula change (doc 09 §step 3, doc 21). Scores compress near
 // ~0.30 because the non-sim quality/orient terms are ~constant for HD stock video.
 //
-// [CALIBRATE] Re-fitted 2026-07-17 on 80 HUMAN labels / 30 beats:
-//   `pnpm eval:matching --human-only`  →  τ_hi @90% = 0.338 · τ_lo @70% = 0.308
-//   ROC-AUC base 0.788 (raw sim 0.742) · precision@1 93.3%
+// [CALIBRATE] Re-fitted 2026-07-17 on 218 HUMAN labels / 30 beats — the WHOLE fixture, hand-judged
+// (`pnpm eval:matching --human-only`; 4 of 222 remain model-judged):
+//   τ_hi @80% = 0.341 · τ_lo @70% = 0.311 · ROC-AUC base 0.763 (raw sim 0.751) · base rate 58.3% good
 //
-// This replaces 0.360/0.314, which are void — by the rule pre-registered in eval/kappa.ts before
-// any human label existed. `pnpm eval:kappa --score` over 50 blind human labels returned
-// κ = 0.160: POOR, barely above chance. The vision judge that produced 192 of the old 222 labels
-// does not measure what a human means by "good". It is not noisy either — it disagrees 16:5 in one
-// direction (8:1 at n=30, so it reproduces), demanding literal subject presence where the human
-// accepts thematic fit. ~44% of those 192 labels are wrong, mostly `bad` that should be `good`.
+// **τ_hi is the @80% point, not @90%, because @90% DOES NOT EXIST on this axis.** The base score
+// never exceeds **81.7%** precision at any threshold (τ=0.350, 60 candidates clearing). That is a
+// fact about the score, not the threshold: no re-fit produces a 90% tier, and every previous value
+// here was fitted to a target the axis cannot reach and then reported as if it had been hit.
+// eval:matching now prints the ceiling so this cannot recur silently.
 //
-// Which is exactly why the old numbers ran HIGH. A mislabelled-bad pair is a phantom false-positive
-// at every threshold: precision(τ) counts it against a τ that in truth cleared it, so measured
-// precision reads low and the fit climbs to compensate. A too-high τ_hi is not a safe error — it
-// rejects candidates the viewer would have accepted and drops those beats to the fallback ladder,
-// i.e. to the generic stock the whole sourcing effort exists to avoid.
+// History, because each number failed in an instructive way:
+//   0.322 (07-11) — fitted on 30 pairs; reproduced exactly on its own subset. Overfitting.
+//   0.360 (07-16) — fitted on 222 labels of which 192 were vision-model-judged. On the corrected
+//                   set only 23/218 candidates clear it, at 78.3% precision. Its "90%" was carved
+//                   from a "servable subset" of bad labels.
+//   0.338 (07-17) — fitted on 80 human labels, claimed @90%. On all 218 it delivers **76.9%**.
+//                   The 80 were the 30 originals plus a κ round the sampler drew 25-good/25-bad
+//                   BY MODEL LABEL, so the fit inherited a class balance chosen by the instrument
+//                   under test — and precision(τ) depends on prevalence. Overfitting again, by a
+//                   subtler route. Retired within hours by 138 more human labels.
+//   0.341 (now)   — @80%, the highest standard target the axis actually reaches, on the complete
+//                   hand-labelled fixture. No sample ⇒ no sampling bias to inherit.
 //
-// Two things worth knowing about the old fit:
-//   - On the corrected label set, τ_hi @90% is UNREACHABLE. 0.360 was never an attainable operating
-//     point; it was the artifact of a "servable subset" carved out of bad labels.
-//   - The run that produced it was scoring nothing. All 222 labeled thumbs had been evicted from
-//     data/cache (an LRU render cache that labels.jsonl points into), every embed failed, every
-//     base score was the constant 0.266 and every AUC exactly 0.500 — and eval:matching reported
-//     PASS. It now refuses; run `pnpm eval:fixtures` first.
+// On the labels themselves: `pnpm eval:kappa --score` over 188 hand-labelled pairs gives κ = 0.361
+// (MODERATE). The earlier κ = 0.160 was the 50-pair κ round alone — doubly stratified (by beat AND
+// by model label), so treat 0.361 as the estimate. The direction is stable across every n measured:
+// the model calls 43 pairs BAD that the human calls GOOD vs 18 the other way (2.4:1; 16:5 at n=50,
+// 8:1 at n=30). It is biased, not noisy — it demands literal subject presence where a human accepts
+// thematic fit. A mislabelled-bad pair is a phantom false-positive at every threshold, so
+// precision(τ) reads low and any fit against model labels CLIMBS. That is why every earlier value
+// ran high, and a too-high τ_hi is not the safe error: it rejects candidates the viewer would have
+// accepted and drops those beats to the fallback ladder, i.e. to generic stock.
 //
-// CAVEAT, stated plainly because this file has been burned by it before: n=80 across 30 beats is
-// small, and 0.322 once "reproduced exactly" on its own 30-pair subset, which is what overfitting
-// looks like. 0.338 is the best-evidenced number available — labels a human actually wrote, on
-// thumbs that actually loaded — not ground truth. Widen the human set before trusting it further.
-export const TAU_HI = 0.338; // [CALIBRATE 2026-07-17] choose outright (@90% precision, 80 human labels)
-export const TAU_LO = 0.308; // [CALIBRATE 2026-07-17] choose but flag 'weak' (@70% precision)
+// Re-run `pnpm eval:fixtures` before any eval — labels.jsonl points into data/cache, an LRU render
+// cache that evicts them, and a missing thumb used to score a silent 0 (every AUC exactly 0.500,
+// and it reported PASS). matching.ts now refuses instead.
+//
+// Model-specific (siglip2-base-patch16-224, base-score space); re-fit on any model or formula change.
+export const TAU_HI = 0.341; // [CALIBRATE 2026-07-17] choose outright (@80% precision — the ceiling is 81.7%)
+export const TAU_LO = 0.311; // [CALIBRATE 2026-07-17] choose but flag 'weak' (@70% precision)
 export const TAU_MOOD = 0.28; // [CALIBRATE Phase 7] mood-tier accept < τ_lo
 
 // OCR gate (doc 25 §5, cascade A). Tesseract reads each beat's SigLIP top-K shortlist;

@@ -367,20 +367,41 @@ async function main(): Promise<void> {
     console.log('  ~20 minutes. It decides whether τ = 0.360 and the four measured nulls stand.');
     return;
   }
-  const human = await loadJsonl('fixtures/eval/kappa-human.jsonl', HumanSchema);
+  // Score against every human verdict on disk, both rounds. The two are NOT the same estimate and
+  // the difference is worth keeping straight:
+  //   kappa-human.jsonl — 50 pairs the sampler drew 25 good / 25 bad BY MODEL LABEL. Balanced
+  //     marginals make κ well-conditioned, and this is the round the pre-registered rule was
+  //     written against.
+  //   kappa-rest.jsonl  — the remainder, unstratified. Natural prevalence, so a κ over everything
+  //     is the better estimate of agreement on the pool as it actually is.
+  // Both are reported; the pre-registered verdict is called on the combined set, which is strictly
+  // more evidence about the same question.
+  const restPath = resolve(rootDir, 'fixtures/eval/kappa-rest.jsonl');
+  const human = [
+    ...(await loadJsonl('fixtures/eval/kappa-human.jsonl', HumanSchema)),
+    ...(existsSync(restPath) ? await loadJsonl('fixtures/eval/kappa-rest.jsonl', HumanSchema) : []),
+  ];
   const byKey = new Map<string, Label>();
   for (const l of labels) byKey.set(`${l.beat}|${l.thumbPath}`, l);
   // Join on (beat, thumbPath). A human row with no match is dropped rather than guessed at — the
   // whole point is comparing the two raters on the SAME pairs.
   const pairs: { a: string; b: string }[] = [];
+  const seen = new Set<string>();
   for (const h of human) {
-    const model = byKey.get(`${h.beat}|${h.thumbPath}`);
-    if (model) pairs.push({ a: model.label, b: h.human });
+    const key = `${h.beat}|${h.thumbPath}`;
+    if (seen.has(key)) continue; // a pair labelled in both rounds counts once
+    const model = byKey.get(key);
+    if (model) {
+      seen.add(key);
+      pairs.push({ a: model.label, b: h.human });
+    }
   }
   if (pairs.length === 0) throw new Error('no human labels joined against labels.jsonl');
   if (pairs.length < human.length) {
     console.log(`⚠ ${human.length - pairs.length} human rows did not join and were dropped\n`);
   }
+  const modelJudged = labels.filter((l) => l.labeledBy === 'model').length;
+  console.log(`coverage: ${pairs.length}/${modelJudged} model-judged pairs now hand-labelled\n`);
 
   const { kappa, po, pe } = cohensKappa(pairs);
   const bothGood = pairs.filter((p) => p.a === 'good' && p.b === 'good').length;

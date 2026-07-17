@@ -217,6 +217,25 @@ function operatingPoint(
   return null;
 }
 
+// The best precision this axis reaches at ANY threshold, with the τ and coverage there. `n/a` from
+// operatingPoint says a target was missed; it does not say by how much, or whether the target was
+// ever attainable. That distinction is the difference between "re-fit τ" and "this axis cannot do
+// what the tier claims" — and on the human fixture it is the latter.
+function precisionCeiling(
+  scored: Scored[],
+  axisOf: (s: Scored) => number,
+  minSupport: number,
+): { tau: number; precision: number; support: number } | null {
+  let best: { tau: number; precision: number; support: number } | null = null;
+  for (const tau of [...new Set(scored.map(axisOf))].sort((a, b) => a - b)) {
+    const at = scored.filter((s) => axisOf(s) >= tau);
+    if (at.length < minSupport) continue;
+    const precision = at.filter((s) => s.label === 'good').length / at.length;
+    if (!best || precision > best.precision) best = { tau, precision, support: at.length };
+  }
+  return best;
+}
+
 // Rank-based ROC-AUC (Mann–Whitney U), average ranks for ties. Threshold-free: "what is
 // P(a random good outranks a random bad)?" — 0.5 is a coin flip, 1.0 is perfect separation.
 // This is the metric a CALIBRATION change moves. precision@1 cannot see one: with 6 beats that
@@ -516,7 +535,14 @@ async function main(): Promise<void> {
   const good = scored.filter((s) => s.label === 'good');
   const bad = scored.filter((s) => s.label === 'bad');
   const tauHi = operatingPoint(scored, (s) => s.score, 0.9, 3);
+  const tauHi80 = operatingPoint(scored, (s) => s.score, 0.8, 3);
   const tauLo = operatingPoint(scored, (s) => s.score, 0.7, 3);
+  // The ceiling. Reporting only "@90% = n/a" tells you a target was missed but not whether it was
+  // missed by 1 point or 20 — and on the 218-human fixture the honest answer is that 90% does not
+  // exist on this axis at ANY threshold (max 81.7%). That is a fact about the SCORE, not about the
+  // threshold, and no amount of re-fitting produces it. Print it so nobody fits a τ to a target the
+  // axis cannot reach and then reports the τ as if it had.
+  const ceiling = precisionCeiling(scored, (s) => s.score, 5);
   // Raw-sim cross-check floor (doc 23 §6): the subject-presence axis, independent of
   // the quality/orient terms that can lift a wrong-but-pretty asset over the base τ.
   const simFloorHi = operatingPoint(scored, (s) => s.sim, 0.9, 3);
@@ -783,7 +809,22 @@ async function main(): Promise<void> {
 
   console.log('\noperating points (base-score space):');
   console.log(`  τ_hi @90% precision = ${fmt(tauHi)}`);
+  console.log(`  τ_hi @80% precision = ${fmt(tauHi80)}   ← the shippable tier when @90% is n/a`);
   console.log(`  τ_lo @70% precision = ${fmt(tauLo)}`);
+  if (ceiling) {
+    const pct = (ceiling.precision * 100).toFixed(1);
+    console.log(
+      `  CEILING: this axis never exceeds ${pct}% precision (at τ=${ceiling.tau.toFixed(3)}, ${ceiling.support} candidates clear it).`,
+    );
+    if (tauHi === null) {
+      console.log(
+        '           So @90% is not a threshold that was missed — it does not exist on this axis.',
+      );
+      console.log(
+        '           Do not fit τ_hi to 90% and report it as such; pick a target the axis reaches.',
+      );
+    }
+  }
   console.log('\ncross-check sim floor (raw-sim space, doc 23 §6):');
   console.log(`  sim @90% precision  = ${fmt(simFloorHi)}   ← CROSSCHECK_SIM_FLOOR candidate`);
   console.log(`  sim @80% precision  = ${fmt(simFloorLo)}`);
