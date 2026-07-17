@@ -134,25 +134,41 @@ export const MONTAGE_DIVERSITY_RELAXED = 0.95;
 // [CALIBRATE 23e / doc 24]
 export const MONTAGE_SAME_SOURCE_FACTOR = 1.25;
 
-// Greedy selection thresholds in base-score space. SigLIP cosine ranges are
-// model-specific — these were CALIBRATED in Phase 6 from 30 labeled pairs (G1–G3)
-// with siglip2-base-patch16-224: τ_hi = 90%-precision point, τ_lo = 70%-precision
-// point (`pnpm eval:matching`, precision@1 = 100%). Re-run and re-fit on any model
-// or formula change (doc 09 §step 3, doc 21). Scores compress near ~0.30 because the
-// non-sim quality/orient terms are ~constant for HD stock video.
-// [CALIBRATE] Re-fitted 2026-07-16 on 222 pairs / 30 beats (was 0.322, fitted to just 30 pairs
-// from G1–G3 — and that 30-pair subset still reproduces 0.322 exactly, which is what overfitting
-// looks like). At 0.322 the real precision is 78.8% on stock-servable beats and 63.7% across the
-// whole set — not the 90% the tier claims. The honest @90% point on the servable subset is 0.360.
-// Model-specific (siglip2-base-patch16-224, base-score space); re-run `pnpm eval:matching` after
-// any model or formula change.
-// CAVEAT: 192/222 of those labels are AI-judged (see labels.jsonl `labeledBy`) and the beat mix is
-// hand-picked, so treat 0.360 as a better estimate than 0.322 — not as ground truth.
-// τ_lo deliberately NOT lowered to its measured @70% (0.300): that would ACCEPT more marginal
-// candidates, which is not the defect we demonstrated. Raising τ_hi only tightens, and still
-// widens the band from 0.008 → 0.046.
-export const TAU_HI = 0.36; // [CALIBRATE Phase 6] choose outright (@90% precision, servable subset)
-export const TAU_LO = 0.314; // [CALIBRATE Phase 6] choose but flag 'weak'
+// Greedy selection thresholds in base-score space. SigLIP cosine ranges are model-specific —
+// re-run and re-fit on any model or formula change (doc 09 §step 3, doc 21). Scores compress near
+// ~0.30 because the non-sim quality/orient terms are ~constant for HD stock video.
+//
+// [CALIBRATE] Re-fitted 2026-07-17 on 80 HUMAN labels / 30 beats:
+//   `pnpm eval:matching --human-only`  →  τ_hi @90% = 0.338 · τ_lo @70% = 0.308
+//   ROC-AUC base 0.788 (raw sim 0.742) · precision@1 93.3%
+//
+// This replaces 0.360/0.314, which are void — by the rule pre-registered in eval/kappa.ts before
+// any human label existed. `pnpm eval:kappa --score` over 50 blind human labels returned
+// κ = 0.160: POOR, barely above chance. The vision judge that produced 192 of the old 222 labels
+// does not measure what a human means by "good". It is not noisy either — it disagrees 16:5 in one
+// direction (8:1 at n=30, so it reproduces), demanding literal subject presence where the human
+// accepts thematic fit. ~44% of those 192 labels are wrong, mostly `bad` that should be `good`.
+//
+// Which is exactly why the old numbers ran HIGH. A mislabelled-bad pair is a phantom false-positive
+// at every threshold: precision(τ) counts it against a τ that in truth cleared it, so measured
+// precision reads low and the fit climbs to compensate. A too-high τ_hi is not a safe error — it
+// rejects candidates the viewer would have accepted and drops those beats to the fallback ladder,
+// i.e. to the generic stock the whole sourcing effort exists to avoid.
+//
+// Two things worth knowing about the old fit:
+//   - On the corrected label set, τ_hi @90% is UNREACHABLE. 0.360 was never an attainable operating
+//     point; it was the artifact of a "servable subset" carved out of bad labels.
+//   - The run that produced it was scoring nothing. All 222 labeled thumbs had been evicted from
+//     data/cache (an LRU render cache that labels.jsonl points into), every embed failed, every
+//     base score was the constant 0.266 and every AUC exactly 0.500 — and eval:matching reported
+//     PASS. It now refuses; run `pnpm eval:fixtures` first.
+//
+// CAVEAT, stated plainly because this file has been burned by it before: n=80 across 30 beats is
+// small, and 0.322 once "reproduced exactly" on its own 30-pair subset, which is what overfitting
+// looks like. 0.338 is the best-evidenced number available — labels a human actually wrote, on
+// thumbs that actually loaded — not ground truth. Widen the human set before trusting it further.
+export const TAU_HI = 0.338; // [CALIBRATE 2026-07-17] choose outright (@90% precision, 80 human labels)
+export const TAU_LO = 0.308; // [CALIBRATE 2026-07-17] choose but flag 'weak' (@70% precision)
 export const TAU_MOOD = 0.28; // [CALIBRATE Phase 7] mood-tier accept < τ_lo
 
 // OCR gate (doc 25 §5, cascade A). Tesseract reads each beat's SigLIP top-K shortlist;

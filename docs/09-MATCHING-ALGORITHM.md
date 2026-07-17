@@ -50,20 +50,27 @@ Sequential penalties (computed during greedy selection, beat order):
 > solve *this same objective*. The defect is the magnitudes, not the greediness.
 >
 > **Deliberately unchanged.** Picking the right values needs a label set that can adjudicate taste,
-> and the current fixture cannot: `pnpm eval:kappa` measured κ(model, human) = 0.416 at reliability
-> 1.000, i.e. the labels are systematically *biased*, not merely noisy. Re-scaling a constant against
-> a biased instrument is how the shipped `τ = 0.322` came to claim 90% precision and deliver 78.8%.
-> Whether variety is a hard ban or a soft preference is also a product decision, not an eval result.
+> and the model-judged fixture cannot: at n=50 `pnpm eval:kappa --score` measures κ(model, human) =
+> **0.160** (the n=30 preliminary read 0.416 at reliability 1.000) — the labels are systematically
+> *biased*, not merely noisy. Re-scaling a constant against a biased instrument is how the shipped
+> `τ = 0.322` came to claim 90% precision and deliver 78.8%. The 80 human labels are now enough to
+> re-fit τ (see step 3) but not to adjudicate these magnitudes, which need per-beat taste judgements
+> the κ sample does not collect. Whether variety is a hard ban or a soft preference is also a product
+> decision, not an eval result.
 
 ## Step 3 — Greedy selection with thresholds
 
 Constants `[CALIBRATE in Phase 6]` against the golden set; SigLIP cosine ranges are model-specific, so calibrate empirically: score 30 hand-labeled (good/bad) beat–thumb pairs, set `τ_hi` at the 90%-precision point and `τ_lo` at 70%.
 
-**Re-calibrated 2026-07-16** (`siglip2-base-patch16-224`, **222 pairs / 30 beats**, `pnpm eval:matching`): `τ_hi = 0.360`, `τ_lo = 0.314`, in **base-score space** (not raw cosine). Scores compress near ~0.30 because the non-sim quality/orient terms are ≈constant for HD stock video, so the discriminating signal is the SigLIP cosine riding on that offset — re-fit both `packages/core/src/constants.ts` and this line whenever the model or the score formula changes.
+**Re-calibrated 2026-07-17** (`siglip2-base-patch16-224`, **80 HUMAN labels / 30 beats**, `pnpm eval:matching --human-only`): `τ_hi = 0.338`, `τ_lo = 0.308`, in **base-score space** (not raw cosine). ROC-AUC base 0.788 (raw sim 0.742), precision@1 93.3%. Scores compress near ~0.30 because the non-sim quality/orient terms are ≈constant for HD stock video, so the discriminating signal is the SigLIP cosine riding on that offset — re-fit both `packages/core/src/constants.ts` and this line whenever the model or the score formula changes.
 
-> The previous values (`τ_hi = 0.322`, `τ_lo = 0.314`, calibrated 2026-07-11) were fitted to **30 pairs from G1–G3** and did not survive more data: that same 30-pair subset still reproduces `0.322/0.314` exactly, while on 222 pairs a score of 0.322 delivers **78.8%** precision on stock-servable beats and **63.7%** overall — not the 90% the confident tier claims. Its reported "precision@1 = 100%" was the metric saturating (every beat in that set contained a good candidate, so the abstain path was never exercised), not evidence of calibration. `τ_lo` is deliberately left at 0.314: its measured @70% point is 0.300, but lowering it would *accept more* marginal candidates, which is not the demonstrated defect.
+> **Why 0.360/0.314 are void.** The rule pre-registered in `eval/kappa.ts` — fixed before any human label was collected — said `κ ≤ 0.30 → the fixture measures the model's taste; every decision taken against it, τ = 0.360 included, is void`. On 50 blind human labels, **κ = 0.160**. The vision judge that produced 192 of those 222 labels does not measure what a human means by "good", and it is biased rather than noisy: it disagrees **16:5** in one direction (8:1 at n=30, so it reproduces), demanding literal subject presence where the human accepts thematic fit. ~44% of the 192 are wrong, mostly `bad` that should be `good`.
 >
-> **Caveat:** 192 of the 222 labels are AI-judged (`labeledBy` in `fixtures/eval/labels.jsonl`) and the beat mix is hand-picked — 0.360 is a better estimate than 0.322, not ground truth. Per the redesign's §3.13 the real label source is the review gate.
+> **Direction is the point.** A mislabelled-bad pair is a phantom false-positive at every threshold: `precision(τ)` counts it against a τ that in truth cleared it, so measured precision reads low and the fit climbs to compensate. Both old fits ran **high**. A too-high `τ_hi` is not a safe error — it rejects candidates the viewer would accept and drops those beats to the fallback ladder, i.e. to the generic stock this doc exists to prevent. On the corrected label set, `τ_hi @90%` is **unreachable**: 0.360 was never an attainable operating point, only an artifact of a "servable subset" carved out of bad labels.
+>
+> **The run that produced it was scoring nothing.** All 222 labeled thumbs had been evicted from `data/cache` (an LRU render cache that `labels.jsonl` points into). Every embed failed, every base score was the constant **0.266**, every ROC-AUC exactly **0.500**, every bootstrap CI zero-width — and `eval:matching` still printed `precision@1 = 76.7% PASS`. It now refuses; run `pnpm eval:fixtures` first. Two conclusions drawn from that run also fall: **§1.1 contrastive** was declared null and benched, but on human labels it shows a real pooled gain (+0.0398, CI [+0.0048, +0.0783]) — reopen it; and **§3.9's caption ranker** "+0.2075 REAL improvement" was a caption axis beating a constant zero, measuring **+0.0573, CI [−0.0052, +0.1406] → null** on real data. Do not build the caption gate.
+>
+> **Caveat:** n=80 across 30 beats is small, and this exact file has been burned by a small-n fit before — `0.322` reproduced *exactly* on its own 30-pair subset, which is what overfitting looks like. `0.338` is the best-evidenced number available (labels a human wrote, on thumbs that loaded), not ground truth. Widen the human set before trusting it further. Per the redesign's §3.13 the real label source is the review gate.
 
 ```
 for each beat in order:
