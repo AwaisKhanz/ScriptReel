@@ -33,9 +33,23 @@ describe('invalidatedStages (doc 06 consequences)', () => {
     ]);
   });
 
-  it('voice / speed change → tts, align, compose (visual selections survive)', () => {
+  it('voice change → tts, align, compose (visual selections survive)', () => {
     expect(invalidatedStages({ voice: 'am_adam' }, CURRENT)).toEqual(['tts', 'align', 'compose']);
-    expect(invalidatedStages({ speed: 1.1 }, CURRENT)).toEqual(['tts', 'align', 'compose']);
+  });
+
+  it('speed change → the whole chain: it moves the beat boundaries, not just the timing', () => {
+    // speed feeds estimateSeconds → est_seconds, which is what mergeShortBeats/splitLongBeats
+    // threshold on. A faster read makes a beat short enough to merge (or long enough to split),
+    // so the beats themselves differ — re-running tts alone would voice the old segmentation.
+    expect(invalidatedStages({ speed: 1.1 }, CURRENT)).toEqual([
+      'analyze',
+      'search',
+      'score',
+      'tts',
+      'align',
+      'fetch',
+      'compose',
+    ]);
   });
 
   it('mediaPreference change → search, score, fetch, compose', () => {

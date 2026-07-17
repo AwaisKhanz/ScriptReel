@@ -147,6 +147,12 @@ export const CATEGORY_SOURCES: Readonly<Record<EntityCategory, readonly Provider
   river: ['wikidata-commons'],
   nature: ['wikidata-commons'],
   animal: ['wikidata-commons'],
+  // Everyday things have Wikidata entries too — "mango", "yogurt" and "liver" all resolve to
+  // Commons media. The topic router adds the specialist on top (anatomy → medicine → Wellcome).
+  plant: ['wikidata-commons'],
+  food: ['wikidata-commons'],
+  anatomy: ['wikidata-commons'],
+  substance: ['wikidata-commons'],
   planet: ['nasa', 'wikidata-commons'],
   astro: ['nasa', 'wikidata-commons'],
   building: ['wikidata-commons'],
@@ -165,34 +171,7 @@ export const CATEGORY_SOURCES: Readonly<Record<EntityCategory, readonly Provider
   flag: ['wikidata-commons'],
 };
 
-// Fallback `want` when the LLM leaves a shot generic but its entity's category has a
-// natural default (doc 24 §5): a country → its map, a person → a portrait, etc.
-export const CATEGORY_DEFAULT_WANT: Readonly<Record<EntityCategory, ShotWant>> = {
-  person: 'portrait',
-  country: 'map',
-  region: 'map',
-  city: 'scene',
-  landmark: 'scene',
-  lake: 'aerial',
-  ocean: 'aerial',
-  mountain: 'scene',
-  river: 'aerial',
-  nature: 'scene',
-  animal: 'scene',
-  planet: 'scene',
-  astro: 'scene',
-  building: 'scene',
-  vehicle: 'scene',
-  company: 'logo',
-  brand: 'logo',
-  product: 'scene',
-  software: 'logo',
-  artwork: 'scene',
-  book: 'scene',
-  film: 'scene',
-  event: 'footage',
-  concept: 'generic',
-  object: 'scene',
-  symbol: 'scene',
-  flag: 'flag',
-};
+// CATEGORY_DEFAULT_WANT moved to analysis.ts — it maps one analysis type onto another
+// (EntityCategory → ShotWant) and the post-pass needs it to build a shot for an entity the
+// model left undepicted, which it cannot do from here without a cycle. Still exported from
+// '@scriptreel/core'; this note exists only so the doc-24 §5 trail does not go cold.

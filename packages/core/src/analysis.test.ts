@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type AnalysisResult,
   type Beat,
+  type Entity,
   estimateSeconds,
   mergeShortBeats,
   type ProcessedBeat,
@@ -132,12 +133,15 @@ describe('mergeShortBeats', () => {
 });
 
 describe('splitLongBeats', () => {
-  it('splits a >12s beat and demotes the second half literal queries', () => {
+  it('splits a >12s beat and demotes both halves when neither names a shot', () => {
     const text = `${words(20)}. ${words(20)}`; // ~14.8 s, boundary near middle
     const out = splitLongBeats([processed(text, 0)], 'en-US', 1);
     expect(out.length).toBe(2);
     expect(out.every((b) => b.estSeconds <= 12)).toBe(true);
-    expect(out[1]?.queries.literal).toEqual(['c', 'm']); // conceptual, mood
+    // The parent's literal queries described the whole sentence, so neither half may claim
+    // them; with no shots to derive from, both fall back to the beat-level tiers.
+    expect(out[0]?.queries.literal).toEqual(['c', 'm']);
+    expect(out[1]?.queries.literal).toEqual(['c', 'm']);
   });
 });
 
@@ -260,5 +264,228 @@ describe('splitLongBeats — shot inheritance', () => {
     const withShots = out.filter((b) => b.shots.length > 0);
     expect(withShots.length).toBeGreaterThan(0);
     for (const b of withShots) expect(b.visualMoments).toEqual(b.shots.map((s) => s.phrase));
+  });
+
+  // Regression, from a real gpt-4o run on the owner's Voyager script. The parent beat described
+  // the whole sentence; both halves inherited that description and its literal queries, so the
+  // half narrating "NASA commanded Voyager to turn around" was scored against — and searching
+  // for — "earth pale blue dot", which belongs to the other half.
+  const paleBlueDot = (): ProcessedBeat =>
+    processed(
+      'In 1990, before leaving the planetary neighborhood forever, NASA commanded Voyager to turn around one last time. From nearly six billion kilometers away, it captured a tiny image of Earth—a barely visible dot suspended in a beam of sunlight.',
+      0,
+      {
+        visualDescription: 'Earth as a pale blue dot, vast space',
+        queries: {
+          literal: ['earth pale blue dot', 'tiny earth space'],
+          conceptual: 'our place in universe',
+          mood: 'inspiring',
+        },
+        shots: [{ phrase: 'earth pale blue dot', entity: 'Earth', want: 'scene', weight: 3 }],
+        visualMoments: ['earth pale blue dot'],
+      },
+    );
+
+  it("a half never carries the other half's visualDescription or literal queries", () => {
+    const out = splitLongBeats([paleBlueDot()], 'en-US', 1);
+    expect(out).toHaveLength(2);
+    const [head, tail] = out;
+    if (!head || !tail) throw new Error('expected two halves');
+
+    // The tail names Earth, so it keeps the shot and its description follows from it.
+    expect(tail.shots.map((s) => s.entity)).toEqual(['Earth']);
+    expect(tail.visualDescription).toBe('earth pale blue dot');
+
+    // The head names no shot, so it must NOT claim the pale-blue-dot imagery.
+    expect(head.shots).toEqual([]);
+    expect(head.visualDescription).not.toBe('Earth as a pale blue dot, vast space');
+    expect(head.queries.literal).not.toContain('earth pale blue dot');
+
+    // Two beats pointed at one image also fight over it (REUSE/DUP penalties), so the anchors
+    // must differ — not merely be non-empty.
+    expect(head.visualDescription).not.toBe(tail.visualDescription);
+  });
+
+  it('entities follow their shots — a half is not "about" what it never mentions', () => {
+    const parent = paleBlueDot();
+    parent.entities = [
+      {
+        surface: 'Earth',
+        canonical: 'Earth',
+        category: 'planet',
+        instanceOf: 'planet',
+        disambiguation: '',
+        searchTerms: [],
+        visualizable: true,
+      },
+    ];
+    const out = splitLongBeats([parent], 'en-US', 1);
+    const [head, tail] = out;
+    // Only the tail says "Earth", so only the tail carries it — otherwise the head's topic
+    // routes to `space` on a subject it never names.
+    expect(tail?.entities.map((e) => e.canonical)).toEqual(['Earth']);
+    expect(head?.entities).toEqual([]);
+  });
+});
+
+describe('queryHygiene — tier-1 slots must stay distinct', () => {
+  // Regression, from the same run: when BOTH literals repeated the previous beat, each was
+  // rewritten to `conceptual` independently and the beat ended up firing one query twice —
+  // observed as ["our place in universe", "our place in universe"]. Half the pool, silently.
+  it('never emits the same literal query twice in one beat', () => {
+    const first = processed('a', 5, {
+      queries: {
+        literal: ['earth pale blue dot', 'tiny earth space'],
+        conceptual: 'c1',
+        mood: 'm1',
+      },
+    });
+    const second = processed('b', 5, {
+      queries: {
+        literal: ['earth pale blue dot', 'tiny earth space'], // both repeat beat 1
+        conceptual: 'our place in universe',
+        mood: 'inspiring',
+      },
+    });
+    const out = queryHygiene([first, second]);
+    const literal = out[1]?.queries.literal ?? [];
+    expect(literal).toHaveLength(2);
+    expect(new Set(literal).size).toBe(2);
+  });
+
+  it('still prefers a fresh query over one the previous beat already used', () => {
+    const first = processed('a', 5, {
+      queries: { literal: ['shared query', 'unique one'], conceptual: 'c1', mood: 'm1' },
+    });
+    const second = processed('b', 5, {
+      queries: { literal: ['shared query', 'own angle'], conceptual: 'c2', mood: 'm2' },
+    });
+    const out = queryHygiene([first, second]);
+    // 'shared query' was used by beat 1 → demoted; 'own angle' is fresh → kept as-is.
+    expect(out[1]?.queries.literal).toEqual(['c2', 'own angle']);
+  });
+});
+
+describe('every visualizable entity gets a shot', () => {
+  const entity = (canonical: string, over: Partial<Entity> = {}): Entity => ({
+    surface: canonical,
+    canonical,
+    category: 'object',
+    instanceOf: 'thing',
+    disambiguation: '',
+    searchTerms: [`${canonical} close up`],
+    visualizable: true,
+    ...over,
+  });
+
+  // Regression, from a live gpt-4o run on the beet-juice script: the model named kidney stones,
+  // diabetes, kidney disease and blood pressure, then designed ONE "doctor discussing health
+  // concerns" shot. Because search walks shots and resolves shot.entity, all four entities were
+  // never searched — the beat cost an LLM call and rendered generic stock anyway.
+  it('derives a shot for an entity the model left undepicted', () => {
+    const script = 'These nutrients concern people with kidney stones, diabetes, or hypertension.';
+    const out = postProcessAnalysis({
+      script,
+      result: {
+        language: 'en-US',
+        musicMood: 'calm',
+        beats: [
+          beat(script, {
+            entities: [
+              entity('kidney stone', { category: 'anatomy' }),
+              entity('diabetes', { category: 'concept' }),
+              entity('hypertension', { category: 'concept' }),
+            ],
+            shots: [
+              {
+                phrase: 'doctor discussing health concerns',
+                entity: '',
+                want: 'generic',
+                weight: 1,
+              },
+            ],
+          }),
+        ],
+      },
+      language: 'en-US',
+      speed: 1,
+    });
+    const depicted = out.beats[0]?.shots.map((s) => s.entity) ?? [];
+    expect(depicted).toContain('kidney stone');
+    expect(depicted).toContain('diabetes');
+    expect(depicted).toContain('hypertension');
+    // The model's own summary shot is kept — it is context, just not a substitute.
+    expect(out.beats[0]?.shots[0]?.phrase).toBe('doctor discussing health concerns');
+  });
+
+  it('uses the entity searchTerms and its category default want', () => {
+    const script = 'Carl Sagan called it the pale blue dot.';
+    const out = postProcessAnalysis({
+      script,
+      result: {
+        language: 'en-US',
+        musicMood: 'calm',
+        beats: [
+          beat(script, {
+            entities: [
+              entity('Carl Sagan', { category: 'person', searchTerms: ['carl sagan portrait'] }),
+            ],
+          }),
+        ],
+      },
+      language: 'en-US',
+      speed: 1,
+    });
+    expect(out.beats[0]?.shots[0]).toMatchObject({
+      phrase: 'carl sagan portrait',
+      entity: 'Carl Sagan',
+      want: 'portrait', // CATEGORY_DEFAULT_WANT.person
+    });
+  });
+
+  it('leaves non-visualizable entities alone — they belong on generic b-roll', () => {
+    const script = 'Freedom is what they were fighting for.';
+    const out = postProcessAnalysis({
+      script,
+      result: {
+        language: 'en-US',
+        musicMood: 'calm',
+        beats: [
+          beat(script, {
+            entities: [entity('freedom', { category: 'concept', visualizable: false })],
+          }),
+        ],
+      },
+      language: 'en-US',
+      speed: 1,
+    });
+    expect(out.beats[0]?.shots).toEqual([]);
+  });
+});
+
+describe('the shot plan is never truncated to a fixed number', () => {
+  // The owner's case: "the apple, mango and yogurt are powerful for old people for their liver"
+  // is five things on screen. deriveMoments used to .slice(0, 4), dropping the liver AFTER the
+  // analyzer had correctly planned it — and visual_moments, not shots, is what score reads.
+  it('carries every planned shot through to visualMoments', () => {
+    const shots: Shot[] = ['apple', 'mango', 'yogurt', 'old people', 'liver'].map((p) => ({
+      phrase: `${p} close up`,
+      entity: p,
+      want: 'scene',
+      weight: 1,
+    }));
+    const script = 'The apple, mango and yogurt are powerful for old people for their liver.';
+    const out = postProcessAnalysis({
+      script,
+      result: {
+        language: 'en-US',
+        musicMood: 'calm',
+        beats: [beat(script, { shots, visualDescription: 'five foods' })],
+      },
+      language: 'en-US',
+      speed: 1,
+    });
+    expect(out.beats[0]?.visualMoments).toHaveLength(5);
+    expect(out.beats[0]?.visualMoments).toContain('liver close up');
   });
 });

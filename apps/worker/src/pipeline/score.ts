@@ -555,7 +555,7 @@ export const scoreStage: Stage = {
             embedding: momentEmbByPhrase.get(p) ?? [],
             weight: p.split(/\s+/).filter(Boolean).length || 1,
           }));
-          segments = planSemanticMontage(momentInputs, montageCandidates);
+          segments = planSemanticMontage(momentInputs, montageCandidates, dur);
         }
         segments ??= planMontage(chosenId, montageCandidates, dur);
         segments ??= planMontage(chosenId, montageCandidates, dur, MONTAGE_DIVERSITY_RELAXED);

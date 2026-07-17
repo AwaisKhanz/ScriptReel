@@ -81,17 +81,33 @@ Return ONLY JSON matching the provided schema.
 
 Pacing rules: fast → "Target 8–13 spoken words per beat.", normal → "Target 12–20.", slow → "Target 18–28." (≈150–170 wpm English; CJK guidance appended: "For Japanese/Chinese target 18–30 characters (fast), 25–45 (normal), 40–65 (slow) per beat.")
 
-## Chunking
+## Two-pass (brief → beats)
 
-Scripts > 1,200 words: split on paragraph boundaries into ≤ 1,200-word chunks; call sequentially (respects free-tier RPM) passing `Previous beat count: N. Continue segmentation; maintain shot variety with previous shotType: X.` Concatenate results. 1 call ≈ most scripts; worst case 3.
+**Pass 1 — the brief.** One cheap call reads the **entire** script and returns `ScriptBrief`: `subject`, `topic`, `era`, `cast` (recurring entities, canonical names), `language`, `musicMood`. Degrades to `null` on any failure — segmentation proceeds without it (invariant 7).
+
+**Pass 2 — segmentation.** Scripts > 1,200 words split on paragraph boundaries into ≤ 1,200-word chunks, called sequentially. Every chunk's user message carries `formatBriefContext(brief)` **plus** `Previous beat count: N. Continue segmentation; maintain shot variety with previous shotType: X.`
+
+Why pass 1 exists: a chunk was all the model ever saw. Chunk 2 did not know chunk 1 had introduced Voyager 1, so a later "the spacecraft" resolved to nothing and the beat fell to generic stock. And `language`/`musicMood` are whole-script properties that were answered per chunk, with each chunk overwriting the last — so the music bed came from whichever chunk happened to be final. Both now come from the brief.
+
+## Shot count — the analyzer decides, the post-pass guarantees
+
+There is **no target shot count**. The prompt asks for one shot per distinct thing the beat puts on screen; `MAX_SHOTS_PER_BEAT` / `MAX_ENTITIES_PER_BEAT` (12) are sanity bounds on a malformed response, not targets. `deriveMoments` does **not** truncate.
+
+**`ensureEntityShots` is the floor.** The search stage walks `shots` and resolves `shot.entity` — so an entity no shot points at is never sent to Wikidata, never knowledge-expanded, never given an authoritative source. Measured on gpt-4o: a beat naming kidney stones, diabetes, kidney disease and blood pressure got one *"doctor discussing health concerns"* shot, leaving four entities inert. The post-pass therefore derives a shot (from the entity's own `searchTerms` + `CATEGORY_DEFAULT_WANT[category]`) for every **visualizable** entity the model left undepicted. It runs **before** merge/split so those shots are re-homed by `shotsForHalf` like any other.
+
+How many reach the screen is a screen-time question, answered in `planSemanticMontage` at `MONTAGE_HARD_MIN_SEG_SEC` — not by truncating the plan.
+
+## Measuring it
+
+`pnpm eval:analyze [G8 G9 G10]` runs the real analyzer over golden scripts and reports entities/beat, shots/beat, categories used, and the defect counters (entities with no shot, duplicate tier-1 queries, oversized beats). It asserts nothing — it exists so a prompt edit can be compared against numbers instead of vibes.
 
 ## Deterministic post-pass (worker, after LLM)
 
 1. **Verbatim check:** normalize whitespace; `join(beats.text) === normalize(script)` (`reconstruction: 'exact'`) else attempt repair by re-slicing the script using each beat's first 4 words as anchors (`'anchored'`). A model that *summarizes* rather than segments defeats the anchors, and the last-resort re-slice by word-count proportion (`'proportional'`) rebuilds the text while leaving every beat holding visuals designed for a different span — so `postProcessAnalysis` **rejects it** with `PipelineError('E_LLM_SCHEMA', 'analyze')` unless the caller passes `allowProportional`. That rejection is what triggers the single verbatim reprompt; the reprompt itself sets `allowProportional` (invariant 7 — degrade, never die) and the stage records a manifest **warning** so a `'proportional'` ship is never silent.
 2. **Duration estimate:** `estSeconds = words / (baseWps(language) * speed)` (doc 10 table). CJK uses chars-based rate.
 3. **Merge** any beat with `estSeconds < 2.5` into its shorter neighbor (concatenate text, keep the longer beat's visuals, re-index).
-4. **Split** any beat with `estSeconds > 12` at the sentence/clause boundary nearest its midpoint; duplicate visuals but set second half's `literal` queries to the `conceptual`/`mood` tier to force visual variety.
-5. **Query hygiene:** lowercase, strip punctuation, dedupe queries across beats (identical normalized query on consecutive beats → replace later one with its conceptual tier). Cap total unique tier-1 queries; log the plan against quota budget (doc 22).
+4. **Split** any beat with `estSeconds > 12` at the sentence/clause boundary nearest its midpoint. A half gets only the shots its own text names (`shotsForHalf`), and its `visualDescription` + `literal` queries are **rebuilt from those shots** — not inherited. The parent's described the whole sentence, so inheriting it pointed each half at the other's content: the half narrating *"NASA commanded Voyager to turn around"* was scored against, and searching for, *"earth pale blue dot"*. A half that names no shot falls back to the beat-level `conceptual`/`mood` tiers, which describe the idea rather than either span.
+5. **Query hygiene:** lowercase, strip punctuation, and demote a tier-1 query that repeats the previous beat's to the conceptual tier. The two literal slots must stay **distinct from each other** — when both repeated, rewriting each independently made both `conceptual`, firing one search twice and halving the beat's pool (seen as `["our place in universe", "our place in universe"]`). In-beat distinctness wins over cross-beat freshness when they conflict: the former wastes half the pool, the latter only wastes quota.
 6. Persist beats rows + `stages/analyze/beats.json` (includes raw LLM response for audit).
 
 ## Failure & fallback

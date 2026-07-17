@@ -21,6 +21,7 @@
     "eval:fixtures": "pnpm --filter @scriptreel/worker exec tsx src/eval/fetch-fixtures.ts",
     "eval:pool": "pnpm --filter @scriptreel/worker exec tsx src/eval/build-pool.ts",
     "eval:matching": "pnpm --filter @scriptreel/worker exec tsx src/eval/matching.ts",
+    "eval:analyze": "pnpm --filter @scriptreel/worker exec tsx src/eval/analyze-probe.ts",
     "eval:kappa": "pnpm --filter @scriptreel/worker exec tsx src/eval/kappa.ts",
     "prepare": "husky"
   },

@@ -16,9 +16,17 @@ export const analyzeStage: Stage = {
     invariant(project, `project ${ctx.projectId} not found`, 'analyze');
     return hashObject({
       stage: 'analyze',
+      // Bump whenever the prompt or the post-pass changes what a beat looks like. The manifest
+      // hash is the ONLY re-run gate — no route deletes manifests — so without this a reworked
+      // prompt silently serves the beats the old prompt produced, and the change looks inert.
+      logic: 'prompt-2',
       script: project.script,
       language: ctx.settings.language ?? null,
       pacing: ctx.settings.pacing,
+      // speed feeds estimateSeconds → est_seconds, which decides the merge/split boundaries —
+      // so it changes the beats themselves, not just narration timing. Omitting it meant a
+      // speed change re-ran tts against beats still segmented for the old speed.
+      speed: ctx.settings.speed,
     });
   },
 

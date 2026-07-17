@@ -23,7 +23,9 @@ const DIRECT: Record<keyof ProjectSettings, PipelineStage[]> = {
   language: ['analyze', 'align'], // language override → analyze; subtitle language → align
   // narration
   voice: ['tts'],
-  speed: ['tts'],
+  // speed also drives estimateSeconds → est_seconds → the analyze post-pass merge/split
+  // boundaries, so it reshapes the beats themselves and not only their timing.
+  speed: ['analyze', 'tts'],
   pauseMs: ['tts'],
   // orientation / format
   aspect: ['search', 'score', 'fetch', 'compose'],

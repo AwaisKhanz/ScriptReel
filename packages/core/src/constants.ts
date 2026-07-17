@@ -35,6 +35,16 @@ export const CJK_LANGUAGES = ['ja', 'zh'] as const;
 export const MERGE_MIN_SEC = 2.5;
 export const SPLIT_MAX_SEC = 12;
 
+// Sanity bounds on the analyzer's plan — NOT a target. The number of shots a beat needs is
+// the number of distinct things it puts on screen, which only the analyzer can know: a beat
+// naming five foods needs five shots, a beat holding one idea needs one. These exist solely
+// so a malformed response can't produce a beat with 200 shots; the prompt sets no count and
+// the post-pass never truncates to a "nice" number. Screen time is what actually limits a
+// montage (MONTAGE_HARD_MIN_SEG_SEC below), and that bound is applied where the duration is
+// known — at plan time, not here.
+export const MAX_SHOTS_PER_BEAT = 12;
+export const MAX_ENTITIES_PER_BEAT = 12;
+
 // Media provider budgets + cache (doc 22 §budgets, doc 08). These are the real
 // documented free-tier limits and act only as the pre-test estimate — the per-key
 // "Test" action reads each key's TRUE limit live from the provider (x-ratelimit-*
@@ -92,9 +102,23 @@ export const DUP_COSINE = 0.92; // thumb cosine above this = visual near-duplica
 // Montage planning (doc 23 §7). A beat long enough to hold several visuals is split
 // into a mini-sequence of diverse clips instead of one static hold — the anti-boring
 // lever. [CALIBRATE 23e]
-export const MONTAGE_TARGET_SEG_SEC = 2.5; // ~2.5 s per shot — documentary cut cadence
-export const MONTAGE_MAX_SEGMENTS = 4; // up to 4 shots so long beats keep cutting, not holding
-export const MONTAGE_MIN_SEG_SEC = 1.8; // a segment shorter than this feels like a flash
+//
+// TWO CADENCES, deliberately different, because they answer different questions.
+// When the analyzer PLANNED the shots, its count IS the intent — "apple, then mango, then
+// yogurt" is three cuts, and pacing them at a 2.5 s documentary hold would drop two of the
+// three foods. So a planned montage is bounded only by MONTAGE_HARD_MIN_SEG_SEC: fit as many
+// of the planned shots as the beat has screen time for. The target/max/min below govern the
+// BLIND fill instead — planMontage padding a beat with diverse alternates when there is no
+// plan to honour — where nothing is being expressed and a calm cadence is the safer default.
+export const MONTAGE_TARGET_SEG_SEC = 2.5; // blind fill: ~2.5 s per shot — documentary cadence
+export const MONTAGE_MAX_SEGMENTS = 4; // blind fill: no plan to honour, so don't over-cut
+export const MONTAGE_MIN_SEG_SEC = 1.8; // blind fill: shorter than this feels like a flash
+// Absolute floor for a PLANNED segment. A list sentence — "the apple, mango and yogurt are
+// powerful for old people for their liver", ~4.8 s at normal pacing — is five cuts at ~1 s
+// each. That is the style, not a defect, and the 1.8 s blind-fill floor would silently show
+// two of the five. Below ~0.8 s a shot stops reading as an image and becomes a flicker.
+// [CALIBRATE]
+export const MONTAGE_HARD_MIN_SEG_SEC = 0.8;
 export const MONTAGE_DIVERSITY_COSINE = 0.85; // segments must differ (thumb cosine ≤ this)
 // Kind mixing (photo ⇄ video) inside a montage: when every segment so far is one kind,
 // prefer the best other-kind candidate if it ranks within this window for the slot —
@@ -227,6 +251,7 @@ export const SCORE_CALIBRATION = {
   MONTAGE_TARGET_SEG_SEC,
   MONTAGE_MAX_SEGMENTS,
   MONTAGE_MIN_SEG_SEC,
+  MONTAGE_HARD_MIN_SEG_SEC,
   MONTAGE_DIVERSITY_COSINE,
   MONTAGE_DIVERSITY_RELAXED,
   MONTAGE_MIX_RANK,

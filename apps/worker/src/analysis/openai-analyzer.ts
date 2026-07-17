@@ -3,15 +3,38 @@ import {
   AnalysisResultSchema,
   type AnalyzeInput,
   type AnalyzeOptions,
+  buildBriefPrompt,
   buildSystemPrompt,
+  formatBriefContext,
   PipelineError,
   type ScriptAnalyzer,
+  type ScriptBrief,
+  ScriptBriefSchema,
 } from '@scriptreel/core';
 import type OpenAI from 'openai';
 import type { Logger } from 'pino';
 import { extractJsonObject, getLlm, jsonFormat } from './llm';
 
 const MAX_CHUNK_WORDS = 1200;
+
+// Mirrors ScriptBriefSchema for structured outputs (same subset rules as RESPONSE_JSON_SCHEMA
+// below — zod stays the source of truth and validates after parsing).
+const BRIEF_JSON_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['subject', 'topic', 'era', 'cast', 'language', 'musicMood'],
+  properties: {
+    subject: { type: 'string' },
+    topic: { type: 'string' },
+    era: { type: 'string', enum: ['modern', 'historical', 'timeless'] },
+    cast: { type: 'array', items: { type: 'string' } },
+    language: { type: 'string' },
+    musicMood: {
+      type: 'string',
+      enum: ['uplifting', 'calm', 'corporate', 'emotional', 'energetic', 'tense', 'none'],
+    },
+  },
+};
 
 // JSON Schema mirroring AnalysisResultSchema in the subset OpenAI structured outputs
 // (strict) accepts — no length/min/max keywords (those live in the zod schema, which
@@ -98,6 +121,10 @@ const RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
                     'river',
                     'nature',
                     'animal',
+                    'plant',
+                    'food',
+                    'anatomy',
+                    'substance',
                     'planet',
                     'astro',
                     'building',
@@ -209,27 +236,70 @@ export class OpenAiAnalyzer implements ScriptAnalyzer {
     this.log = log;
   }
 
+  // Two passes (doc 07 §two-pass). Pass 1 reads the WHOLE script once and commits to its
+  // subject, era, recurring cast, language and music mood. Pass 2 segments, with that brief in
+  // front of every chunk — so a beat saying only "the spacecraft" can still name Voyager 1, and
+  // the whole-script answers come from the whole script rather than from whichever chunk ran last.
   async analyze(input: AnalyzeInput, opts: AnalyzeOptions = {}): Promise<AnalysisResult> {
+    const brief = await this.brief(input);
+    const briefContext = brief ? formatBriefContext(brief) : undefined;
     const chunks = chunkScript(input.script, MAX_CHUNK_WORDS);
-    if (chunks.length === 1) {
-      const only = chunks[0] ?? input.script;
-      return this.analyzeChunk(input, only, undefined, opts);
-    }
 
     const beats: AnalysisResult['beats'] = [];
-    let language = input.languageHint ?? 'en-US';
-    let musicMood: AnalysisResult['musicMood'] = 'none';
+    let language = brief?.language ?? input.languageHint ?? 'en-US';
+    let musicMood: AnalysisResult['musicMood'] = brief?.musicMood ?? 'none';
     for (const chunk of chunks) {
-      const context =
+      const continuation =
         beats.length > 0
           ? `Previous beat count: ${beats.length}. Continue segmentation; maintain shot variety with previous shotType: ${beats.at(-1)?.shotType ?? 'wide'}.`
           : undefined;
+      const context = [briefContext, continuation].filter(Boolean).join('\n\n') || undefined;
       const part = await this.analyzeChunk(input, chunk, context, opts);
       beats.push(...part.beats);
-      language = part.language;
-      musicMood = part.musicMood;
+      // Only trust a chunk's whole-script fields when pass 1 didn't answer them.
+      if (!brief) {
+        language = part.language;
+        musicMood = part.musicMood;
+      }
     }
     return { language, musicMood, beats };
+  }
+
+  // Pass 1. Degrades to null rather than throwing — a missing brief costs cross-chunk context,
+  // which is worse analysis but not a failed project (invariant 7).
+  private async brief(input: AnalyzeInput): Promise<ScriptBrief | null> {
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: this.model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: buildBriefPrompt() },
+          {
+            role: 'user',
+            content: [
+              input.languageHint ? `Script language hint: ${input.languageHint}.` : '',
+              'SCRIPT:',
+              input.script,
+            ]
+              .filter((p) => p.length > 0)
+              .join('\n\n'),
+          },
+        ],
+        response_format: jsonFormat('brief', BRIEF_JSON_SCHEMA),
+      });
+      const content = completion.choices[0]?.message?.content;
+      if (!content) return null;
+      const parsed = ScriptBriefSchema.safeParse(JSON.parse(extractJsonObject(content)));
+      if (!parsed.success) {
+        this.log.warn({ model: this.model }, 'script brief failed schema — segmenting without it');
+        return null;
+      }
+      this.log.debug({ subject: parsed.data.subject, cast: parsed.data.cast }, 'script brief');
+      return parsed.data;
+    } catch (err) {
+      this.log.warn({ err }, 'script brief call failed — segmenting without it');
+      return null;
+    }
   }
 
   private async analyzeChunk(

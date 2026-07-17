@@ -76,6 +76,12 @@ export const CATEGORY_TOPIC: Readonly<Record<EntityCategory, Topic>> = {
   river: 'nature',
   nature: 'nature',
   animal: 'nature',
+  plant: 'nature',
+  // These three are why the everyday categories were added: `food` and `medicine` topics (and
+  // Wellcome behind medicine) already existed with no entity category able to reach them.
+  food: 'food',
+  anatomy: 'medicine',
+  substance: 'science',
   planet: 'space',
   astro: 'space',
   building: 'urban',

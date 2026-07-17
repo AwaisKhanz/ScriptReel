@@ -1,5 +1,6 @@
 import {
   MONTAGE_DIVERSITY_COSINE,
+  MONTAGE_HARD_MIN_SEG_SEC,
   MONTAGE_MAX_SEGMENTS,
   MONTAGE_MIN_SEG_SEC,
   MONTAGE_MIX_RANK,
@@ -266,12 +267,18 @@ export interface MomentInput {
 export function planSemanticMontage(
   moments: readonly MomentInput[],
   candidates: readonly MontageCandidate[],
+  beatDurationSec: number,
 ): SegmentPlanItem[] | null {
+  // The analyzer's shot count IS the cadence here — five named foods are five cuts, and the
+  // 2.5 s blind-fill target would show two of them. The only real limit is screen time: trim
+  // to what fits at MONTAGE_HARD_MIN_SEG_SEC, below which a shot flickers instead of reading.
+  // (This bound belongs here, not in deriveMoments, because only the caller knows the duration.)
+  const maxSegments = Math.max(1, Math.floor(beatDurationSec / MONTAGE_HARD_MIN_SEG_SEC));
   const used = new Set<string>();
   const picked: MontageCandidate[] = [];
   const momentIdxs: number[] = [];
   const weights: number[] = [];
-  for (let mi = 0; mi < moments.length; mi += 1) {
+  for (let mi = 0; mi < moments.length && picked.length < maxSegments; mi += 1) {
     const m = moments[mi];
     if (!m) continue;
     const eligible = candidates

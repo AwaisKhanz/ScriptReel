@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Entity } from './analysis';
+import { CATEGORY_DEFAULT_WANT, type Entity } from './analysis';
 import {
-  CATEGORY_DEFAULT_WANT,
   CATEGORY_SOURCES,
   INSTANCE_OF_QID,
   namesSubject,

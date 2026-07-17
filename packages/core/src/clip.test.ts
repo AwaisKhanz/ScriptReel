@@ -223,7 +223,7 @@ describe('montage kind mixing (photo ⇄ video)', () => {
       { embedding: [1, 0, 0], weight: 1 }, // → v1 (no image ranks in the window)
       { embedding: [0, 1, 0], weight: 1 }, // v2 tops, but i1 ranks 2nd → image wins
     ];
-    const plan = planSemanticMontage(moments, cands);
+    const plan = planSemanticMontage(moments, cands, 9);
     expect(plan?.map((p) => p.candidateId)).toEqual(['v1', 'i1']);
     expect(plan?.map((p) => p.momentIdx)).toEqual([0, 1]);
   });
@@ -250,14 +250,53 @@ describe('planSemanticMontage', () => {
 
   it('assigns each moment its best-matching distinct candidate, in order', () => {
     const cands = [cand('morning', [1, 0, 0]), cand('subway', [0, 1, 0]), cand('gate', [0, 0, 1])];
-    const plan = planSemanticMontage([moment([0, 1, 0]), moment([0, 0, 1])], cands);
+    const plan = planSemanticMontage([moment([0, 1, 0]), moment([0, 0, 1])], cands, 9);
     expect(plan?.map((p) => p.candidateId)).toEqual(['subway', 'gate']);
   });
 
   it('carries the moment weights through', () => {
     const cands = [cand('a', [1, 0, 0]), cand('b', [0, 1, 0])];
-    const plan = planSemanticMontage([moment([1, 0, 0], 3), moment([0, 1, 0], 5)], cands);
+    const plan = planSemanticMontage([moment([1, 0, 0], 3), moment([0, 1, 0], 5)], cands, 9);
     expect(plan?.map((p) => p.weight)).toEqual([3, 5]);
+  });
+
+  // The five-food case, which is the whole point of the planned/blind cadence split. Five named
+  // foods in ~4.8 s is five ~1 s cuts; the 1.8 s blind-fill floor would have shown two of them.
+  it('honours a five-shot plan on a short beat — the analyzer count IS the cadence', () => {
+    const cands = [
+      cand('apple', [1, 0, 0, 0, 0]),
+      cand('mango', [0, 1, 0, 0, 0]),
+      cand('yogurt', [0, 0, 1, 0, 0]),
+      cand('elder', [0, 0, 0, 1, 0]),
+      cand('liver', [0, 0, 0, 0, 1]),
+    ];
+    const moments = [
+      moment([1, 0, 0, 0, 0]),
+      moment([0, 1, 0, 0, 0]),
+      moment([0, 0, 1, 0, 0]),
+      moment([0, 0, 0, 1, 0]),
+      moment([0, 0, 0, 0, 1]),
+    ];
+    const plan = planSemanticMontage(moments, cands, 4.8);
+    expect(plan?.map((p) => p.candidateId)).toEqual(['apple', 'mango', 'yogurt', 'elder', 'liver']);
+  });
+
+  // …but screen time still bounds it: below MONTAGE_HARD_MIN_SEG_SEC a shot is a flicker.
+  it('trims a plan that cannot fit at the hard floor', () => {
+    const cands = [
+      cand('a', [1, 0, 0, 0]),
+      cand('b', [0, 1, 0, 0]),
+      cand('c', [0, 0, 1, 0]),
+      cand('d', [0, 0, 0, 1]),
+    ];
+    const moments = [
+      moment([1, 0, 0, 0]),
+      moment([0, 1, 0, 0]),
+      moment([0, 0, 1, 0]),
+      moment([0, 0, 0, 1]),
+    ];
+    // 2.0 s ÷ 0.8 s = 2 segments, so the last two planned shots have nowhere to go.
+    expect(planSemanticMontage(moments, cands, 2.0)?.map((p) => p.candidateId)).toEqual(['a', 'b']);
   });
 
   it('drops a moment with no distinct match (all candidates already used)', () => {
