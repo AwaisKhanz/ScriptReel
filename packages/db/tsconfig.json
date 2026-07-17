@@ -6,5 +6,11 @@
     "outDir": "dist"
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": ["src/**/*.test.ts"],
+  // Must mirror this package's workspace deps. `tsc -b` decides staleness from each project's
+  // OWN sources vs its outputs, so without these a change confined to core/src left db marked
+  // up-to-date and its imports resolved through core's stale dist/*.d.ts — `pnpm check` then
+  // went GREEN on code that cannot compile (verified: breaking settingsHash's signature in core
+  // exits 0). CLAUDE.md makes that gate the definition of a finished phase.
+  "references": [{ "path": "../config" }, { "path": "../core" }]
 }

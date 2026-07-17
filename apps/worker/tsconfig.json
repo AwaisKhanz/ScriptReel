@@ -7,5 +7,11 @@
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../../packages/config" }]
+  // Must mirror this app's workspace deps (config + core + db) — see packages/db/tsconfig.json.
+  // Only `config` was declared, so a breaking change in core or db left the worker unchecked.
+  "references": [
+    { "path": "../../packages/config" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/db" }
+  ]
 }
