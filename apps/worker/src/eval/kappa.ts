@@ -111,13 +111,35 @@ function sample(labels: Label[]): Label[] {
   return shuffled(picked, rand); // interleave good/bad so the order leaks nothing
 }
 
+// --rest: every model-judged pair NOT already hand-labelled. A different job from sample() above,
+// and the difference matters.
+//
+// sample() draws 25 good / 25 bad to make κ COMPUTABLE (it is undefined when a rater uses one
+// class). But that stratification is chosen by the model, and κ = 0.160 says the model is wrong
+// ~44% of the time — so the 80 labels fitted in matching.ts are not a random draw from the pool,
+// and precision(τ) depends on prevalence. τ = 0.338 is therefore fitted on a class balance picked
+// by a broken instrument.
+//
+// Labelling the REST removes that objection instead of arguing about it: at 222/222 human there is
+// no sample, so there is no sampling bias. No stratification here, no target — take everything, in
+// beat order, so the rater can work through it like a list rather than a shuffle.
+function rest(labels: Label[], alreadyLabelled: Set<string>): Label[] {
+  return labels.filter(
+    (l) => l.labeledBy === 'model' && !alreadyLabelled.has(`${l.beat}|${l.thumbPath}`),
+  );
+}
+
 // Blind by construction: the page ships beat + thumb and NOTHING about what the model decided.
 // Showing the model's verdict would anchor the rater and manufacture the agreement we are testing.
-function html(rows: Label[]): string {
+//
+// `storageKey` scopes the autosave so the κ round and the --rest round cannot overwrite each
+// other's work. Autosave is not a nicety at 142 pairs: that is a long sitting, and losing it to a
+// closed tab would cost real human effort that no model can regenerate.
+function html(rows: Label[], opts: { title: string; outFile: string; storageKey: string }): string {
   const data = JSON.stringify(
     rows.map((r) => ({ beat: r.beat, desc: r.beatDescription, thumbPath: r.thumbPath })),
   );
-  return `<!doctype html><meta charset="utf-8"><title>ScriptReel — κ sample (${rows.length} pairs)</title>
+  return `<!doctype html><meta charset="utf-8"><title>ScriptReel — ${opts.title} (${rows.length} pairs)</title>
 <style>
  body{font:14px system-ui;margin:24px;max-width:1100px}
  h1{font-size:18px} .hint{background:#f7fafc;border:1px solid #e2e8f0;padding:12px;border-radius:6px}
@@ -126,23 +148,46 @@ function html(rows: Label[]): string {
  figure img{width:100%;height:118px;object-fit:cover;border-radius:3px;display:block}
  figcaption{font-size:11px;color:#4a5568;margin-top:4px}
  .q{margin:22px 0 8px;font-weight:600} .q span{font-weight:400;color:#718096}
- button{font:13px system-ui;padding:8px 14px;cursor:pointer} #count{margin-left:10px;color:#4a5568}
+ .q.done::after{content:' ✓';color:#38a169}
+ button{font:13px system-ui;padding:8px 14px;cursor:pointer;margin-right:8px}
+ #count{margin-left:4px;color:#4a5568}
  #bar{position:sticky;top:0;background:#fff;padding:10px 0;border-bottom:1px solid #e2e8f0;z-index:9}
+ #track{height:6px;background:#e2e8f0;border-radius:3px;margin-top:8px;overflow:hidden}
+ #fill{height:100%;width:0;background:#38a169;transition:width .15s}
+ #saved{color:#38a169;font-size:12px;margin-left:8px;opacity:0;transition:opacity .3s}
 </style>
-<h1>κ sample — does the vision model's judgement match yours?</h1>
+<h1>${opts.title}</h1>
 <div class="hint">
  <p><b>The question for each thumb: does this image actually show what the sentence describes?</b>
- Judge <i>subject presence</i>, not beauty — a gorgeous photo of the wrong thing is <b>bad</b>.</p>
+ Judge <i>subject presence</i>, not beauty — a gorgeous photo of the wrong thing is <b>bad</b>.
+ Judge it the same way every time; a threshold that drifts halfway through is worse than a strict
+ one or a lenient one.</p>
  <p>Click a thumb to cycle: unset → <span style="color:#38a169"><b>good</b></span> → <span style="color:#e53e3e"><b>bad</b></span>.
- You are <b>not</b> shown what the model said — that is deliberate, and it is the entire point.
- Label all ${rows.length}, then copy and save to <code>fixtures/eval/kappa-human.jsonl</code>.</p>
+ You are <b>not</b> shown what the model said — that is deliberate, and it is the entire point.</p>
+ <p>Your labels <b>autosave in this browser</b>, so you can close the tab and come back.
+ When done, click <b>Copy labelled JSONL</b> and save to <code>${opts.outFile}</code>.
+ Partial is fine — only what you labelled is exported.</p>
 </div>
-<div id="bar"><button id="copy">Copy labelled JSONL</button><span id="count"></span></div>
+<div id="bar">
+  <button id="copy">Copy labelled JSONL</button>
+  <button id="next">Jump to next unlabelled</button>
+  <button id="reset">Reset</button>
+  <span id="count"></span><span id="saved">saved</span>
+  <div id="track"><div id="fill"></div></div>
+</div>
 <div id="app"></div>
 <script>
 const ROWS = ${data};
+const KEY = ${JSON.stringify(opts.storageKey)};
 const state = new Map();
+try {
+  const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
+  for (const [k, v] of Object.entries(saved)) state.set(k, v);
+} catch {}
+
 const app = document.getElementById('app');
+const figs = new Map();
+const groups = [];
 const byDesc = new Map();
 for (const r of ROWS) byDesc.set(r.desc, [...(byDesc.get(r.desc) || []), r]);
 for (const [desc, rs] of byDesc) {
@@ -150,28 +195,56 @@ for (const [desc, rs] of byDesc) {
   h.className = 'q';
   h.innerHTML = 'Wanted: ' + desc + ' <span>(' + rs.length + ')</span>';
   app.appendChild(h);
+  groups.push({ el: h, rows: rs });
   for (const r of rs) {
+    const key = r.thumbPath + '|' + r.beat;
     const f = document.createElement('figure');
     f.innerHTML = '<img loading="lazy" src="../../' + r.thumbPath + '"><figcaption>' + r.beat + '</figcaption>';
+    f.className = state.get(key) || '';
     f.onclick = () => {
-      const cur = state.get(r.thumbPath + '|' + r.beat);
+      const cur = state.get(key);
       const next = cur === undefined ? 'good' : cur === 'good' ? 'bad' : undefined;
-      if (next) state.set(r.thumbPath + '|' + r.beat, next); else state.delete(r.thumbPath + '|' + r.beat);
+      if (next) state.set(key, next); else state.delete(key);
       f.className = next || '';
-      tick();
+      save(); tick();
     };
+    figs.set(key, f);
     app.appendChild(f);
   }
 }
+
+let savedTimer;
+function save() {
+  localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(state)));
+  const s = document.getElementById('saved');
+  s.style.opacity = '1';
+  clearTimeout(savedTimer);
+  savedTimer = setTimeout(() => { s.style.opacity = '0'; }, 700);
+}
 function tick() {
   document.getElementById('count').textContent = state.size + ' / ' + ROWS.length + ' labelled';
+  document.getElementById('fill').style.width = (100 * state.size / ROWS.length) + '%';
+  for (const g of groups) {
+    g.el.classList.toggle('done', g.rows.every(r => state.has(r.thumbPath + '|' + r.beat)));
+  }
 }
+document.getElementById('next').onclick = () => {
+  const r = ROWS.find(r => !state.has(r.thumbPath + '|' + r.beat));
+  if (!r) { alert('All ' + ROWS.length + ' labelled — click "Copy labelled JSONL".'); return; }
+  figs.get(r.thumbPath + '|' + r.beat).scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+document.getElementById('reset').onclick = () => {
+  if (!confirm('Discard all ' + state.size + ' labels on this page?')) return;
+  state.clear(); localStorage.removeItem(KEY);
+  for (const f of figs.values()) f.className = '';
+  tick();
+};
 document.getElementById('copy').onclick = async () => {
   const out = ROWS.filter(r => state.has(r.thumbPath + '|' + r.beat))
     .map(r => JSON.stringify({ beat: r.beat, thumbPath: r.thumbPath, human: state.get(r.thumbPath + '|' + r.beat) }))
     .join('\\n');
   await navigator.clipboard.writeText(out + '\\n');
-  document.getElementById('copy').textContent = 'Copied ' + state.size + ' → paste into fixtures/eval/kappa-human.jsonl';
+  document.getElementById('copy').textContent = 'Copied ' + state.size + ' → paste into ${opts.outFile}';
 };
 tick();
 </script>`;
@@ -198,6 +271,52 @@ function cohensKappa(pairs: { a: string; b: string }[]): {
 async function main(): Promise<void> {
   const labels = await loadJsonl('fixtures/eval/labels.jsonl', LabelSchema);
 
+  // --rest: build the labelling page for everything still model-judged. Turns the fixture into
+  // 222/222 human ground truth, which is the only way to retire the prevalence objection against
+  // τ (see rest() above). Writes its own file so kappa-human.jsonl — 50 labels that cost real
+  // time — is never at risk of being clobbered by a page reload.
+  if (process.argv.includes('--rest')) {
+    const humanPath = resolve(rootDir, 'fixtures/eval/kappa-human.jsonl');
+    const done = existsSync(humanPath)
+      ? new Set(
+          (await loadJsonl('fixtures/eval/kappa-human.jsonl', HumanSchema)).map(
+            (h) => `${h.beat}|${h.thumbPath}`,
+          ),
+        )
+      : new Set<string>();
+    const rows = rest(labels, done);
+    if (rows.length === 0) {
+      console.log('=== eval:kappa --rest — nothing left ===\n');
+      console.log('  Every model-judged pair already has a human label. The fixture is fully');
+      console.log('  hand-labelled; run  pnpm eval:matching --human-only  to fit on all of it.');
+      return;
+    }
+    await writeFile(
+      resolve(rootDir, 'fixtures/eval/kappa-rest.html'),
+      html(rows, {
+        title: 'Label the rest — turning the fixture into real ground truth',
+        outFile: 'fixtures/eval/kappa-rest.jsonl',
+        storageKey: 'scriptreel.kappa.rest.v1',
+      }),
+      'utf8',
+    );
+    const good = rows.filter((r) => r.label === 'good').length;
+    console.log('=== eval:kappa --rest — labelling page built ===');
+    console.log(`  ${rows.length} pairs across ${new Set(rows.map((r) => r.beat)).size} beats`);
+    console.log(`  (${done.size} already labelled in kappa-human.jsonl — excluded, not re-asked)`);
+    console.log(`  model says: ${good} good / ${rows.length - good} bad  (hidden from the page)\n`);
+    console.log('  1. open   fixtures/eval/kappa-rest.html');
+    console.log('  2. click each thumb: unset → good → bad. Labels autosave; you can stop and');
+    console.log('     resume, and partial output is fine.');
+    console.log('  3. "Copy labelled JSONL" → save to  fixtures/eval/kappa-rest.jsonl');
+    console.log('  4. run  pnpm eval:matching --human-only\n');
+    console.log('  Why: the 50 κ labels were stratified 25/25 BY THE MODEL, and κ=0.160 says the');
+    console.log('  model is wrong ~44% of the time — so τ=0.338 is fitted on a class balance');
+    console.log('  chosen by a broken instrument. At 222/222 human there is no sample, so there');
+    console.log('  is no sampling bias left to argue about.');
+    return;
+  }
+
   if (!process.argv.includes('--score')) {
     const rows = sample(labels);
     const good = rows.filter((r) => r.label === 'good').length;
@@ -206,7 +325,15 @@ async function main(): Promise<void> {
       `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`,
       'utf8',
     );
-    await writeFile(resolve(rootDir, 'fixtures/eval/kappa.html'), html(rows), 'utf8');
+    await writeFile(
+      resolve(rootDir, 'fixtures/eval/kappa.html'),
+      html(rows, {
+        title: "κ sample — does the vision model's judgement match yours?",
+        outFile: 'fixtures/eval/kappa-human.jsonl',
+        storageKey: 'scriptreel.kappa.sample.v1',
+      }),
+      'utf8',
+    );
     console.log(`=== eval:kappa — sample built ===`);
     console.log(
       `  ${rows.length} pairs drawn from the ${labels.filter((l) => l.labeledBy === 'model').length} model-judged`,

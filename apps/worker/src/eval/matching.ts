@@ -127,24 +127,33 @@ const HumanVerdictSchema = z.object({
   human: z.enum(['good', 'bad']),
 });
 
-// Overlay the blind human verdicts from kappa-human.jsonl onto the label set (joined on
-// beat|thumbPath), promoting each overwritten row to labeledBy:'human'.
+// Overlay every blind human verdict onto the label set (joined on beat|thumbPath), promoting each
+// overwritten row to labeledBy:'human'.
 //
-// These 50 are the SAME pairs the model judged, re-judged by hand without seeing the model's
-// call — which is what makes them a correction rather than a second opinion. Where they land,
-// the human wins: κ = 0.160 says the model's verdict on those pairs carries almost no signal.
-// Kept as an overlay instead of being merged into labels.jsonl so the model's original call
-// stays on disk and eval:kappa can keep scoring the two against each other.
+//   kappa-human.jsonl — the 50-pair κ round (`pnpm eval:kappa`)
+//   kappa-rest.jsonl  — the remaining model-judged pairs (`pnpm eval:kappa --rest`)
+//
+// These are the SAME pairs the model judged, re-judged by hand without seeing the model's call —
+// which is what makes them a correction rather than a second opinion. Where they land, the human
+// wins: κ = 0.160 says the model's verdict on those pairs carries almost no signal. Kept as an
+// overlay rather than merged into labels.jsonl so the model's original call stays on disk and
+// eval:kappa can keep scoring the two against each other.
+const HUMAN_VERDICT_FILES = ['fixtures/eval/kappa-human.jsonl', 'fixtures/eval/kappa-rest.jsonl'];
+
 async function applyHumanVerdicts(labels: Label[]): Promise<{ labels: Label[]; applied: number }> {
-  const p = resolve(rootDir, 'fixtures/eval/kappa-human.jsonl');
-  if (!existsSync(p)) return { labels, applied: 0 };
-  const raw = await readFile(p, 'utf8');
-  const verdicts = raw
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith('//'))
-    .map((l) => HumanVerdictSchema.parse(JSON.parse(l)));
-  const byKey = new Map(verdicts.map((v) => [`${v.beat}|${v.thumbPath}`, v.human]));
+  const byKey = new Map<string, 'good' | 'bad'>();
+  for (const file of HUMAN_VERDICT_FILES) {
+    const p = resolve(rootDir, file);
+    if (!existsSync(p)) continue;
+    const raw = await readFile(p, 'utf8');
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      if (t.length === 0 || t.startsWith('//')) continue;
+      const v = HumanVerdictSchema.parse(JSON.parse(t));
+      byKey.set(`${v.beat}|${v.thumbPath}`, v.human);
+    }
+  }
+  if (byKey.size === 0) return { labels, applied: 0 };
   let applied = 0;
   const out = labels.map((l) => {
     const verdict = byKey.get(`${l.beat}|${l.thumbPath}`);
@@ -433,7 +442,7 @@ async function main(): Promise<void> {
   if (labels.length === 0) throw new Error('--human-only: no human-labelled pairs found');
   if (applied > 0) {
     console.log(
-      `overlaid ${applied} blind human verdicts from kappa-human.jsonl (κ=0.160 → human wins)`,
+      `overlaid ${applied} blind human verdicts (κ=0.160 → the human wins where they land)`,
     );
   }
   if (humanOnly) {
