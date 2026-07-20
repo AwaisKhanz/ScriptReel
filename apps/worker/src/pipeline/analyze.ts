@@ -19,6 +19,11 @@ export const analyzeStage: Stage = {
       // Bump whenever the prompt or the post-pass changes what a beat looks like. The manifest
       // hash is the ONLY re-run gate — no route deletes manifests — so without this a reworked
       // prompt silently serves the beats the old prompt produced, and the change looks inert.
+      // Intentionally NOT bumped for the 2026-07-18 query-disambiguation prompt tweak: bumping
+      // re-analyzes EVERY existing project on its next action (even a voice change) — far too costly
+      // for a soft quality improvement. NEW projects get the better prompt automatically (analyze
+      // runs fresh, using the current SYSTEM_PROMPT); existing projects keep their beats and fix a
+      // stray clip with the storyboard swap instead. Only bump when a change MUST re-segment.
       logic: 'prompt-2',
       script: project.script,
       language: ctx.settings.language ?? null,

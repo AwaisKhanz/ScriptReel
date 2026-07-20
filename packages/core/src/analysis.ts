@@ -389,7 +389,12 @@ RULES — VISUAL DESIGN
    names more things than it has seconds, it is too long and rule 2 says to split it.
    For each shot:
    - \`phrase\`: a concrete, searchable 3–6 word English phrase ("dead sea aerial view",
-     "jordan locator map", "apollo 11 moon landing").
+     "jordan locator map", "apollo 11 moon landing"). DISAMBIGUATE ambiguous everyday words to the
+     sense the beat means — the phrase reaches a stock-search box with NO other context, so a bare
+     word that names several unrelated things pulls the wrong clip. Add the qualifying word that
+     fixes the picture: "computer monitor screen" not "monitor", "baseball bat" not "bat", "computer
+     mouse" not "mouse", "spring blossom" not "spring", "river bank" not "bank". Use the beat's own
+     context to choose the sense.
    - \`entity\`: the \`canonical\` of the beat entity this shot depicts, or "" for a generic
      mood/action shot with no named subject.
    - \`want\`: the KIND of image needed — portrait (a person), flag (a country's flag), map
@@ -424,7 +429,8 @@ every beat:
 ]}
 emotion ∈ neutral|uplifting|serious|tense|sad|exciting|calm|inspiring. shotType ∈
 wide|medium|close|detail|aerial|abstract. want ∈ portrait|flag|map|aerial|logo|footage|scene|generic.
-"queries.literal" is exactly two concrete English phrases. Omit no field.`;
+"queries.literal" is exactly two concrete English phrases — disambiguated the same way (rule 11): the
+sense the beat means, never a bare ambiguous word. Omit no field.`;
 
 export function buildSystemPrompt(pacing: Pacing): string {
   return SYSTEM_PROMPT.replace('{PACING_RULE}', PACING_RULES[pacing]);
