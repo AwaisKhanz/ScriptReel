@@ -19,7 +19,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   let wav: Buffer | null = await readFile(cachePath).catch(() => null);
 
   if (!wav) {
-    const res = await fetch(`${env.SIDECAR_URL}/tts`, {
+    // Route to whichever server owns this voice — the Chatterbox voice server for cloned narrators,
+    // the sidecar for Kokoro. Same /tts contract, so the request body is identical.
+    const baseUrl = voice.engine === 'chatterbox' ? env.CHATTERBOX_URL : env.SIDECAR_URL;
+    const res = await fetch(`${baseUrl}/tts`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

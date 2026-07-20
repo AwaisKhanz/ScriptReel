@@ -1,0 +1,39 @@
+[project]
+name = "scriptreel-voice"
+version = "0.0.0"
+description = "ScriptReel voice — Chatterbox TTS (Resemble AI, MIT): natural narration + voice cloning."
+# Own venv, deliberately separate from services/ml (the sidecar) — exactly like services/gen. The
+# sidecar's torch/numpy are carefully pinned (cu128, numpy<2 for mlx-whisper's numba); letting a
+# heavy new TTS model renegotiate them could break the working Kokoro/SigLIP stack. Chatterbox
+# lives here in isolation and is reached over HTTP (a small server, because it must load once and
+# serve per-beat — a per-call subprocess would reload the model 85 times per script).
+requires-python = "==3.12.*"
+dependencies = [
+  "chatterbox-tts>=0.1.2",
+  # torch/torchaudio from the cu128 index (Blackwell sm_120 needs CUDA 12.8) — see [tool.uv.sources].
+  "torch>=2.6",
+  "torchaudio>=2.6",
+  "soundfile>=0.12",
+  "numpy",
+  "fastapi>=0.110",
+  "uvicorn>=0.30",
+]
+
+# Blackwell (RTX 50, sm_120) needs a CUDA-12.8 torch build; pull it from PyTorch's cu128 index on
+# non-Apple, same as the sidecar and services/gen.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+torchaudio = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+
+[tool.uv]
+package = false
+# chatterbox-tts hard-pins torch==2.6.0, which has NO cu128 wheel — and Blackwell (sm_120) needs
+# CUDA 12.8. The pin is conservative (its inference runs on newer torch); override it to the same
+# cu128 build the sidecar uses. If a real torch-API break surfaces at runtime, revisit — but 2.6→2.x
+# is compatible for inference.
+override-dependencies = ["torch>=2.7", "torchaudio>=2.7"]

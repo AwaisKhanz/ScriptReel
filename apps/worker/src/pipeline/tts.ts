@@ -1,18 +1,31 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '@scriptreel/config';
-import { hashObject, invariant, langCodeForVoice, PipelineError } from '@scriptreel/core';
+import {
+  hashObject,
+  invariant,
+  langCodeForVoice,
+  PipelineError,
+  voiceEngine,
+} from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import pLimit from 'p-limit';
 import { buildNarration } from '../ffmpeg/audio';
 import { probeAudio } from '../ffmpeg/probe';
-import { ttsSynthesize } from '../sidecar/client';
+import { type TtsParams, type TtsResponse, ttsSynthesize } from '../sidecar/client';
+import { chatterboxSynthesize } from '../voice/client';
 import type { ProjectCtx, Reporter, Stage, StageOutcome } from './context';
 
 const TTS_PARALLELISM = 2;
 
+// The tts stage is engine-agnostic: it calls whichever backend the selected voice declares (Kokoro
+// via the sidecar, or a cloned narrator via the Chatterbox voice server). Both honour the identical
+// /tts contract, so everything downstream (master clock, concat, drift assert) is unchanged.
+type SynthFn = (params: TtsParams, signal?: AbortSignal) => Promise<TtsResponse>;
+
 async function synthesizeBeat(
-  params: { text: string; voice: string; langCode: string; speed: number; outPath: string },
+  synth: SynthFn,
+  params: TtsParams,
   ctx: ProjectCtx,
   beatIdx: number,
 ): Promise<number> {
@@ -22,7 +35,7 @@ async function synthesizeBeat(
       throw new PipelineError('E_CANCELLED', 'tts', 'cancelled');
     }
     try {
-      const res = await ttsSynthesize(params, ctx.signal);
+      const res = await synth(params, ctx.signal);
       return res.durationSec;
     } catch (err) {
       if (err instanceof PipelineError && err.code === 'E_SIDECAR_DOWN') {
@@ -65,6 +78,8 @@ export const ttsStage: Stage = {
 
     const { voice, speed } = ctx.settings;
     const langCode = langCodeForVoice(voice) ?? 'a';
+    const engine = voiceEngine(voice);
+    const synth: SynthFn = engine === 'chatterbox' ? chatterboxSynthesize : ttsSynthesize;
     const pauseSec = ctx.settings.pauseMs / 1000;
 
     const audioDir = join(paths.projectDir(ctx.projectId), 'audio');
@@ -78,11 +93,19 @@ export const ttsStage: Stage = {
       beats.map((beat, i) =>
         limit(async () => {
           const outPath = join(beatsDir, `${beat.idx}.wav`);
-          durations[i] = await synthesizeBeat(
+          await synthesizeBeat(
+            synth,
             { text: beat.text, voice, langCode, speed, outPath },
             ctx,
             beat.idx,
           );
+          // The clock is the AUDIO ON DISK, not the engine's claimed duration (invariant 2).
+          // buildNarration concatenates these FILES, so measuring them makes `expected` exactly what
+          // the concat produces. Trusting the response instead drifts: a generative engine
+          // (Chatterbox) returns a different length every call, so any retried/raced request leaves
+          // a file that disagrees with the response it answered — measured at +320 ms over 54 beats,
+          // which tripped this stage's own drift assert even though the audio itself was correct.
+          durations[i] = (await probeAudio(outPath)).durationSec;
           done += 1;
           report(
             Math.round((done / beats.length) * 70),
@@ -128,6 +151,7 @@ export const ttsStage: Stage = {
       artifacts: ['audio/vo.wav'],
       meta: {
         voice,
+        engine,
         langCode,
         durationSec: probe.durationSec,
         sampleRate: probe.sampleRate,

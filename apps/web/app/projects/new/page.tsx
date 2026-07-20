@@ -23,6 +23,7 @@ interface Voice {
   displayName: string;
   gender: 'male' | 'female';
   language: string;
+  engine?: 'kokoro' | 'chatterbox';
 }
 interface Track {
   id: string;
@@ -48,7 +49,7 @@ interface WizSettings {
 }
 
 const DEFAULTS: WizSettings = {
-  voice: 'af_heart',
+  voice: 'noman',
   speed: 1.0,
   pauseMs: 150,
   aspect: '16:9',
@@ -130,7 +131,9 @@ export default function WizardPage() {
   const words = script.trim().split(/\s+/).filter(Boolean).length;
   const scriptValid = script.length >= 50 && script.length <= 50000;
 
-  const langVoices = (voices.data?.voices ?? []).filter((v) => v.language === voiceLang);
+  // Only the curated, natural narrators are offered (the Kokoro voices remain in the registry for
+  // existing projects, but are hidden here).
+  const langVoices = (voices.data?.voices ?? []).filter((v) => v.engine === 'chatterbox');
   const voiceName = voices.data?.voices.find((v) => v.id === s.voice)?.displayName ?? s.voice;
 
   function goto(n: number) {
@@ -262,13 +265,9 @@ export default function WizardPage() {
         {/* step 2 — voice */}
         {step === 2 && (
           <Card className="space-y-5 animate-[var(--animate-fade-in)]">
-            <Field label="Voice language">
-              <Pills
-                value={voiceLang}
-                options={['en-US', 'en-GB', 'es', 'fr', 'hi', 'it', 'pt-BR', 'ja', 'zh']}
-                onChange={setVoiceLang}
-              />
-            </Field>
+            <p className="text-sm text-fg-muted">
+              Natural, mature narrators. Press play to preview, then select one.
+            </p>
             {voices.isLoading ? (
               <div className="flex justify-center py-8">
                 <Spinner className="text-accent" />

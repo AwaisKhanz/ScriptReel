@@ -1,15 +1,24 @@
-// Canonical Kokoro voice list (doc 10) — 54 voices across 9 language variants,
-// derived from the pinned model's VOICES.md. Non-English voices are labelled
-// "good" (not flagship) per doc 17's honest UI copy.
+// Canonical voice list (doc 10). Two engines:
+//   - kokoro:     54 built-in Kokoro voices across 9 language variants (from the pinned model's
+//                 VOICES.md). Synthesised by the ML sidecar (services/ml).
+//   - chatterbox: natural, cloned narrators for a mature audience (Chatterbox, Resemble AI, MIT),
+//                 synthesised by the isolated voice server (services/voice). Their reference clips
+//                 are public-domain LibriVox recordings, so the output is commercial-safe.
+// The engine picks which server the tts stage calls; the /tts contract ({text,voice,langCode,speed,
+// outPath} → {path,durationSec}, 24 kHz PCM_16) is identical on both, so alignment/compose are
+// engine-agnostic (invariant 2 — measured narration is the clock, whichever engine produced it).
+
+export type VoiceEngine = 'kokoro' | 'chatterbox';
 
 export interface Voice {
   id: string;
   language: string; // BCP-ish (en-US, hi, ja, …)
-  langCode: string; // Kokoro KPipeline code (a, b, e, f, h, i, p, j, z)
+  langCode: string; // Kokoro KPipeline code (a, b, e, f, h, i, p, j, z) — chatterbox uses 'a' (align in English)
   gender: 'female' | 'male';
   displayName: string;
   quality: 'best' | 'good';
   sampleText: string; // fixed friendly sentence per language (voice preview)
+  engine: VoiceEngine;
 }
 
 interface LangGroup {
@@ -140,7 +149,7 @@ function toDisplayName(id: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-export const VOICES: readonly Voice[] = GROUPS.flatMap((group) =>
+const KOKORO_VOICES: readonly Voice[] = GROUPS.flatMap((group) =>
   group.voices.map(
     (id): Voice => ({
       id,
@@ -150,11 +159,44 @@ export const VOICES: readonly Voice[] = GROUPS.flatMap((group) =>
       displayName: toDisplayName(id),
       quality: group.quality,
       sampleText: group.sampleText,
+      engine: 'kokoro',
     }),
   ),
 );
 
-export const DEFAULT_VOICE_ID = 'af_heart';
+// Named, cloned narrators (Chatterbox). Curated by the owner from public-domain LibriVox readers for
+// a mature/health audience; reference clips live in services/voice/voices/<id>.wav. langCode 'a' so
+// alignment runs in English. To add one: drop a ~15 s 24 kHz mono clip at voices/<id>.wav and add a
+// row here — no migration (voice is a jsonb setting) and no other code change.
+const CHATTERBOX_SAMPLE_TEXT =
+  "As we grow older, our bodies change in ways we don't always notice — but small, consistent " +
+  'habits can make a remarkable difference to how you feel.';
+
+const CHATTERBOX_VOICES: readonly Voice[] = (
+  [
+    ['usama', 'USAMA', 'male'],
+    ['awais', 'Awais', 'male'],
+    ['noman', 'Noman', 'male'],
+    ['adeel', 'Adeel', 'male'],
+  ] as const
+).map(
+  ([id, displayName, gender]): Voice => ({
+    id,
+    language: 'en-US',
+    langCode: 'a',
+    gender,
+    displayName,
+    quality: 'best',
+    sampleText: CHATTERBOX_SAMPLE_TEXT,
+    engine: 'chatterbox',
+  }),
+);
+
+// Chatterbox voices first — they are the product's default, natural set (the UI shows only these).
+export const VOICES: readonly Voice[] = [...CHATTERBOX_VOICES, ...KOKORO_VOICES];
+
+// New projects default to a natural cloned narrator, not a Kokoro voice.
+export const DEFAULT_VOICE_ID = 'noman';
 
 const VOICE_BY_ID = new Map(VOICES.map((voice) => [voice.id, voice]));
 
@@ -164,6 +206,12 @@ export function voiceById(id: string): Voice | undefined {
 
 export function langCodeForVoice(id: string): string | undefined {
   return VOICE_BY_ID.get(id)?.langCode;
+}
+
+// Which TTS server synthesises this voice. Unknown ids fall back to kokoro (the sidecar), matching
+// the pre-existing behaviour before named voices existed.
+export function voiceEngine(id: string): VoiceEngine {
+  return VOICE_BY_ID.get(id)?.engine ?? 'kokoro';
 }
 
 export function defaultVoiceForLanguage(language: string): Voice | undefined {

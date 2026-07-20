@@ -18,6 +18,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const RerenderSchema = z.object({
+  // Voice change re-narrates: invalidatedStages(voice) → tts → align → compose (the engine already
+  // supports this; the manifests skip analyze/search/score/fetch whose inputs are unchanged).
+  voice: z.string().min(1).optional(),
   subtitlePreset: z.enum(SUBTITLE_PRESETS).optional(),
   subtitlePosition: z.enum(SUBTITLE_POSITIONS).optional(),
   musicMood: z.enum(MUSIC_MOODS).optional(),
