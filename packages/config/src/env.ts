@@ -36,6 +36,10 @@ export const rootDir = findAndLoadDotEnv();
 const EnvSchema = z.object({
   DATA_DIR: z.string().min(1).default('./data'),
   SIDECAR_URL: z.string().min(1).default('http://127.0.0.1:8484'),
+  // Isolated Chatterbox voice server (services/voice) — cloned natural narrators. Speaks the same
+  // /tts contract as the sidecar; the tts stage routes chatterbox-engine voices here. Kept separate
+  // from the sidecar because Chatterbox pins a different torch/cu128 build (see services/voice).
+  CHATTERBOX_URL: z.string().min(1).default('http://127.0.0.1:8585'),
   DATABASE_URL: z
     .string()
     .min(1)
@@ -85,3 +89,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
 }
 
 export const env: Env = loadEnv();
+
+// True when DATABASE_URL points at a LOCAL Postgres (localhost/127.0.0.1). Local Postgres has no TLS
+// and ~100 max_connections; Supabase Cloud requires TLS and its session pooler caps clients at 15.
+// Every DB connector (postgres.js in packages/db, pg-boss in the worker + web) keys its ssl + pool
+// size off this so one env var flips the whole app between backends. See packages/db/src/client.ts.
+export const isLocalDatabase = /@(?:localhost|127\.0\.0\.1)[:/]/.test(env.DATABASE_URL);

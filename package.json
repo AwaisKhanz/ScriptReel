@@ -8,6 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "predev": "node scripts/ensure-local-db.mjs",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "check": "biome check . && tsc -b && tsc -p apps/web/tsconfig.json --noEmit && vitest run --passWithNoTests",

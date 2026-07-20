@@ -1,4 +1,4 @@
-import { env } from '@scriptreel/config';
+import { env, isLocalDatabase } from '@scriptreel/config';
 import { type JobMode, PIPELINE_QUEUE, PipelinePayloadSchema } from '@scriptreel/core';
 import * as db from '@scriptreel/db';
 import PgBoss from 'pg-boss';
@@ -17,7 +17,7 @@ const log = pino({
 async function main(): Promise<void> {
   const boss = new PgBoss({
     connectionString: env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }, // Supabase pooler requires TLS
+    ssl: isLocalDatabase ? false : { rejectUnauthorized: false }, // local: no TLS; Supabase pooler: TLS
     max: 3, // session pooler budget (see packages/db/client.ts): worker gets 3+3
   });
   boss.on('error', (err) => log.error({ err }, 'pg-boss error'));
@@ -84,6 +84,11 @@ async function main(): Promise<void> {
           (!isDone('align') || !isDone('compose'))
             ? 'continue'
             : 'full';
+        // Clear any stage a dead worker left frozen at 'running' (e.g. a `pnpm dev` restart mid-run):
+        // getStuckProjects only returns projects silent >10 min, so a 'running' row here is abandoned,
+        // not live. Resetting it to 'pending' stops the UI showing a frozen "running 10%" until the
+        // requeued job supersedes it; idempotent stages still skip whatever genuinely completed.
+        await db.resetRunningRuns(p.id);
         const id = await boss.send(
           PIPELINE_QUEUE,
           { projectId: p.id, mode },

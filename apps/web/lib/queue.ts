@@ -1,4 +1,4 @@
-import { env } from '@scriptreel/config';
+import { env, isLocalDatabase } from '@scriptreel/config';
 import { type JobMode, PIPELINE_QUEUE } from '@scriptreel/core';
 import PgBoss from 'pg-boss';
 
@@ -11,7 +11,7 @@ async function getBoss(): Promise<PgBoss> {
   if (!bossPromise) {
     const boss = new PgBoss({
       connectionString: env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      ssl: isLocalDatabase ? false : { rejectUnauthorized: false }, // local: no TLS; Supabase: TLS
       max: 2, // send-only; session pooler budget (see packages/db/client.ts)
     });
     boss.on('error', () => {});
