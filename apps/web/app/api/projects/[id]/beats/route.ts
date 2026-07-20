@@ -1,8 +1,23 @@
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '@scriptreel/config';
 import * as db from '@scriptreel/db';
 import { NextResponse } from 'next/server';
+
+// Did the score stage skip the vision (VLM) gate because the model was unavailable? Read from the
+// score manifest so the storyboard can WARN — otherwise the skip is silent and, because gate
+// availability isn't in score's inputsHash, the project keeps shipping unverified clips.
+async function readVlmSkipped(projectId: string): Promise<boolean> {
+  try {
+    const mf = join(paths.projectDir(projectId), 'stages', 'score', 'manifest.json');
+    if (!existsSync(mf)) return false;
+    const parsed = JSON.parse(await readFile(mf, 'utf8')) as { meta?: { vlmSkipped?: boolean } };
+    return parsed.meta?.vlmSkipped === true;
+  } catch {
+    return false; // unreadable manifest — no false alarm
+  }
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -80,7 +95,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         })),
       };
     });
-    return NextResponse.json({ beats });
+    return NextResponse.json({ beats, vlmSkipped: await readVlmSkipped(id) });
   } catch (error) {
     return NextResponse.json({ error: 'db unavailable', detail: String(error) }, { status: 502 });
   }

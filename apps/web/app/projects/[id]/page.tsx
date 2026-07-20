@@ -22,6 +22,7 @@ import { fileUrl, fmtBytes, fmtDuration } from '../../../lib/format';
 // Pull the re-render panel's editable subset out of the stored settings blob.
 function rerenderCurrent(settings: Record<string, unknown>): Editable {
   return {
+    voice: (settings.voice as string) ?? 'noman',
     aspect: (settings.aspect as Editable['aspect']) ?? '16:9',
     quality: (settings.quality as Editable['quality']) ?? 'final',
     subtitlePreset: (settings.subtitlePreset as Editable['subtitlePreset']) ?? 'clean',
@@ -36,6 +37,7 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
   const router = useRouter();
   const { data, isLoading, isError, refetch } = useProject(id);
   const [busy, setBusy] = useState(false);
+  const [showStoryboard, setShowStoryboard] = useState(false);
 
   async function post(path: string) {
     setBusy(true);
@@ -147,7 +149,9 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
           projectId={id}
           aspect={(project.settings.aspect as string) ?? '16:9'}
           busy={busy}
-          onApprove={() => post('continue')}
+          mode="review"
+          onRender={() => post('continue')}
+          onRescore={() => post('rescore')}
         />
       )}
 
@@ -161,12 +165,44 @@ export default function Workspace({ params }: { params: Promise<{ id: string }> 
 
       {status === 'done' && renders[0] && (
         <>
-          <Result render={renders[0]} history={renders} />
+          <Result
+            render={renders[0]}
+            history={renders}
+            onEditClips={() => setShowStoryboard(true)}
+          />
           <RerenderPanel
             projectId={id}
             current={rerenderCurrent(project.settings)}
             onQueued={() => void refetch()}
           />
+          {/* Storyboard is a popup when done — swapping clips is opt-in, not a long scroll under
+              the finished video. It stays the full-page view at the review gate. */}
+          {showStoryboard && (
+            <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-4 backdrop-blur-sm animate-[var(--animate-fade-in)]">
+              <div className="mx-auto my-8 w-full max-w-6xl rounded-2xl border border-border bg-bg p-5 shadow-[var(--shadow-lg)] animate-[var(--animate-scale-in)]">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-base font-semibold">Adjust clips</h3>
+                  <Button variant="subtle" size="sm" onClick={() => setShowStoryboard(false)}>
+                    Close
+                  </Button>
+                </div>
+                <Storyboard
+                  projectId={id}
+                  aspect={(project.settings.aspect as string) ?? '16:9'}
+                  busy={busy}
+                  mode="edit"
+                  onRender={() => {
+                    setShowStoryboard(false);
+                    void post('continue');
+                  }}
+                  onRescore={() => {
+                    setShowStoryboard(false);
+                    void post('rescore');
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -198,7 +234,15 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function Result({ render, history }: { render: Render; history: Render[] }) {
+function Result({
+  render,
+  history,
+  onEditClips,
+}: {
+  render: Render;
+  history: Render[];
+  onEditClips: () => void;
+}) {
   const [showCredits, setShowCredits] = useState(false);
   const [credits, setCredits] = useState('');
   const [copied, setCopied] = useState(false);
@@ -264,6 +308,9 @@ function Result({ render, history }: { render: Render; history: Render[] }) {
             </a>
             <Button variant="subtle" onClick={copyPath}>
               {copied ? 'Copied ✓' : 'Copy path'}
+            </Button>
+            <Button variant="ghost" onClick={onEditClips}>
+              Adjust clips
             </Button>
             <Button variant="ghost" onClick={openCredits}>
               Credits

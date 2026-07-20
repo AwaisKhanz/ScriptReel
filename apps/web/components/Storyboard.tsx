@@ -86,21 +86,46 @@ export function Storyboard({
   projectId,
   aspect,
   busy,
-  onApprove,
+  mode,
+  onRender,
+  onRescore,
 }: {
   projectId: string;
   aspect: string;
   busy: boolean;
-  onApprove: () => void;
+  // 'review' = awaiting_review (approve & render); 'edit' = done (re-render after swaps).
+  mode: 'review' | 'edit';
+  onRender: () => void;
+  onRescore: () => void;
 }) {
-  // Read-only by design (2026-07-17): the selector picks, and the storyboard is where you SEE
-  // what it picked before spending a render on it. Per-beat re-search and manual swap are gone —
-  // no polling to do, so this query fetches once.
-  const { data, isLoading, isError, refetch } = useQuery<{ beats: Beat[] }>({
+  // The selector picks, and you SEE what it picked before (or after) spending a render — and can
+  // swap any beat to one of its alternates if the pick is off (restored 2026-07-18).
+  const { data, isLoading, isError, refetch } = useQuery<{ beats: Beat[]; vlmSkipped?: boolean }>({
     queryKey: ['beats', projectId],
     queryFn: () => getJson(`/api/projects/${projectId}/beats`),
   });
   const beats = data?.beats ?? [];
+  const vlmSkipped = data?.vlmSkipped === true;
+
+  // Beats whose clip the user changed this session — their stitched clipUrl is stale until the next
+  // render, so we show the new poster + a "changed" badge and gate the render button on `dirty`.
+  const [changed, setChanged] = useState<Set<string>>(new Set());
+  const [swappingBeat, setSwappingBeat] = useState<string | null>(null);
+  const dirty = changed.size > 0;
+
+  async function swap(beatId: string, candidateId: string) {
+    setSwappingBeat(beatId);
+    const res = await fetch(`/api/projects/${projectId}/beats/choose`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ beatId, candidateId }),
+    }).catch(() => null);
+    if (res?.ok) {
+      setChanged((prev) => new Set(prev).add(beatId));
+      await refetch();
+    }
+    setSwappingBeat(null);
+  }
 
   const weakCount = beats.filter(isWeak).length;
   const total = beats.reduce((sum, b) => sum + (b.estSeconds ?? 0), 0);
@@ -144,53 +169,131 @@ export function Storyboard({
         <div>
           <h2 className="text-base font-semibold">Storyboard</h2>
           <p className="text-sm text-fg-muted">
-            Each beat is stitched into its real montage clip — press play to preview before
-            rendering. Every shot was picked automatically.
+            Each beat is stitched into its real clip — press play to preview. If a pick is off, hit{' '}
+            <span className="font-medium text-fg">Change clip</span> and choose an alternate.
           </p>
         </div>
       </div>
 
+      {vlmSkipped && (
+        <Card className="border-warning/40 bg-warning/5">
+          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+            <div className="flex flex-1 items-start gap-3">
+              <Dot tone="warning" />
+              <div>
+                <p className="text-sm font-medium">Clips weren’t vision-verified</p>
+                <p className="mt-0.5 text-sm text-fg-muted">
+                  The AI vision model wasn’t available when these were scored, so they weren’t
+                  double-checked for subject and era match. Make sure Ollama is serving the vision
+                  model, then re-run scoring for verified clips.
+                </p>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" disabled={busy} onClick={onRescore}>
+              {busy ? <Spinner /> : 'Re-run scoring'}
+            </Button>
+          </div>
+        </Card>
+      )}
+
       <div className={`grid grid-cols-1 gap-4 ${ASPECT_COLS[aspect] ?? ''}`}>
         {beats.map((beat) => (
-          <BeatCard key={beat.id} beat={beat} aspect={aspect} />
+          <BeatCard
+            key={beat.id}
+            beat={beat}
+            aspect={aspect}
+            changed={changed.has(beat.id)}
+            swapping={swappingBeat === beat.id}
+            onSwap={(candidateId) => swap(beat.id, candidateId)}
+          />
         ))}
       </div>
 
-      {/* sticky footer — portaled so `fixed` pins to the viewport, not the animated page */}
-      <Portal>
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/85 backdrop-blur-xl lg:left-64">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
-            <div className="flex items-center gap-3 text-sm">
-              {weakCount > 0 ? (
-                <span className="flex items-center gap-2 text-warning">
-                  <Dot tone="warning" />
-                  {weakCount} {weakCount === 1 ? 'beat is a weak match' : 'beats are weak matches'}
-                </span>
-              ) : (
-                <span className="flex items-center gap-2 text-success">
-                  <Dot tone="success" /> All {beats.length} beats matched well
-                </span>
-              )}
-              <span className="hidden text-fg-subtle sm:inline">· {fmtDuration(total)} total</span>
-            </div>
-            <Button variant="primary" disabled={busy} onClick={onApprove}>
-              {busy ? <Spinner /> : 'Approve & render'}
-            </Button>
+      {mode === 'review' ? (
+        // At review the footer is the primary action — pin it to the viewport (portaled so `fixed`
+        // resolves against the viewport, not the animated page).
+        <Portal>
+          <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/85 backdrop-blur-xl lg:left-64">
+            {footerBar()}
           </div>
+        </Portal>
+      ) : (
+        // In the done view it sits inline below the grid, so it doesn't fight the result/re-render.
+        <div className="overflow-hidden rounded-xl border border-border bg-surface/60">
+          {footerBar()}
         </div>
-      </Portal>
+      )}
     </div>
   );
+
+  function footerBar() {
+    return (
+      <div className="flex items-center justify-between gap-4 px-5 py-3 sm:px-8">
+        <div className="flex items-center gap-3 text-sm">
+          {dirty ? (
+            <span className="flex items-center gap-2 text-accent">
+              <Dot tone="progress" />
+              {changed.size} clip{changed.size === 1 ? '' : 's'} changed
+            </span>
+          ) : weakCount > 0 ? (
+            <span className="flex items-center gap-2 text-warning">
+              <Dot tone="warning" />
+              {weakCount} {weakCount === 1 ? 'beat is a weak match' : 'beats are weak matches'}
+            </span>
+          ) : (
+            <span className="flex items-center gap-2 text-success">
+              <Dot tone="success" /> All {beats.length} beats matched well
+            </span>
+          )}
+          <span className="hidden text-fg-subtle sm:inline">· {fmtDuration(total)} total</span>
+        </div>
+        <Button variant="primary" disabled={busy} onClick={onRender}>
+          {busy ? (
+            <Spinner />
+          ) : mode === 'review' ? (
+            'Approve & render'
+          ) : dirty ? (
+            'Re-render with changes'
+          ) : (
+            'Re-render'
+          )}
+        </Button>
+      </div>
+    );
+  }
 }
 
-function BeatCard({ beat, aspect }: { beat: Beat; aspect: string }) {
+function BeatCard({
+  beat,
+  aspect,
+  changed,
+  swapping,
+  onSwap,
+}: {
+  beat: Beat;
+  aspect: string;
+  changed: boolean;
+  swapping: boolean;
+  onSwap: (candidateId: string) => void;
+}) {
   const chosen = beat.candidates.find((c) => c.id === beat.chosenCandidateId) ?? beat.candidates[0];
   const kind = beat.forcedTextcard ? 'textcard' : (chosen?.kind ?? 'textcard');
   const tone = scoreTone({ score: beat.score, kind });
   const [playing, setPlaying] = useState(false);
-  // Play the REAL stitched beat clip (fetch runs before the gate, doc 24 §8) — available
-  // for every non-textcard beat, montage or single, video or Ken Burns still.
-  const canPlay = !beat.forcedTextcard && !!beat.clipUrl;
+  const [swapOpen, setSwapOpen] = useState(false);
+  // Alternates to swap to: the beat's other fetched candidates. A forced text card has none.
+  const alternates = beat.candidates.filter((c) => c.id !== chosen?.id);
+  const canSwap = !beat.forcedTextcard && alternates.length > 0;
+  // What Play shows: normally the REAL stitched beat clip (fetch runs before the gate, doc 24 §8).
+  // After a swap that stitched clip is stale, so preview the newly-chosen candidate's OWN video
+  // (its direct remoteUrl) — enough to judge the swap before re-rendering. A chosen still/photo has
+  // no video to play, so we just show its poster.
+  const playSrc = changed
+    ? chosen?.kind === 'video'
+      ? (chosen.remoteUrl ?? null)
+      : null
+    : beat.clipUrl;
+  const canPlay = !beat.forcedTextcard && !!playSrc;
   const poster = chosen?.thumbPath ?? beat.segments?.[0]?.thumbPath ?? null;
   const montage =
     !beat.forcedTextcard && beat.segments && beat.segments.length > 1 ? beat.segments : null;
@@ -203,9 +306,9 @@ function BeatCard({ beat, aspect }: { beat: Beat; aspect: string }) {
           <div className="flex size-full items-center justify-center bg-surface-2 text-xs text-fg-subtle">
             text card
           </div>
-        ) : playing && beat.clipUrl ? (
+        ) : playing && playSrc ? (
           <video
-            src={beat.clipUrl}
+            src={playSrc}
             controls
             autoPlay
             muted
@@ -232,6 +335,7 @@ function BeatCard({ beat, aspect }: { beat: Beat; aspect: string }) {
           #{beat.idx + 1}
         </span>
         <span className="absolute right-2 top-2 flex items-center gap-1">
+          {changed && <Badge tone="accent">changed</Badge>}
           {montage && <Badge tone="accent">montage · {montage.length}</Badge>}
           <Badge tone={tone}>
             {kind === 'textcard' ? 'text' : kind === 'image' ? 'photo' : kind}
@@ -270,6 +374,42 @@ function BeatCard({ beat, aspect }: { beat: Beat; aspect: string }) {
             </Badge>
           )}
         </div>
+
+        {canSwap && (
+          <div className="mt-auto pt-1">
+            <button
+              type="button"
+              onClick={() => setSwapOpen((v) => !v)}
+              className="flex items-center gap-1 text-xs font-medium text-accent transition-colors hover:text-accent/80"
+            >
+              {swapping ? <Spinner className="size-3" /> : null}
+              {swapOpen ? 'Hide alternates' : 'Change clip'}
+              <span className="text-fg-subtle">({alternates.length})</span>
+            </button>
+            {swapOpen && (
+              <div className="mt-2 grid grid-cols-4 gap-1.5">
+                {alternates.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    disabled={swapping}
+                    onClick={() => onSwap(c.id)}
+                    title={`${providerLabel(c.provider)}${c.score != null ? ` · ${c.score.toFixed(2)}` : ''}`}
+                    className="relative aspect-video overflow-hidden rounded-md border border-border bg-surface-2 transition-colors hover:border-accent disabled:opacity-50"
+                  >
+                    {c.thumbPath ? (
+                      <img src={fileUrl(c.thumbPath)} alt="" className="size-full object-cover" />
+                    ) : (
+                      <span className="flex size-full items-center justify-center text-[9px] text-fg-subtle">
+                        {c.kind}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Card>
   );

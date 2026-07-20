@@ -507,12 +507,28 @@ export async function appendCandidatesForBeat(
   return inserted;
 }
 
-// The manual-override write path (setBeatForcedTextcard / setBeatVisualDescription /
-// setBeatChosenCandidate / updateBeatSegment) and its authz helpers (getBeatOwner /
-// candidateBelongsToBeat) were removed 2026-07-17 with the storyboard swap feature: the selector
-// picks, and nothing may write a beat's selection after score has run. Restoring any of them means
-// restoring the invariant they broke — updateBeatSegment silently dropped `momentIdx` (defeating
-// media-fit verification) and read-modify-wrote `segments` outside its transaction.
+// Manual swap (storyboard, restored 2026-07-18): make `candidateId` the beat's pick. This is the
+// ONLY write path to a beat's selection, and it deliberately avoids the two bugs the 2026-07-17
+// removal fixed: (1) it writes in a transaction (the old updateBeatSegment read-modify-wrote
+// `segments` outside one), and (2) a manual pick is a SINGLE clip, so it clears `segments` to null
+// rather than editing one montage entry — sidestepping the dropped-`momentIdx` bug entirely. The
+// candidate must belong to the beat (integrity + authz). fetch's inputsHash includes the chosen
+// provider/id + segments, so this cleanly re-stitches JUST this beat on the next continue/re-render.
+export async function setBeatChosenCandidate(beatId: string, candidateId: string): Promise<void> {
+  await sql.begin(async (tx) => {
+    const owned = await tx<{ id: string }[]>`
+      select id from candidates where id = ${candidateId} and beat_id = ${beatId}`;
+    if (owned.length === 0) throw new Error('candidate does not belong to beat');
+    await tx`update beats set chosen_candidate_id = ${candidateId}, segments = null where id = ${beatId}`;
+  });
+}
+
+// Authz for the swap route: does this beat belong to this project (from the URL)?
+export async function beatBelongsToProject(beatId: string, projectId: string): Promise<boolean> {
+  const rows = await sql<{ id: string }[]>`
+    select id from beats where id = ${beatId} and project_id = ${projectId}`;
+  return rows.length > 0;
+}
 
 // Live pipeline activity (doc 16): the media found so far, newest first — the run
 // screen streams these thumbs in as search/score progress.
@@ -537,29 +553,39 @@ export async function getRecentCandidates(
   return [...rows];
 }
 
-// Beats + the candidate each one actually chose, for the storyboard (doc 16). One query for all
-// of them, joined in memory (avoids N+1 across beats).
+// How many candidate clips per beat the storyboard offers as swap alternates (best rank first).
+const STORYBOARD_ALTERNATES = 8;
+
+// Beats + their top candidates for the storyboard (doc 16): the chosen clip plus alternates to swap
+// to. One query for all beats, grouped in memory (avoids N+1).
 //
-// This used to return the top-5 by rank so the swap drawer had alternates to offer. The swap is
-// gone (2026-07-17), so the alternates are dead weight — and fetching only the chosen row also
-// closes a latent bug in the old `slice(0, STORYBOARD_CANDIDATES)`: the ladder can choose a
-// candidate that is NOT in the top 5 by rank (a text card, a generated still, a mood-tier pick),
-// in which case the slice dropped it and the storyboard fell back to `candidates[0]` — showing a
-// clip the render would never use.
+// The chosen candidate is ALWAYS included even if it isn't in the top-N by rank — the ladder can
+// pick a candidate outside the top ranks (a text card, a generated still, a mood-tier pick). The
+// old `slice(0, N)` dropped it and the storyboard fell back to `candidates[0]`, showing a clip the
+// render would never use (the bug the 2026-07-17 chosen-only rewrite worked around); prepending the
+// chosen keeps the alternates AND shows the true pick.
 export async function getStoryboard(
   projectId: string,
 ): Promise<{ beat: BeatRow; candidates: CandidateRow[] }[]> {
   const beats = await getBeats(projectId);
   if (beats.length === 0) return [];
-  const chosenIds = beats
-    .map((b) => b.chosen_candidate_id)
-    .filter((id): id is string => id !== null);
-  if (chosenIds.length === 0) return beats.map((beat) => ({ beat, candidates: [] }));
-  const cands = await sql<CandidateRow[]>`select * from candidates where id = any(${chosenIds})`;
-  const byId = new Map(cands.map((c) => [c.id, c]));
+  const beatIds = beats.map((b) => b.id);
+  const cands = await sql<CandidateRow[]>`
+    select * from candidates where beat_id = any(${beatIds}) order by beat_id, rank nulls last, id`;
+  const byBeat = new Map<string, CandidateRow[]>();
+  for (const c of cands) {
+    const arr = byBeat.get(c.beat_id);
+    if (arr) arr.push(c);
+    else byBeat.set(c.beat_id, [c]);
+  }
   return beats.map((beat) => {
-    const chosen = beat.chosen_candidate_id ? byId.get(beat.chosen_candidate_id) : undefined;
-    return { beat, candidates: chosen ? [chosen] : [] };
+    const all = byBeat.get(beat.id) ?? [];
+    const top = all.slice(0, STORYBOARD_ALTERNATES);
+    const chosen = beat.chosen_candidate_id
+      ? all.find((c) => c.id === beat.chosen_candidate_id)
+      : undefined;
+    const candidates = chosen && !top.some((c) => c.id === chosen.id) ? [chosen, ...top] : top;
+    return { beat, candidates };
   });
 }
 
@@ -769,8 +795,18 @@ export async function applyBeatSelection(
     for (const r of ranked) {
       await tx`update candidates set score = ${r.score}, rank = ${r.rank} where id = ${r.id}`;
     }
+    // The chosen candidate can vanish between selection and this write — a concurrent re-run (e.g.
+    // the reconciler requeuing a mid-render project after a restart) re-searches the beat and
+    // deletes the old pool. Writing a dangling `chosen_candidate_id` trips beats_chosen_fk and
+    // crashes the WHOLE render; instead null it so the beat degrades to a text card at compose
+    // (invariant 7 — degrade, never die). Segments are dropped too, since they reference the pool.
+    let chosen = chosenCandidateId;
+    if (chosen !== null) {
+      const exists = await tx<{ id: string }[]>`select id from candidates where id = ${chosen}`;
+      if (exists.length === 0) chosen = null;
+    }
     await tx`
-      update beats set chosen_candidate_id = ${chosenCandidateId}, segments = ${plan}
+      update beats set chosen_candidate_id = ${chosen}, segments = ${chosen === null ? null : plan}
       where id = ${beatId}`;
   });
 }
